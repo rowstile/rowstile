@@ -617,6 +617,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The file manager example reads `FM_COOKIE_SECURE` and `FM_OPEN_SIGNUP` as true or false (or 1 and 0) in any
   case, and stops at start on another word: `TRUE` left the session cookie on plain HTTP. `FM_WEB_ORIGINS` may
   have spaces after its commas.
+- The file manager's web app searches for a link's words as written when they hold a `%` that is no escape
+  (`#/search/50%`): the page went blank.
 
 ### Upgrading
 
