@@ -23,8 +23,8 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   was written apart from the parser. [`tests/parse_agreement.py`](../core/tests/parse_agreement.py) has both
   read every policy in the repository, two hundred random ones and the small policies up to size four (1,379, each
   written two ways: as listed, and with its names swapped and its parts turned round), and compares what they
-  read: the types, each relation's sources, the permissions with their grouping, the rules, each line of the tests
-  part by part, and of a policy that includes a file, its own lines. They read each one alike.
+  read: the types, each relation's sources, the permissions with their grouping, the rules, the sync lines, each line
+  of the tests part by part, and of a policy that includes a file, its own lines. They read each one alike.
   Each night they read all 130,431 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways"; tests/unit_test.py "test_each_night_the_grammar_reads_every_small_policy" -->
   (The grammar takes more than the parser does, as an editor must: what the parser refuses isn't compared.) <!-- checked: tests/parse_agreement.py "policy the parser refuses is not compared" -->
 - **Random data**: [`tests/difftest.py`](../core/tests/difftest.py) fills six policies' tables with random

@@ -15941,14 +15941,14 @@ class ParseAgreement(unittest.TestCase):
         self.assertIn("/tests[0][1][0][7]: the parser reads '11', the grammar '3'", problems[0])
 
     def test_an_including_policys_own_lines_alone(self) -> None:
-        # what an included file says (its app role, scope, caveat, a rules block's view, tests) is its own: the
-        # including policy's reading has none of it, as the grammar, reading each file apart, has none
+        # what an included file says (its app role, scope, caveat, a rules block's view, tests, sync lines) is its
+        # own: the including policy's reading has none of it, as the grammar, reading each file apart, has none
         import parse_agreement
 
         included = (
             "app role app_user\nscope s = select\ncaveat c = {true}\ntype user = app.users\n"
             "rules app.users view app.users_seen\n  select : anyone\ntest\n  user 1 cannot view user 2\n"
-            'test "t"\n  user 1 cannot view user 2\n'
+            'test "t"\n  user 1 cannot view user 2\nsync role engine\nsync after commit\nsync app.users\n'
         )
         pol = parse_policy('include "more.authz"\n', "p.authz", files={"more.authz": included})
         self.assertEqual(
@@ -15956,10 +15956,21 @@ class ParseAgreement(unittest.TestCase):
             ("app_user", ["s"], ["c"], {"app.users": "app.users_seen"}),
         )
         self.assertEqual((len(pol.tests), len(pol.scenarios)), (1, 1))
+        self.assertEqual((pol.sync_role, list(pol.syncs)), ("engine", ["app.users"]))
+        self.assertIsNotNone(pol.sync_after_commit)
         reading = parse_agreement.reading_py(pol, role=False)
         self.assertEqual(
-            {k: reading[k] for k in ("role", "types", "rules", "views", "scopes", "caveats", "tests")},
-            {"role": None, "types": {}, "rules": [], "views": {}, "scopes": {}, "caveats": {}, "tests": []},
+            {k: reading[k] for k in ("role", "types", "rules", "views", "scopes", "caveats", "tests", "sync")},
+            {
+                "role": None,
+                "types": {},
+                "rules": [],
+                "views": {},
+                "scopes": {},
+                "caveats": {},
+                "tests": [],
+                "sync": {"role": None, "after commit": False, "tables": {}},
+            },
         )
 
     def test_small_policies_written_two_ways(self) -> None:
