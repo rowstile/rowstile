@@ -69,13 +69,18 @@ a `dev.rowstile.Principal` says so itself, for a service: `Principal.of("service
 for another way, declare a bean of your own: a `PrincipalSource`, whose `principal()` says who the request is.
 
 The conformance app has no sign-in: its checks name the user in a header, which a real app must never believe, so
-this page doesn't show its `Auth.java`. Its Spring Security is the stateless API's:
+this page doesn't show its `Auth.java`. Its Spring Security is a stateless API's, with no session (a real one reads
+a bearer token):
 
 ```java
 return http.csrf(csrf -> csrf.disable())
         .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(a -> a.anyRequest().permitAll())
 ```
+
+CSRF is off there because no request carries a cookie. An app that signs in with a session cookie keeps CSRF
+protection on: the browser sends the cookie with a request another site makes too, and rowstile signs that request
+in as the cookie's user, so it may write whatever that user may.
 
 Every transaction signs in, even as nobody, and the sign-in lasts the transaction: a pooled connection never
 carries one request's user into the next, and PgBouncer in transaction mode is safe
