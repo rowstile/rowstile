@@ -186,6 +186,35 @@ test "bots post as themselves, only where an admin added them; only their owner 
   as user $bo refused {INSERT INTO ms.chat_bots (chat_id, bot_id, added_by) VALUES ($h, $b, $bo)}
   user $ann can manage_keys bot $b
   user $bo cannot manage_keys bot $b
+  as user $bo refused {SELECT authz.create_api_key('mine now', '', NULL, 'bot', $b::text)}
+  as user $ann allowed {SELECT authz.create_api_key('weather', '', NULL, 'bot', $b::text)}
+  -- an admin adds their own bots, as themselves
+  given c = {INSERT INTO ms.bots (name, owner_id) VALUES ('news', $ann) RETURNING id}
+  as user $ann refused {INSERT INTO ms.chat_bots (chat_id, bot_id, added_by) VALUES ($g, $c, $bo)}
+
+test "nobody moves a membership, nor speaks, writes or blocks for someone else"
+  given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
+  given bo = {INSERT INTO ms.users (phone, name) VALUES ('t-bo', 'Bo') RETURNING id}
+  given cy = {INSERT INTO ms.users (phone, name) VALUES ('t-cy', 'Cy') RETURNING id}
+  given g = {INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Weekend', $ann) RETURNING id}
+  given h = {INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Other', $cy) RETURNING id}
+  given {INSERT INTO ms.members (chat_id, user_id, role) VALUES ($g, $ann, 'owner'), ($h, $cy, 'owner')}
+  given {INSERT INTO ms.messages (chat_id, sender_id, body) VALUES ($g, $ann, 'before Bo')}
+  given {INSERT INTO ms.members (chat_id, user_id) VALUES ($g, $bo)}
+  -- what was said before Bo joined stays out of reach: his membership's chat and number are the database's
+  as user $bo refused {UPDATE ms.members SET joined_seq = 0 WHERE chat_id = $g AND user_id = $bo}
+  as user $bo refused {UPDATE ms.members SET chat_id = $h WHERE chat_id = $g AND user_id = $bo}
+  as user $bo sees 0 {SELECT FROM ms.messages WHERE body = 'before Bo'}
+  -- a message is its sender's: nobody posts as another, nor rewrites one but its sender, for 15 minutes
+  given {INSERT INTO ms.messages (chat_id, sender_id, body, created_at) VALUES ($g, $bo, 'old', now() - interval '1 hour')}
+  as user $bo refused {INSERT INTO ms.messages (chat_id, sender_id, body) VALUES ($g, $ann, 'as Ann')}
+  as user $bo refused {UPDATE ms.messages SET body = 'rewritten' WHERE chat_id = $g AND seq = 2}
+  as user $ann refused {UPDATE ms.messages SET body = 'rewritten' WHERE chat_id = $g AND seq = 2}
+  as user $ann refused {UPDATE ms.messages SET sender_id = $cy WHERE chat_id = $g AND seq = 2}
+  as user $bo sees 1 {SELECT FROM ms.messages WHERE chat_id = $g AND seq = 2 AND sender_id = $bo AND body = 'old'}
+  -- a profile is its person's, and so are the blocks they make
+  as user $ann refused {UPDATE ms.users SET name = 'Bob' WHERE id = $bo}
+  as user $ann refused {INSERT INTO ms.blocks (blocker_id, blocked_id) VALUES ($bo, $cy)}
 
 test "messages are numbered per chat: a message's key is its chat and its number"
   given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
