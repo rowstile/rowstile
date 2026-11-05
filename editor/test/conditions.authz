@@ -1,27 +1,53 @@
--- Conditions whose SQL holds what parse.py reads as quoted: a brace or a quote there opens or closes nothing.
+-- Conditions whose SQL holds what parse.py reads as quoted: a brace or a quote there opens or closes nothing, in
+-- VS Code's own SQL grammar too: each condition ends at its last brace, and what follows is the policy's.
 type user = app.users
 type file = app.files
   owner : user = owner_id
   can view = owner
-  can a = owner or {"a}b" is not null}
-  can b = owner or {"it's" is not null}
-  can c = owner or {name <> $$}$$}
-  can d = owner or {name <> E'it\'s'}
-  can e = owner or {name in (E'it\'s', e'}')}
-  can f = owner or {name <> 'it''s }'}
-  can g = owner or {not archived /* a } here */}
+  can a = owner or {"a}b" is not null} or owner
+--                                   ^ punctuation.section.embedded.end.authz
+--                                     ^^ keyword.operator.logical.authz
+  can b = owner or {"it's" is not null} or owner
+--                                    ^ punctuation.section.embedded.end.authz
+--                                      ^^ keyword.operator.logical.authz
+  can c = owner or {name <> $$}$$} or owner
+--                               ^ punctuation.section.embedded.end.authz
+--                                 ^^ keyword.operator.logical.authz
+  can d = owner or {name <> E'it\'s'} or owner
+--                                  ^ punctuation.section.embedded.end.authz
+--                                    ^^ keyword.operator.logical.authz
+  can e = owner or {name in (E'it\'s', e'}')} or owner
+--                                          ^ punctuation.section.embedded.end.authz
+--                                            ^^ keyword.operator.logical.authz
+  can f = owner or {name <> 'it''s }'} or owner
+--                                   ^ punctuation.section.embedded.end.authz
+--                                     ^^ keyword.operator.logical.authz
+  can g = owner or {not archived /* a } here */} or owner
+--                                             ^ punctuation.section.embedded.end.authz
+--                                               ^^ keyword.operator.logical.authz
   can h = owner or {not archived -- the } here is SQL's comment
-    }
-  can i = owner or {a$b = 1 and E = 'x'}
-  can j = owner or {not archived /* a /* } */ } */}
-  can k = owner or {name <> $é$}$é$}
-  can l = owner or {😀x = 1}
+    } or owner
+--  ^ punctuation.section.embedded.end.authz
+--    ^^ keyword.operator.logical.authz
+  can i = owner or {a$b = 1 and E = 'x'} or owner
+--                                     ^ punctuation.section.embedded.end.authz
+--                                       ^^ keyword.operator.logical.authz
+  can j = owner or {not archived /* a /* } */ } */} or owner
+--                                                ^ punctuation.section.embedded.end.authz
+--                                                  ^^ keyword.operator.logical.authz
+  can k = owner or {name <> $é$}$é$} or owner
+--                                 ^ punctuation.section.embedded.end.authz
+--                                   ^^ keyword.operator.logical.authz
+  can l = owner or {😀x = 1} or owner
+--                         ^ punctuation.section.embedded.end.authz
+--                           ^^ keyword.operator.logical.authz
 --^^^ keyword.declaration.permission.authz
 --    ^ entity.name.function.permission.authz
 
 test "its own data"
   given a = {INSERT INTO app.users (name) VALUES ('x') -- don't
     RETURNING id}
+--              ^ punctuation.section.embedded.end.authz
   user $a can view file 1
 --^^^^^^^ variable.other.authz
 --        ^^^ keyword.control.authz

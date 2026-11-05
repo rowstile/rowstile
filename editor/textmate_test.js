@@ -6,6 +6,7 @@
 //   -- <---- keyword.declaration.authz     the line's first characters, one per -
 // Each character there has that scope as its innermost one (source.authz: none of the grammar's own).
 // Plain JavaScript, typed with JSDoc and checked strictly (editor/tsconfig.json).
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const vsctm = require("vscode-textmate");
@@ -13,23 +14,40 @@ const oniguruma = require("vscode-oniguruma");
 
 const HERE = __dirname;
 const ASSERT = /^--(\s*)(\^+|<-+)\s+(\S+)\s*$/;
+// VS Code's own SQL grammar (MIT), which colours the SQL inside { } there and on the site (Shiki has it from VS
+// Code): its strings and comments, with the grammar's own rules, decide where a condition ends. At a commit, by hash
+const SQL_GRAMMAR = {
+  url: "https://raw.githubusercontent.com/microsoft/vscode/af600487b1e94374d9f48f57cbf2cad24656b07f/extensions/sql/syntaxes/sql.tmLanguage.json",
+  sha256: "284a00c971983e532aa0abd40cc0fa2e4c62f783014f022747a7800e8244f963",
+};
+
+/** @returns {Promise<string>} */
+async function sqlGrammar() {
+  const response = await fetch(SQL_GRAMMAR.url);
+  if (!response.ok) throw new Error(`VS Code's SQL grammar: ${response.status} from ${SQL_GRAMMAR.url}`);
+  const text = await response.text();
+  if (crypto.createHash("sha256").update(text).digest("hex") !== SQL_GRAMMAR.sha256) {
+    throw new Error(`VS Code's SQL grammar isn't the one ${SQL_GRAMMAR.url} had (its sha256)`);
+  }
+  return text;
+}
 
 /** @returns {Promise<vsctm.IGrammar>} */
 async function grammar() {
   const wasm = fs.readFileSync(path.join(path.dirname(require.resolve("vscode-oniguruma")), "onig.wasm"));
   await oniguruma.loadWASM(wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength));
   const file = path.join(HERE, "syntaxes", "authz.tmLanguage.json");
+  const sql = await sqlGrammar();
   const registry = new vsctm.Registry({
     onigLib: Promise.resolve({
       createOnigScanner: (sources) => new oniguruma.OnigScanner(sources),
       createOnigString: (text) => new oniguruma.OnigString(text),
     }),
-    // the SQL inside { } is VS Code's own SQL grammar's: here one that colours nothing
     loadGrammar: async (scope) =>
       scope === "source.authz"
         ? vsctm.parseRawGrammar(fs.readFileSync(file, "utf8"), file)
         : scope === "source.sql"
-          ? vsctm.parseRawGrammar(JSON.stringify({ scopeName: "source.sql", patterns: [] }), "sql.json")
+          ? vsctm.parseRawGrammar(sql, "sql.tmLanguage.json")
           : null,
   });
   const loaded = await registry.loadGrammar("source.authz");

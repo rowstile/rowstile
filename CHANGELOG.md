@@ -588,6 +588,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   error, and a brace inside could end the condition early.
 - VS Code and the site colour the permission after `shared by` as a permission, and Zed, Neovim and Helix colour the
   scopes of a test line's `with scope`: each editor colours those lines as the others do.
+- VS Code and the site end a condition at its last brace when a dollar quote (`$$...$$`, `$tag$...$tag$`) or an
+  `E'...'` string inside it holds a brace or a quote. Before, the SQL colouring ended it early, and coloured the rest
+  as policy words.
 
 ### Upgrading
 
