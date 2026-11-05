@@ -342,6 +342,23 @@ said=$(CLI apply "$T/p.authz" 2>&1)
 case "$said" in *unchanged*) bad "a readers table dropped since: apply said unchanged" "$said" ;; esac
 check "a readers table dropped since: applying makes it again, rows and all" \
   "SELECT to_regclass('authz_sync.folder__readers') IS NOT NULL AND public.sync_same()"
+# a readers table whose columns are not the index's any more (a type's key changed): made again, which takes it out of
+# a publication that names it, and applying says so
+PSQL -c "ALTER TABLE authz_sync.folder__readers ALTER COLUMN id TYPE text" >/dev/null
+if PSQL -c "CREATE PUBLICATION ${DB}_readers FOR TABLE authz_sync.folder__readers" >/dev/null 2>&1; then
+  said=$(CLI apply "$T/p.authz" 2>&1)
+  case "$said" in
+    *"authz_sync.folder__readers is made again (its columns are not the index's any more: a type's key changed), so the publication ${DB}_readers no longer holds it: ALTER PUBLICATION ${DB}_readers ADD TABLE authz_sync.folder__readers"*)
+      ok "a readers table made again: applying says the publication that named it no longer holds it" ;;
+    *) bad "a readers table made again, and its publication" "$said" ;;
+  esac
+  PSQL -c "DROP PUBLICATION ${DB}_readers" >/dev/null
+else
+  CLI apply "$T/p.authz" >/dev/null 2>&1
+  ok "a readers table made again: applying says the publication that named it no longer holds it (skipped: this role can't make a publication here)"
+fi
+check "... and makes it with the type's key, rows and all" \
+  "SELECT format_type(atttypid, NULL) = 'bigint' AND public.sync_same() FROM pg_attribute WHERE attrelid = 'authz_sync.folder__readers'::regclass AND attname = 'id'"
 # a write the index didn't follow (as in replica mode, or to the index itself): sync_verify says so, reapply --force
 # puts it right
 # (it says the first part that differs: the groups, then the keys, then each table's readers)
@@ -641,6 +658,14 @@ sync after commit"
 apply "$AFTER"
 same "after commit, applied: the index holds what authz.list gives"
 check "after commit: nothing waits" "SELECT authz.sync_behind() IS NULL AND authz.sync_work() = 0"
+# the table of what waits dropped since: applying sees it isn't all there, and makes it again
+PSQL -c "DROP TABLE authz_sync.pending" >/dev/null
+printf '%s\n' "$AFTER" > "$T/p.authz"
+said=$(CLI apply "$T/p.authz" 2>&1)
+case "$said" in *unchanged*) bad "after commit, the table of what waits dropped since: apply said unchanged" "$said" ;; esac
+check "after commit, the table of what waits dropped since: applying makes it again, and a write is noted there" \
+  "WITH s AS ($(share file 13 6) RETURNING 1) SELECT to_regclass('authz_sync.pending') IS NOT NULL AND count(*) = 1 FROM s"
+PSQL -c "DELETE FROM authz.shares WHERE subject_id = '6'" -c "SELECT authz.sync_work()" >/dev/null
 PSQL -c "$(share file 13 6)"
 [ "$(reads 6 13)" = f ] && ok "after commit: a share made isn't in the index before the worker runs" || bad "after commit, before the worker"
 check "... authz.sync_behind() says how long it has waited" "SELECT authz.sync_behind() >= interval '0'"
@@ -1183,13 +1208,38 @@ oid=$(PSQL -c "SELECT 'authz_sync.file__mirror'::regclass::oid")
 out=$(CLI reapply --force 2>&1)
 [ "$(PSQL -c "SELECT 'authz_sync.file__mirror'::regclass::oid")" = "$oid" ] && ok "rowstile reapply keeps the mirror (PowerSync keeps reading it)" || bad "reapply made the mirror again" "$out"
 mirrored "... and works it out again"
+# a column added to the table (the app's migration): applying changes the mirror in place, so the publication that
+# holds it (PowerSync's) keeps it
+pub=$(PSQL -c "CREATE PUBLICATION ${DB}_ps FOR TABLE authz_sync.file__mirror, authz_sync.keys" >/dev/null 2>&1 && echo "${DB}_ps")
 PSQL -c "ALTER TABLE app.files ADD COLUMN size integer NOT NULL DEFAULT 0"
 check "authz.sync_verify() finds a mirror whose columns its table's are no longer" "SELECT NOT authz.sync_verify()"
-out=$(CLI reapply --force 2>&1)
-check "... and reapply makes it again, with the new column" \
-  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,size,readers}'
+[ "$(PSQL -c "SELECT EXISTS (SELECT 1 FROM authz.lint() WHERE severity = 'warning' AND object = 'authz_sync.file__mirror'
+               AND problem LIKE 'has not the columns of app.files %rowstile apply changes the mirror to them')")" = t ] &&
+  ok "... and lint warns of it" || bad "lint: a mirror's columns not its table's" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE object LIKE 'authz_sync%'")"
+printf '%s\n' "$MIRRORED" > "$T/p.authz"
+said=$(CLI apply "$T/p.authz" 2>&1)
+case "$said" in *unchanged*) bad "a column added to a mirrored table: apply said unchanged" "$said" ;; esac
+check "... and rowstile apply changes it in place, with the new column (the same table)" \
+  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,readers,size}'
+      AND 'authz_sync.file__mirror'::regclass::oid = $oid
    FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
 check "... which holds every file again" "SELECT authz.sync_verify()"
+if [ -n "$pub" ]; then
+  check "... and is still in the publication that held it" \
+    "SELECT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = '$pub' AND tablename = 'file__mirror')"
+  PSQL -c "DROP PUBLICATION $pub" >/dev/null
+else
+  ok "... and is still in the publication that held it (skipped: this role can't make a publication here)"
+fi
+said=$(CLI apply "$T/p.authz" 2>&1)
+case "$said" in *unchanged*) ok "... after which applying again is unchanged" ;; *) bad "apply after the mirror was changed" "$said" ;; esac
+# a mirror dropped since: applying sees it, and makes it again (else every write to the table would fail)
+PSQL -c "DROP TABLE authz_sync.file__mirror" >/dev/null
+said=$(CLI apply "$T/p.authz" 2>&1)
+case "$said" in *unchanged*) bad "a mirror dropped since: apply said unchanged" "$said" ;; esac
+check "a mirror dropped since: applying makes it again, and the table's writes go on" \
+  "WITH u AS (UPDATE app.files SET name = name WHERE id = 11 RETURNING id) SELECT count(*) = 1 FROM u"
+mirrored "... and it holds every file, each with its readers"
 # rowstile client powersync: the streams, their columns the mirror's, read in the database (from the policy's file,
 # rowstile.toml naming the database; with --db; in rowstile dev's loop); without a database, or one it can't reach, it says so
 P=$T/proj && mkdir -p "$P" && printf '%s\n' "$MIRRORED" > "$P/db.authz"
@@ -1234,6 +1284,13 @@ out=$(in_proj client powersync 2>&1); rc=$?
 [ $rc -eq 0 ] && [ "$out" = "$(cat "$P/sync-config.yaml")" ] &&
   ok "... and with the database rowstile.toml names: the streams of its policy, as rowstile client writes them" ||
   bad "client powersync by name, rowstile.toml's database" "$rc ${out:0:300}"
+# a key column of the mirror of another type than the table's: changed in place too, the primary key made again
+PSQL -c "ALTER TABLE authz_sync.file__mirror ALTER COLUMN id TYPE text" >/dev/null
+printf '%s\n' "$MIRRORED" > "$T/p.authz"; CLI apply "$T/p.authz" >/dev/null 2>&1 || bad "apply after the mirror's key changed"
+check "a mirror's key column of another type: applying changes it to the table's, its primary key again" \
+  "SELECT format_type(a.atttypid, NULL) = 'bigint' AND EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = a.attrelid AND k.contype = 'p')
+   FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attname = 'id' AND NOT a.attisdropped"
+mirrored "... and it holds every file, each with its readers"
 # (the masked view reads every column: it goes with the column, and applying makes it again)
 PSQL -c "ALTER TABLE app.files DROP COLUMN size CASCADE"
 check "a column dropped from the table since: its writes go on, its mirror rows hold NULL there" \
@@ -1246,11 +1303,11 @@ PSQL -c "ALTER TABLE app.files DROP COLUMN readers"
 # away (the mirror made again), and a masked column put in a mirror by hand is found
 apply "$(printf '%s\n' "$MIRRORED" | sed -e '/^  mask body : edit$/d')"
 check "a mask taken off a mirrored table: the mirror is made again, with the body" \
-  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,body,readers}'
+  "SELECT array_agg(a.attname ORDER BY a.attname) = '{body,confidential,folder_id,id,name,owner_id,readers}'
    FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
 apply "$MIRRORED"
 check "a mask added to a mirrored table since: the mirror is made again, without the masked body" \
-  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,readers}'
+  "SELECT array_agg(a.attname ORDER BY a.attname) = '{confidential,folder_id,id,name,owner_id,readers}'
    FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
 mirrored "... and holds every file, each with its readers"
 check "... which authz.sync_verify() finds so" "SELECT authz.sync_verify()"
@@ -1264,7 +1321,7 @@ check "a masked column put in a mirror since: authz.sync_verify() finds the mirr
   ok "... and lint finds it" || bad "lint: a masked column in a mirror" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE severity = 'error'")"
 out=$(CLI reapply --force 2>&1)
 check "... and reapply makes the mirror again, without it" \
-  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,readers}'
+  "SELECT array_agg(a.attname ORDER BY a.attname) = '{confidential,folder_id,id,name,owner_id,readers}'
    FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
 apply "$SYNCED"
 check "a policy that no longer mirrors the files: the mirror and its triggers go" \

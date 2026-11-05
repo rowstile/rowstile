@@ -551,6 +551,9 @@ def totals(m: Measured, kind: Callable[[str, str, str], str]) -> Totals:
                 mine.add(('"' + n.replace(".", '"."', 1) + '"', instead))  # "app"."files"
             elif instead == "<type>":
                 mine.add((f"'{n}'", "'<type>'"))
+                # (lint names a type's mirror, as text and as a name)
+                mine.add((f"authz_sync.{n}__mirror", "authz_sync.<type>__mirror"))
+                mine.add((f'authz_sync."{n}__mirror"', 'authz_sync."<type>__mirror"'))
     for r in m.runs:
         body = m.bodies[r.md5]
         k = kind(r.schema, r.name, r.args)

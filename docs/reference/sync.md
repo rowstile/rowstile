@@ -176,6 +176,9 @@ again when applied: its tables are kept. <!-- checked: tests/sync.sh "an index t
 - Applying keeps the index's tables, so the engines keep their shapes on them, and keeps their rows when what they
   are worked out by didn't change. <!-- checked: tests/sync.sh "applying again leaves the index's rows where they are (none written again)"; tests/sync.sh "... and so does rowstile reapply" -->
   Otherwise it works them out again and writes the difference. <!-- checked: tests/sync.sh "a synced permission changed: the rows that stay are kept, the others written" -->
+  A table of the index dropped since is made again by the next apply, which doesn't answer `unchanged`. <!-- checked: tests/sync.sh "a readers table dropped since: applying makes it again, rows and all"; tests/sync.sh "after commit, the table of what waits dropped since: applying makes it again, and a write is noted there"; tests/sync.sh "a mirror dropped since: applying makes it again, and the table's writes go on" -->
+  So is a readers table whose type's key columns changed: Postgres then takes it out of a publication that named
+  it, and applying warns of each such publication, to add it back. <!-- checked: tests/sync.sh "a readers table made again: applying says the publication that named it no longer holds it" -->
   A table no longer synced goes; a policy without sync lines drops the index, and so does `rowstile remove`. <!-- checked: tests/sync.sh "a table no longer synced: its readers table goes, the others stay"; tests/sync.sh "a policy without sync lines: applying it drops the index and its functions"; tests/sync.sh "rowstile remove drops the index" -->
 - What is written in replica mode isn't followed, as for the closure tables ([How it works](guarantees.md)).
   `authz.sync_verify()` compares the index with a rebuild, and `rowstile reapply --force` works it out again. <!-- checked: tests/sync.sh "authz.sync_verify() finds the index stale after a write it didn't follow"; tests/sync.sh "rowstile reapply, forced, works it out again" -->
@@ -234,6 +237,8 @@ With sync lines, `authz.lint()` reports these as errors:
 - it may read a masked column, a publication publishes one, or a mirror holds one; <!-- checked: tests/sync.sh "lint finds a masked column the sync role may read, granted since"; tests/sync.sh "lint finds a publication that publishes a masked column"; tests/sync.sh "a masked column put in a mirror since: authz.sync_verify() finds the mirror's columns are not its table's" -->
 - it owns a governed table, or is a member of its owner: an owner may turn row-level security off; <!-- checked: tests/sync.sh "lint finds a governed table the sync role owns" -->
 - a privilege on `authz_sync` that the policy doesn't give. Applying takes it back. <!-- checked: tests/sync.sh "lint reports a privilege on the index the policy doesn't give"; tests/sync.sh "applying again takes back the privilege on the index the policy doesn't give" -->
+
+And as a warning, a PowerSync mirror whose columns are not its table's ([The mirror](#the-mirror)). <!-- checked: tests/sync.sh "... and lint warns of it" -->
 
 The engine is trusted: it holds BYPASSRLS and every row, and rowstile can't check what it serves
 ([the threat model](../threat-model.md)). <!-- unchecked: what an engine serves is the engine's, outside the database -->
@@ -480,9 +485,13 @@ JSON array of the keys that may read the row, in order. <!-- checked: tests/sync
 It is kept as the table's rows are written (through a partition, or a table that inherits, too) and as the index
 writes their readers. <!-- checked: tests/sync.sh "a file made: its mirror row, with the readers worked out at commit"; tests/sync.sh "a folder moved: the readers of the files below it change in their mirror rows too"; tests/children.sh "a mirrored row made through the partition it is stored in: in the mirror"; tests/children.sh "a row made in the table that inherits: in the mirror of the table above" -->
 For every principal, the rows of the mirror whose readers hold one of its keys are those the index gives it. <!-- checked: tests/difftest.py "the sync index's mirror: " -->
-Applying keeps the mirror; it is made again when the table's columns change, which `authz.sync_verify()` reports
-until then, and `rowstile reapply --force` writes it again where it differs. <!-- checked: tests/sync.sh "rowstile reapply keeps the mirror (PowerSync keeps reading it)"; tests/sync.sh "authz.sync_verify() finds a mirror whose columns its table's are no longer"; tests/sync.sh "... and reapply makes it again, with the new column" -->
-A policy that masks a column of the table since, or no longer masks one, makes it again too: a masked column is
+Applying keeps the mirror, and so does `rowstile reapply --force`, which writes its rows again where they differ. <!-- checked: tests/sync.sh "rowstile reapply keeps the mirror (PowerSync keeps reading it)"; tests/sync.sh "... and works it out again" -->
+When the table's columns change (a column added, dropped, or of another type: the app's migrations), the next
+`rowstile apply` changes the mirror to them in place, so the publication that holds it keeps it, and writes its rows
+again where they differ. <!-- checked: tests/sync.sh "... and rowstile apply changes it in place, with the new column (the same table)"; tests/sync.sh "... and is still in the publication that held it"; tests/sync.sh "a mirror's key column of another type: applying changes it to the table's, its primary key again" -->
+Until then `authz.sync_verify()` is false and `authz.lint()` warns of it. <!-- checked: tests/sync.sh "authz.sync_verify() finds a mirror whose columns its table's are no longer"; tests/sync.sh "... and lint warns of it" -->
+A column added to a mirror comes after `readers`: a stream names its columns, so their order doesn't matter.
+A policy that masks a column of the table since, or no longer masks one, changes it too: a masked column is
 never in the mirror, whatever was applied before. <!-- checked: tests/sync.sh "a mask added to a mirrored table since: the mirror is made again, without the masked body"; tests/sync.sh "a mask taken off a mirrored table: the mirror is made again, with the body" -->
 Until then the table's writes go on: a column added isn't in the mirror yet, and one dropped is NULL there. <!-- checked: tests/sync.sh "a column dropped from the table since: its writes go on, its mirror rows hold NULL there" -->
 `authz.sync_verify()` compares it with the table's rows too. <!-- checked: tests/sync.sh "authz.sync_verify() compares the mirror too: it matches"; tests/sync.sh "... and finds a mirror row that isn't its file's any more" -->

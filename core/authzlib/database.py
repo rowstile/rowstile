@@ -684,13 +684,9 @@ def intact(db: Db, sql: str, compiler: Compiler) -> bool:
     from . import statements
 
     rules = compiler.rules
-    # the sync index's tables, where the policy keeps one (a preview): apply makes them again if one is gone
-    if compiler.pol.syncs and not all(
-        there(db, f"authz_sync.{q(n)}")
-        for n in ["keys", "groups", "expanded", "definitions"]
-        + (["inherits", "given"] if compiler.sync_build().keyed else [])
-        + [t + "__readers" for t in compiler.sync_build().tops]
-    ):
+    # the sync index, where the policy keeps one (a preview): apply makes a table of it again if one is gone, and
+    # changes a mirror whose table's columns changed
+    if compiler.pol.syncs and not flag(db.rows(compiler.sync_intact_sql())[0], "there"):
         return False
     # each rule on a whole row is a policy named authz_<command> (output.compile)
     made = sorted(
