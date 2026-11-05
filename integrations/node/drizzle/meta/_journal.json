@@ -71,6 +71,13 @@
       "when": 1793900477741,
       "tag": "0009_authz_kept_trees_tables_below",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793902005022,
+      "tag": "0010_authz_explain_for_another_user",
+      "breakpoints": true
     }
   ]
 }
