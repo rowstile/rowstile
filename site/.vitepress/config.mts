@@ -55,6 +55,8 @@ const stacks = [
 const sdks = [
   { text: "Python SDK", link: "/sdk/python" },
   { text: "TypeScript SDK", link: "/sdk/typescript" },
+  { text: "Go SDK (preview)", link: "/sdk/go" },
+  { text: ".NET SDK (preview)", link: "/sdk/dotnet" },
   { text: "Ruby SDK (preview)", link: "/sdk/ruby" },
   { text: "Java SDK (preview)", link: "/sdk/java" },
   { text: "Kotlin SDK (preview)", link: "/sdk/kotlin" },
