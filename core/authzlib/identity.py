@@ -67,8 +67,11 @@ class IdentityMixin(Core):
 CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  IF TG_OP = 'TRUNCATE' THEN
+  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM {tbl}) THEN   -- the table is empty, and so are those under it
     PERFORM authz_int.keys_gone({name}, NULL);
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there, and keep their keys
+    PERFORM authz_int.keys_gone({name}, ARRAY(SELECT k.user_id FROM authz.api_keys k WHERE k.principal_type = {name}
+                                              AND NOT EXISTS (SELECT 1 FROM {tbl} x WHERE {self.key_text(t, "x")} = k.user_id)));
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.keys_gone({name}, ARRAY({gone}));
   ELSE
@@ -83,11 +86,12 @@ BEGIN
   RETURN NULL;
 END $f$;
 -- before TRUNCATE empties the table: with a snapshot older than a key made for one of its rows, fail to serialize
+-- (the keys go after it, of the rows that are gone: TRUNCATE ONLY keeps those of the tables under it)
 CREATE FUNCTION {fn_first}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.keys_gone({name}, ARRAY(SELECT {self.key_text(t, "x")} FROM {tbl} x));
+    PERFORM authz_int.forget_marks({name}, ARRAY(SELECT {self.key_text(t, "x")} FROM {tbl} x));
   END IF;
   RETURN NULL;
 END $f$;
