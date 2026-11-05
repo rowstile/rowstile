@@ -166,11 +166,13 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   the app role was given it, and a statement on it runs none of the table's statement triggers until
   then. <!-- checked: tests/children.sh "and the partition is closed: the app role reads it through its table"; tests/children.sh "a migration closes a partition made since, where the rules of its table didn't change"; tests/migrate_test.py "a partition attached to a table with rules, the rules of another table changed" -->
   A table that inherits, made after apply, has neither until the next apply or migration. `authz.lint()` reports
-  both, and `rowstile apply` then applies (it does not answer `unchanged`). Truncating a partition
-  skips the triggers (emptying one partition is not emptying the table), and `authz.lint()` reports
-  an app role that may do it. <!-- checked: tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips its triggers" -->
-  Dropping or detaching a partition skips them too, which leaves its rows' shares until the next
-  apply.
+  both, and `rowstile apply` then applies (it does not answer `unchanged`). Truncating a partition, or a
+  table that inherits, removes the shares, API keys and pending requests of the rows it empties, and
+  rebuilds the trees they are in. <!-- checked: tests/children.sh "the shares of its rows go, those of the other partitions' stay"; tests/children.sh "the keys of the people stored there go, the others' stay"; tests/children.sh "and the pending requests naming its rows are cancelled"; tests/children.sh "a topic whose parent is in the partition emptied is under it no more: the tree is rebuilt" -->
+  The audit and the sync index's mirror don't hear of it (they would take it for the whole table
+  emptied), and `authz.lint()` reports an app role that may do it. <!-- checked: tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips row-level security and the audit" -->
+  Dropping or detaching a partition runs no trigger at all: until the next apply, the shares of its
+  rows stay, and a row made later with one of their ids gets them. <!-- unchecked: Postgres runs no trigger for DROP TABLE or DETACH PARTITION; the next apply's sweep removes them -->
   An inheritance table whose table, or link table, has other tables under it than at the last apply (a
   partition attached, detached, made or dropped, a table that inherits made or dropped) is computed again by
   the next apply, not kept, and `rowstile apply` then applies: rows that reached it so, or rows written

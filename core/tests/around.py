@@ -650,10 +650,10 @@ def initial(gen: genpolicy.GenPolicyGen, w: World) -> str:
 
 def routed(db: DB, spec: Spec, w: World, sql: str, rnd: random.Random) -> str:
     """A random change, with half its statements on a table that has tables under it sent to those directly, as
-    an app's own statements or a script may be: an update or a delete to each table that stores the rows (the
-    table itself with ONLY), an insert to a table that inherits from it. Statements on the tables under one run
-    its triggers as their own (apply gave them), so the answers stay what they would be through the table.
-    Through the table still: TRUNCATE (emptying one partition is not emptying the table), and on a partitioned
+    an app's own statements or a script may be: an update, a delete or a TRUNCATE to each table that stores the
+    rows (the table itself with ONLY; a TRUNCATE to each in turn, so the first leaves the others' rows), an insert
+    to a table that inherits from it. Statements on the tables under one run its triggers as their own (apply gave
+    them), so the answers stay what they would be through the table. Through the table still: on a partitioned
     table an insert or a change of the key (a partition takes only its own keys). On a table others inherit from,
     an insert or a change of the key does nothing where the key is already there: once_keyed()."""
     n = spec.spelling
@@ -679,6 +679,7 @@ def routed(db: DB, spec: Spec, w: World, sql: str, rnd: random.Random) -> str:
         line = once_keyed(line, inherited, key)
         tbl = next((t for t in under if line.startswith((f"UPDATE {t} SET ", f"DELETE FROM {t} WHERE "))), "")
         into = next((t for t in under if line.startswith(f"INSERT INTO {t} ")), "")
+        emptied = next((t for t in under if line == f"TRUNCATE {t};"), "")
         if tbl and rnd.random() < 0.5 and not (tbl in partitioned and line.startswith(f"UPDATE {tbl} SET {i} = ")):
             verb, rest = (
                 ("UPDATE", line[len(f"UPDATE {tbl}") :])
@@ -686,6 +687,9 @@ def routed(db: DB, spec: Spec, w: World, sql: str, rnd: random.Random) -> str:
                 else ("DELETE FROM", line[len(f"DELETE FROM {tbl}") :])
             )
             each = [f"{verb} ONLY {x}{rest}" for x in under[tbl]]
+            line = "\n".join(each if inside else ["BEGIN;", *each, "COMMIT;"])
+        elif emptied and rnd.random() < 0.5:
+            each = [f"TRUNCATE ONLY {x};" for x in under[emptied]]
             line = "\n".join(each if inside else ["BEGIN;", *each, "COMMIT;"])
         elif into and into not in partitioned and below[into] and rnd.random() < 0.5:
             line = f"INSERT INTO {rnd.choice(below[into])}{line[len(f'INSERT INTO {into}') :]}"

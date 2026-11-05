@@ -4,7 +4,7 @@ read-only impersonation, and syncing group members from an identity provider."""
 from .compiler import Core
 from .governance import trigger_if_partitioned
 from .parse import Type, cols
-from .sqlutil import lit, q, qt
+from .sqlutil import below_too, lit, q, qt
 
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
 
@@ -69,7 +69,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM {tbl}) THEN   -- the table is empty, and so are those under it
     PERFORM authz_int.keys_gone({name}, NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there, and keep their keys
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: the rows still there keep their keys
     PERFORM authz_int.keys_gone({name}, ARRAY(SELECT k.user_id FROM authz.api_keys k WHERE k.principal_type = {name}
                                               AND NOT EXISTS (SELECT 1 FROM {tbl} x WHERE {self.key_text(t, "x")} = k.user_id)));
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
@@ -85,13 +85,17 @@ BEGIN
   PERFORM authz_int.keys_gone({name}, ARRAY[{self.key_text(t, "OLD")}]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a key made for one of its rows, fail to serialize
--- (the keys go after it, of the rows that are gone: TRUNCATE ONLY keeps those of the tables under it)
+-- before TRUNCATE empties the table, or one under it (each has this trigger: CHILD_TRIGGERS): with a snapshot older
+-- than a key made for one of the rows stored there, fail to serialize (the keys go after it, of the rows that are
+-- gone: TRUNCATE ONLY, or of a table under it, keeps those of the others)
 CREATE FUNCTION {fn_first}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_ids text[];
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.forget_marks({name}, ARRAY(SELECT {self.key_text(t, "x")} FROM {tbl} x));
+    EXECUTE $q$SELECT ARRAY(SELECT {self.key_text(t, "x")} FROM ONLY $q$
+            || pg_catalog.quote_ident(TG_TABLE_SCHEMA) || '.' || pg_catalog.quote_ident(TG_TABLE_NAME) || $q$ x)$q$ INTO v_ids;
+    PERFORM authz_int.forget_marks({name}, v_ids);
   END IF;
   RETURN NULL;
 END $f$;
@@ -101,8 +105,10 @@ CREATE TRIGGER {q("authz_" + t.name + "_keys_gone_id")} AFTER UPDATE ON {tbl} FO
   WHEN ({self.key(t, "OLD")} IS DISTINCT FROM {self.key(t, "NEW")}) EXECUTE FUNCTION {fn_row}();
 CREATE TRIGGER {q("authz_" + t.name + "_keys_gone_trunc")} AFTER TRUNCATE ON {tbl}
   FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+{below_too(q("authz_" + t.name + "_keys_gone_trunc"), tbl)}
 CREATE TRIGGER {q("authz_" + t.name + "_keys_gone_trunc_first")} BEFORE TRUNCATE ON {tbl}
   FOR EACH STATEMENT EXECUTE FUNCTION {fn_first}();
+{below_too(q("authz_" + t.name + "_keys_gone_trunc_first"), tbl)}
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with lose their keys too.
 {moved}"""

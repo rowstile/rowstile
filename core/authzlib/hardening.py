@@ -451,8 +451,9 @@ BEGIN
     RETURN NEXT;
   END LOOP;
   -- partitions and inheritance children: used directly, they skip the rules of the table above (apply turns
-  -- row-level security on for the ones there are then; later ones are found here), and TRUNCATE skips its
-  -- triggers. The tables above: those with rules, and those rowstile watches (a trigger of its own on them)
+  -- row-level security on for the ones there are then; later ones are found here), and TRUNCATE skips the
+  -- triggers for TRUNCATE alone that are not right there (the audit's, the sync mirror's). The tables above: those
+  -- with rules, and those rowstile watches (a trigger of its own on them)
   FOR r IN WITH RECURSIVE x(tbl, governed) AS (
              SELECT to_regclass(t), true FROM unnest({arr([qt(t) for t in governed])}) t
              UNION SELECT DISTINCT g.tgrelid::regclass, false FROM pg_trigger g
@@ -468,7 +469,7 @@ BEGIN
            FROM d JOIN pg_class k ON k.oid = d.oid LOOP
     IF has_table_privilege(v_role, r.part, 'TRUNCATE') THEN
       severity := 'error'; object := r.part::text;
-      problem := format('is a partition of %s (or inherits from it), and %s may TRUNCATE it, which skips row-level security and %s''s triggers: REVOKE TRUNCATE ON %s FROM %s', r.tbl, {lit(role)}, r.tbl, r.part, {lit(role)});
+      problem := format('is a partition of %s (or inherits from it), and %s may TRUNCATE it, which skips row-level security, and the audit and the sync index''s mirror of %s don''t hear of it: REVOKE TRUNCATE ON %s FROM %s', r.tbl, {lit(role)}, r.tbl, r.part, {lit(role)});
       RETURN NEXT;
     END IF;
     -- (on a table without rules, statements on it run the triggers of the table above as their own: the next loop
