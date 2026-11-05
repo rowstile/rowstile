@@ -45,14 +45,15 @@ export function idText(id: Id): string {
 }
 
 /** A row's key as the database writes it, for a message: 7, or (1,2) for a composite key (a field is quoted
- *  only where Postgres would: when it is empty or holds a comma, a quote, a parenthesis or a space). */
+ *  only where Postgres would: when it is empty or holds a comma, a quote, a backslash, a parenthesis or one of
+ *  ASCII's six spaces, and for no other character). */
 export function idShown(id: Id): string {
   if (!Array.isArray(id)) return String(id);
   if (id.length === 1) return String(id[0]);
   return "(" + id.map((v) => {
     if (v === null || v === undefined) return "";
     const text = String(v);
-    return text === "" || /[",\\()\s]/.test(text) ? '"' + text.replace(/\\/g, "\\\\").replace(/"/g, '""') + '"' : text;
+    return text === "" || /[",\\() \t\n\r\v\f]/.test(text) ? '"' + text.replace(/\\/g, "\\\\").replace(/"/g, '""') + '"' : text;
   }).join(",") + ")";
 }
 
@@ -274,7 +275,8 @@ export class Refused extends Error {
 export class NotFound extends Error {
   readonly status = 404;
   constructor(public table?: string, public id?: string, options?: { cause?: unknown }) {
-    super(`${table ?? "the row"}${id === undefined ? "" : " " + id} not found`, options);
+    // 'app.notes 7 not found', 'app.notes not found', 'row 7 not found', or 'not found', as every SDK says it
+    super([...(id === undefined ? (table === undefined ? [] : [table]) : [table ?? "row", id]), "not found"].join(" "), options);
     this.name = "NotFound";
   }
   problem(): Problem {
@@ -489,7 +491,8 @@ export interface AuthzCalls {
   can<T extends ObjectType>(type: T, id: Id, perm: Permission<T>): Promise<boolean>;
   perms<T extends ObjectType>(type: T, id: Id): Promise<Permission<T>[]>;
   permsOf<T extends ObjectType>(type: T, ids: readonly Id[]): Promise<Record<string, Permission<T>[]>>;
-  list<T extends ObjectType>(type: T, perm: Permission<T>, page?: { after?: Id; limit?: number }): Promise<string[]>;
+  /** In pages: after the id `after` (none: from the first), at most `limit` of them (none: every one after it). */
+  list<T extends ObjectType>(type: T, perm: Permission<T>, page?: { after?: Id | null; limit?: number | null }): Promise<string[]>;
   listShares<T extends ObjectType>(type: T, id: Id): Promise<Share[]>;
   share<T extends SharedType>(type: T, id: Id, relation: SharedRelation<T>, subjectType: string, subjectId: Id,
                               subjectRelation?: string): Promise<void>;
@@ -532,9 +535,9 @@ export function calls(q: Queryable): AuthzCalls & {
       const rows = (await q.query("SELECT id, perms FROM authz.perms_of($1, $2::text[])", [type, ids.map(idText)])).rows;
       return Object.fromEntries(rows.map((r) => [r.id, r.perms])) as Record<string, any[]>;
     },
-    list: async (type: string, perm: string, page: { after?: Id; limit?: number } = {}) =>
+    list: async (type: string, perm: string, page: { after?: Id | null; limit?: number | null } = {}) =>
       (await q.query("SELECT x FROM authz.list($1, $2, $3, $4) x",
-        [type, perm, page.after === undefined ? null : idText(page.after), page.limit ?? null])).rows.map((r) => r.x as string),
+        [type, perm, page.after == null ? null : idText(page.after), page.limit ?? null])).rows.map((r) => r.x as string),
     listShares: async (type: string, id: Id) =>
       (await q.query("SELECT * FROM authz.list_shares($1, $2::text)", [type, idText(id)])).rows as Share[],
     share: async (type: string, id: Id, relation: string, subjectType: string, subjectId: Id, subjectRelation = "") => {
