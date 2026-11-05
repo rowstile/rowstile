@@ -25,7 +25,7 @@ rowstile said which rule and why.
 - `code`: [AZ709](../../docs/errors/AZ709.md), a write refused by a rule. Another refusal has the database's
   own code: [AZ705](../../docs/errors/AZ705.md) for a share.
 
-Where it comes from: `Refused.problem()` in both SDKs; `rowstile.fastapi` answers with it
-([FastAPI](../../docs/stacks/fastapi.md)), and so do `route()` and `action()` in `@rowstile/next`
-([Next.js](../../docs/stacks/nextjs.md)) and `problemOf(e)` for any other framework
+Where it comes from: every SDK ([each one's calls](../../docs/stacks/README.md#problem-details)). In Python and TypeScript, `Refused.problem()` is it;
+`rowstile.fastapi` answers with it ([FastAPI](../../docs/stacks/fastapi.md)), and so do `route()` and `action()` in
+`@rowstile/next` ([Next.js](../../docs/stacks/nextjs.md)) and `problemOf(e)` for any other framework
 ([Node](../../docs/stacks/node.md)).

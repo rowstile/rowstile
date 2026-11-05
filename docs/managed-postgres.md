@@ -1,8 +1,9 @@
 # Managed Postgres
 
 rowstile needs no extension and no superuser, so it runs on a managed Postgres as it does on your own. This
-page is what we found running it on Neon and Supabase: the command, both SDKs' conformance suites (the
-[FastAPI](stacks/fastapi.md) and [Next.js](stacks/nextjs.md) apps), direct and through each service's pooler.
+page is what we found running it on Neon and Supabase: the command, the conformance suites of the two SDKs there
+were then (the [FastAPI](stacks/fastapi.md) and [Next.js](stacks/nextjs.md) apps), direct and through each service's
+pooler.
 These trials were run by hand, before 0.1.0-alpha.1 (released 2026-10-04); no check runs them again, so a later
 release or a change on the service may differ. We haven't run it on the other services (RDS, Cloud SQL,
 Azure); the first part applies to them too.

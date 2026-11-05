@@ -23,7 +23,8 @@ The app sends no `WWW-Authenticate` header with it: how people sign in is the ap
 that never signed in at all is the app's bug ([AZ701](../../docs/errors/AZ701.md)), not this: it stays an error,
 a 500.
 
-Where it comes from: `rowstile.fastapi` ([FastAPI](../../docs/stacks/fastapi.md)), `route()` and `action()` in
-`@rowstile/next` ([Next.js](../../docs/stacks/nextjs.md)) and `problemOf(e)` for any other framework
+Where it comes from: every SDK ([each one's calls](../../docs/stacks/README.md#problem-details)). In Python and TypeScript: `rowstile.fastapi`
+([FastAPI](../../docs/stacks/fastapi.md)), `route()` and `action()` in `@rowstile/next`
+([Next.js](../../docs/stacks/nextjs.md)) and `problemOf(e)` for any other framework
 ([Node](../../docs/stacks/node.md)). The routes `authzRoutes()` makes for `@rowstile/react` answer with it too:
 `POST request` from someone not signed in. `useAccessRequest` then fails with the database's words.
