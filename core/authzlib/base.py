@@ -23,9 +23,6 @@ CREATE TABLE IF NOT EXISTS authz.shares (
   PRIMARY KEY (object_type, object_id, relation, subject_type, subject_id, subject_relation));
 CREATE INDEX IF NOT EXISTS shares_by_subject
   ON authz.shares (subject_type, subject_id, subject_relation, object_type, relation);
--- the shares that end or begin at a time, for authz.announce_timed_shares()
-CREATE INDEX IF NOT EXISTS shares_by_end ON authz.shares (expires_at) WHERE expires_at IS NOT NULL;
-CREATE INDEX IF NOT EXISTS shares_by_start ON authz.shares (starts_at) WHERE starts_at IS NOT NULL;
 REVOKE ALL ON authz.shares FROM PUBLIC;
 -- A share with anyone names no one: its id is '*' and its relation '', whatever it was made with (authz_int.canon,
 -- authz.share). One stored with others takes them; of two that are then one share, the one stored so stays, else
@@ -91,6 +88,29 @@ CREATE TABLE IF NOT EXISTS authz.audit (
   reason           text);
 CREATE INDEX IF NOT EXISTS audit_by_object ON authz.audit (object_type, object_id, at);
 REVOKE ALL ON authz.api_keys, authz.settings, authz.audit FROM PUBLIC;
+
+-- For each object with a share that starts or ends later: the next such time, when authz.announce_timed_shares()
+-- announces the object (each share's write puts its times in, a run works out the next). A database made before
+-- it: the times its shares have after the last run, as that run (timed_shares_to) left them
+-- @object table authz.shares_due
+DO $due$ BEGIN
+  IF to_regclass('authz.shares_due') IS NULL THEN
+    CREATE TABLE authz.shares_due (
+      object_type text        NOT NULL,
+      object_id   text        NOT NULL,
+      at          timestamptz NOT NULL,
+      PRIMARY KEY (object_type, object_id));
+    INSERT INTO authz.shares_due
+    SELECT g.object_type, g.object_id, min(v.at) FROM authz.shares g CROSS JOIN LATERAL (VALUES (g.starts_at), (g.expires_at)) v(at)
+    WHERE v.at > coalesce((SELECT s.value::timestamptz FROM authz.settings s WHERE s.key = 'timed_shares_to'), '-infinity')
+    GROUP BY g.object_type, g.object_id;
+  END IF;
+END $due$;
+CREATE INDEX IF NOT EXISTS shares_due_by_at ON authz.shares_due (at);
+REVOKE ALL ON authz.shares_due FROM PUBLIC;
+-- (what an earlier authz.announce_timed_shares() kept, the end of its last run, and the indexes it read: no more)
+DELETE FROM authz.settings WHERE key = 'timed_shares_to';
+DROP INDEX IF EXISTS authz.shares_by_end, authz.shares_by_start;
 
 -- Change feed: objects whose access may have changed, for caches, search indexes, file stores
 CREATE TABLE IF NOT EXISTS authz.changes (

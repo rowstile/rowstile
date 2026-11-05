@@ -151,9 +151,6 @@ CREATE TABLE IF NOT EXISTS authz.shares (
   PRIMARY KEY (object_type, object_id, relation, subject_type, subject_id, subject_relation));
 CREATE INDEX IF NOT EXISTS shares_by_subject
   ON authz.shares (subject_type, subject_id, subject_relation, object_type, relation);
--- the shares that end or begin at a time, for authz.announce_timed_shares()
-CREATE INDEX IF NOT EXISTS shares_by_end ON authz.shares (expires_at) WHERE expires_at IS NOT NULL;
-CREATE INDEX IF NOT EXISTS shares_by_start ON authz.shares (starts_at) WHERE starts_at IS NOT NULL;
 REVOKE ALL ON authz.shares FROM PUBLIC;
 -- A share with anyone names no one: its id is '*' and its relation '', whatever it was made with (authz_int.canon,
 -- authz.share). One stored with others takes them; of two that are then one share, the one stored so stays, else
@@ -219,6 +216,29 @@ CREATE TABLE IF NOT EXISTS authz.audit (
   reason           text);
 CREATE INDEX IF NOT EXISTS audit_by_object ON authz.audit (object_type, object_id, at);
 REVOKE ALL ON authz.api_keys, authz.settings, authz.audit FROM PUBLIC;
+
+-- For each object with a share that starts or ends later: the next such time, when authz.announce_timed_shares()
+-- announces the object (each share's write puts its times in, a run works out the next). A database made before
+-- it: the times its shares have after the last run, as that run (timed_shares_to) left them
+-- @object table authz.shares_due
+DO $due$ BEGIN
+  IF to_regclass('authz.shares_due') IS NULL THEN
+    CREATE TABLE authz.shares_due (
+      object_type text        NOT NULL,
+      object_id   text        NOT NULL,
+      at          timestamptz NOT NULL,
+      PRIMARY KEY (object_type, object_id));
+    INSERT INTO authz.shares_due
+    SELECT g.object_type, g.object_id, min(v.at) FROM authz.shares g CROSS JOIN LATERAL (VALUES (g.starts_at), (g.expires_at)) v(at)
+    WHERE v.at > coalesce((SELECT s.value::timestamptz FROM authz.settings s WHERE s.key = 'timed_shares_to'), '-infinity')
+    GROUP BY g.object_type, g.object_id;
+  END IF;
+END $due$;
+CREATE INDEX IF NOT EXISTS shares_due_by_at ON authz.shares_due (at);
+REVOKE ALL ON authz.shares_due FROM PUBLIC;
+-- (what an earlier authz.announce_timed_shares() kept, the end of its last run, and the indexes it read: no more)
+DELETE FROM authz.settings WHERE key = 'timed_shares_to';
+DROP INDEX IF EXISTS authz.shares_by_end, authz.shares_by_start;
 
 -- Change feed: objects whose access may have changed, for caches, search indexes, file stores
 CREATE TABLE IF NOT EXISTS authz.changes (
@@ -1074,28 +1094,43 @@ BEGIN
       THEN greatest(authz.settings.value::bigint, EXCLUDED.value::bigint)::text ELSE EXCLUDED.value END;
   RETURN n;
 END $f$;
--- A share ends (expires_at) or begins (starts_at) with no write to announce it: this announces the objects of the
--- shares that ended or began since its last call (the first call: every one that has), with what reads them.
--- Schedule it as often as readers should hear of it; until it runs, they don't. Returns the number of shares.
+-- A share ends (expires_at) or begins (starts_at) with no write to announce it: this announces the objects whose next
+-- share start or end (authz.shares_due, which each share's write keeps) has passed, with the cause share_ended or
+-- share_started, and what reads them; then works out each one's next. It keeps no time of its own: a clock set back
+-- hides nothing. Schedule it as often as readers should hear of it; until it runs, they don't. Returns the number of
+-- shares.
 CREATE OR REPLACE FUNCTION authz.announce_timed_shares() RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE
-  v_from timestamptz := coalesce((SELECT s.value::timestamptz FROM authz.settings s WHERE s.key = 'timed_shares_to'),
-                                 '-infinity');
   v_to timestamptz := now();
-  n bigint; m bigint;
+  v_due authz.shares_due[];
+  n bigint;
 BEGIN
-  PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'share_ended')
-  FROM authz.shares g WHERE g.expires_at > v_from AND g.expires_at <= v_to GROUP BY g.object_type;
-  SELECT count(*) INTO n FROM authz.shares g WHERE g.expires_at > v_from AND g.expires_at <= v_to;
-  PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'share_started')
-  FROM authz.shares g WHERE g.starts_at > v_from AND g.starts_at <= v_to GROUP BY g.object_type;
-  SELECT count(*) INTO m FROM authz.shares g WHERE g.starts_at > v_from AND g.starts_at <= v_to;
-  -- (written in ISO 8601, which every session reads alike whatever its DateStyle)
-  INSERT INTO authz.settings VALUES ('timed_shares_to', to_char(v_to AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
-    ON CONFLICT (key) DO UPDATE SET value = to_char(greatest(authz.settings.value::timestamptz, v_to) AT TIME ZONE 'UTC',
-                                                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
-  RETURN n + m;
+  -- the objects due, locked (a writer adding a share to one locks it too): this run waits for that writer, and then
+  -- reads the shares as it left them, or the writer waits for this run and then puts its share's time in
+  v_due := ARRAY(SELECT d FROM authz.shares_due d WHERE d.at <= v_to ORDER BY d.object_type, d.object_id FOR UPDATE);
+  PERFORM authz_int.changed(x.object_type, array_agg(x.object_id ORDER BY x.object_id), 'share_ended')
+  FROM (SELECT DISTINCT d.object_type, d.object_id FROM unnest(v_due) d
+        JOIN authz.shares g ON g.object_type = d.object_type AND g.object_id = d.object_id
+        WHERE g.expires_at >= d.at AND g.expires_at <= v_to) x GROUP BY x.object_type;
+  PERFORM authz_int.changed(x.object_type, array_agg(x.object_id ORDER BY x.object_id), 'share_started')
+  FROM (SELECT DISTINCT d.object_type, d.object_id FROM unnest(v_due) d
+        JOIN authz.shares g ON g.object_type = d.object_type AND g.object_id = d.object_id
+        WHERE g.starts_at >= d.at AND g.starts_at <= v_to) x GROUP BY x.object_type;
+  SELECT count(*) INTO n FROM unnest(v_due) d
+  JOIN authz.shares g ON g.object_type = d.object_type AND g.object_id = d.object_id
+  WHERE (g.expires_at >= d.at AND g.expires_at <= v_to) OR (g.starts_at >= d.at AND g.starts_at <= v_to);
+  -- each one's next start or end, or none
+  WITH nx AS MATERIALIZED (
+    SELECT d.object_type, d.object_id,
+           (SELECT min(v.at) FROM authz.shares g CROSS JOIN LATERAL (VALUES (g.starts_at), (g.expires_at)) v(at)
+            WHERE g.object_type = d.object_type AND g.object_id = d.object_id AND v.at > v_to) AS at
+    FROM unnest(v_due) d),
+  gone AS (DELETE FROM authz.shares_due d USING nx
+           WHERE nx.at IS NULL AND d.object_type = nx.object_type AND d.object_id = nx.object_id RETURNING 1)
+  UPDATE authz.shares_due d SET at = nx.at FROM nx
+  WHERE nx.at IS NOT NULL AND d.object_type = nx.object_type AND d.object_id = nx.object_id;
+  RETURN n;
 END $f$;
 -- The audit trail: entries older than p_keep (no default: how long to keep it is a compliance
 -- decision). The trim itself is recorded in the audit trail.
@@ -1161,6 +1196,14 @@ BEGIN
                                            'subject_relation', OLD.subject_relation, 'expires_at', OLD.expires_at,
                                            'starts_at', OLD.starts_at, 'caveat', OLD.caveat) END)));
   PERFORM authz_int.changed(r.object_type, ARRAY[r.object_id], 'share');
+  -- a share that starts or ends from now on: its object's next such time, for authz.announce_timed_shares() (the
+  -- earliest of what the writers put in, each locking the object's row: none is lost; a run works out the next)
+  IF TG_OP <> 'DELETE' AND (NEW.starts_at >= now() OR NEW.expires_at >= now()) THEN
+    INSERT INTO authz.shares_due AS d
+    VALUES (NEW.object_type, NEW.object_id, least(CASE WHEN NEW.starts_at >= now() THEN NEW.starts_at END,
+                                                   CASE WHEN NEW.expires_at >= now() THEN NEW.expires_at END))
+    ON CONFLICT (object_type, object_id) DO UPDATE SET at = least(d.at, EXCLUDED.at);
+  END IF;
   IF TG_OP = 'UPDATE' AND (OLD.object_type, OLD.object_id) IS DISTINCT FROM (NEW.object_type, NEW.object_id) THEN
     PERFORM authz_int.changed(OLD.object_type, ARRAY[OLD.object_id], 'share');
   END IF;

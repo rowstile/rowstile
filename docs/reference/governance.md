@@ -38,6 +38,9 @@
   `authz.announce_timed_shares()` announces the shares that ended or began since it last ran (the cause
   `share_ended` or `share_started`), with what reads their objects. Schedule it ([Operations](../operations.md));
   until it runs, a reader doesn't hear of them. <!-- checked: tests/governance.sh "which the feed doesn't hear of by itself"; tests/governance.sh "authz.announce_timed_shares() announces the shares that ended or began since it last ran, and says how many"; tests/governance.sh "the one that ended"; tests/governance.sh "with what reads Keys"; tests/governance.sh "run again, it announces nothing new" -->
+  It keeps no time of its own, only each object's next share start or end (`authz.shares_due`), which each write
+  of a share puts in: a clock set back hides no share that ends after, and a run while a share is being added to
+  one of those objects waits for it. <!-- checked: tests/governance.sh "a share that ends after the clock was set back is announced when it ends"; tests/governance.sh "a run that waited for a writer announces the share that ended"; tests/governance.sh "and the next one, after it, the writer's share that ended since" -->
   The feed's order is by transaction, then by position: `authz.changes_since(pos)` gives the entries after the one
   at `pos` in that order. An entry gets its position when it is written, but other sessions see it when its
   transaction ends. So the feed gives an entry only once every transaction older than its own has ended, in any
