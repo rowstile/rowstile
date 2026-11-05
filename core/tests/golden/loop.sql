@@ -1352,7 +1352,8 @@ BEGIN
   END IF;
   DELETE FROM authz_int.row_marks WHERE type = p_type AND id = ANY (p_ids);
 END $f$;
--- whether a row is there, locked (FOR KEY SHARE) until the transaction ends, as authz.share locks what it shares
+-- whether a row is there, locked (FOR KEY SHARE) until the transaction ends: each row a share, an API key or an access
+-- request names
 CREATE FUNCTION authz_int.hold(p_type text, p_id text) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_tbl text; v_find text; v_found boolean;
@@ -2915,13 +2916,14 @@ BEGIN
   IF current_setting('authz_debug.log_decisions', true) = 'on'
      AND current_setting('authz_debug.logging', true) IS DISTINCT FROM 'on' THEN
     -- decision log (SET authz_debug.log_decisions = on; lines go to the server log), naming who acted as the
-    -- audit trail does ('42', 'service:7'; none: nobody signed in)
+    -- audit trail does ('42', 'service:7'; none: nobody signed in). A check answers true or false; one that raises
+    -- (a type or a permission the policy doesn't have) is not logged
     PERFORM set_config('authz_debug.logging', 'on', true);
     v_allowed := authz.can(p_type, p_id, p_perm);
     PERFORM set_config('authz_debug.logging', 'off', true);
     RAISE LOG 'authz decision: user=% type=% id=% perm=% -> %',
       coalesce(to_json(authz_int.actor())::text, 'none'), to_json(p_type)::text,
-      to_json(p_id)::text, to_json(p_perm)::text, coalesce(v_allowed::text, 'error');
+      to_json(p_id)::text, to_json(p_perm)::text, v_allowed::text;
     RETURN v_allowed;
   END IF;
   IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN false; END IF;
@@ -3131,8 +3133,7 @@ CREATE OR REPLACE FUNCTION authz.share(p_type text, p_id text, p_relation text,
   p_expires_at timestamptz DEFAULT NULL, p_starts_at timestamptz DEFAULT NULL,
   p_caveat text DEFAULT NULL, p_caveat_args jsonb DEFAULT NULL) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE v_tbl text; v_find text; v_found boolean; v_key text; v_rel authz_int.shared_relations; v_need text;
-        v_role authz.roles; v_perms text[];
+DECLARE v_found boolean; v_key text; v_rel authz_int.shared_relations; v_need text; v_role authz.roles; v_perms text[];
 BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
@@ -3141,14 +3142,15 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) THEN
     RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
-  -- lock the object (FOR KEY SHARE): a concurrent delete waits for us, or we for it
-  SELECT t.tbl, t.find INTO v_tbl, v_find FROM authz_int.types t WHERE t.name = p_type;
-  IF v_tbl IS NULL THEN RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM authz_int.types t WHERE t.name = p_type) THEN
+    RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';
+  END IF;
   IF NOT pg_catalog.pg_input_is_valid(p_id, (SELECT keytype FROM authz_int.types WHERE name = p_type)) THEN
     RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege',
       DETAIL = authz_int.share_why(p_type, p_id, '{}'), HINT = 'rowstile help AZ705';
   END IF;
-  EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s FOR KEY SHARE)', v_tbl, v_find) INTO v_found USING p_id;
+  -- lock the object (FOR KEY SHARE): a concurrent delete waits for us, or we for it
+  v_found := authz_int.hold(p_type, p_id);
   -- a caller who may share nothing on the object gets the answer a missing object gets (this same RAISE),
   -- before the subject and the relation are looked at: sharing never tells a hidden object from a missing one
   v_found := v_found AND EXISTS (
@@ -3170,14 +3172,7 @@ BEGIN
   v_key := authz_int.subject_key(p_subject_type, p_subject_id, p_subject_relation);
   -- the subject must exist (and is locked, like the object)
   IF v_key NOT LIKE '%:*' AND v_key NOT IN ('anyone', 'link') THEN
-    SELECT t.tbl, t.find INTO v_tbl, v_find FROM authz_int.types t WHERE t.name = p_subject_type;
-    v_found := v_tbl IS NOT NULL AND pg_catalog.pg_input_is_valid(p_subject_id,
-                 (SELECT keytype FROM authz_int.types WHERE name = p_subject_type));
-    IF v_found THEN
-      EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s FOR KEY SHARE)', v_tbl, v_find)
-        INTO v_found USING p_subject_id;
-    END IF;
-    IF NOT v_found THEN
+    IF NOT authz_int.hold(p_subject_type, p_subject_id) THEN
       RAISE EXCEPTION 'there is no % %', p_subject_type, p_subject_id USING HINT = 'rowstile help AZ708';
     END IF;
   END IF;
