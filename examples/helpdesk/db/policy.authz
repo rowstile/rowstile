@@ -1,0 +1,199 @@
+-- The helpdesk: several companies' support desks (workspaces) on one database. Every rule about who may do what
+-- is here; the app has no permission checks of its own. A workspace's people, tickets and roles are its own: the
+-- boundary is written into the permissions below (`and workspace.agent`, `and workspace.member`), where
+-- `rowstile prove` and the review read it, and the schema's composite keys hold it a second time. The vendor's
+-- staff belong to no workspace: they reach one only when it lets them in, by break glass, for a while, on the
+-- record.
+app role hd_app
+
+-- Electric serves the inbox and the ticket page live, from the sync index (README.md, "Live")
+sync role hd_electric
+sync hd.tickets : view
+sync hd.comments : view
+
+type workspace = hd.workspaces (id uuid)
+  member : user = hd.users(workspace_id -> id)
+  agent  : user = hd.users(workspace_id -> id) where {kind = 'agent'}
+  admin  : user = hd.users(workspace_id -> id) where {kind = 'agent' and role = 'admin'}
+  -- the vendor's staff the workspace lets in, while it does
+  support   : user        = hd.support_access(workspace_id -> staff_id) where {until > now()}
+  connected : integration = hd.integrations(workspace_id -> id)
+
+  can manage       = admin
+  can manage_roles = admin
+  can work_all     = admin or (agent and {open_queue})
+  can work         = agent
+  can view         = member
+
+-- a deactivated user is nobody: they hold nothing and sign in to nothing
+type user = hd.users (id uuid) where {active}
+  self      : user         = id
+  workspace : workspace    = workspace_id
+  org       : customer_org = customer_org_id
+
+  -- an admin views the app as someone of their own workspace (authz.view_as: read-only, on the record)
+  can impersonate = workspace.admin
+  can see_notes   = workspace.work
+  -- the requester's colleagues, where their customer org shares its tickets
+  can org_tickets = org.see_tickets
+  can view        = self or workspace.work or (org.member and workspace.member) or workspace.connected
+
+-- the email intake and the like: they sign in as themselves, with keys an admin makes
+type integration = hd.integrations (id uuid) principal where {active}
+  self      : integration = id
+  workspace : workspace   = workspace_id
+
+  can manage_keys = workspace.manage
+  can view        = self or workspace.manage
+
+type customer_org = hd.customer_orgs (id uuid)
+  workspace : workspace = workspace_id
+  member    : user      = hd.users(customer_org_id -> id)
+
+  can see_tickets = member and {shared_tickets}
+  can manage      = workspace.manage
+  can view        = member or workspace.work
+
+-- teams inside teams: a lead oversees the teams inside theirs
+type team = hd.teams (id uuid)
+  workspace : workspace = workspace_id
+  parent    : team      = parent_id
+  member    : user      = hd.team_members(team_id -> user_id)
+  lead      : user      = hd.team_leads(team_id -> user_id)
+
+  can oversee = lead or parent.oversee
+  can manage  = workspace.manage or oversee
+  can view    = workspace.work
+
+type membership = hd.team_members (team_id uuid, user_id uuid)
+  team   : team = team_id
+  person : user = user_id
+
+type leadership = hd.team_leads (team_id uuid, user_id uuid)
+  team : team = team_id
+
+type support_grant = hd.support_access (workspace_id uuid, staff_id uuid)
+  workspace : workspace = workspace_id
+  staff     : user      = staff_id
+
+type ticket = hd.tickets (id uuid)
+  workspace : workspace = workspace_id
+  requester : user      = requester_id
+  team      : team      = team_id
+  assignee  : user      = assignee_id
+  -- colleagues the requester or an agent copies in, of the ticket's own workspace
+  cc : user shared by reply if {hd.same_workspace(this.object_id, this.subject_id)}
+  -- the vendor's staff: by break glass where the workspace lets them in, or asked in by an admin
+  responder : user shared by manage if {hd.is_staff(this.subject_id)}
+  -- the workspace's own roles (Escalations, Billing specialist), made by its admins
+  roles : user, team#member from workspace
+
+  -- only the workspace's agents work its tickets, only its people take part, but for the vendor's staff. Every
+  -- agent of the workspace sees its tickets: an agent who hands one to another team still sees it after, as
+  -- Postgres asks of an update (the new row must be one its author may read)
+  can work        = ((assignee or team.member or team.oversee or roles) and workspace.agent) or workspace.work_all or responder
+  can reply       = work or ((requester or cc) and workspace.member)
+  can view        = reply or workspace.agent or (requester.org_tickets and workspace.member) or workspace.connected
+  can manage      = workspace.manage
+  can share       = manage
+  can break_glass = workspace.support
+
+type comment = hd.comments (id uuid)
+  ticket : ticket      = ticket_id
+  author : user        = author_id
+  via    : integration = integration_id
+
+  -- an internal note is for those who work the ticket
+  can view = ticket.work or (ticket.view and {not internal})
+
+-- the email intake's keys: new tickets, new customers and replies, and nothing else
+scope intake = hd.tickets.select, hd.tickets.insert, hd.users.select, hd.users.insert, hd.comments.select, hd.comments.insert, ticket.view, user.view, comment.view
+
+rules hd.workspaces
+  select    : view
+  update    : manage
+  update id : nobody
+
+rules hd.users view hd.users_visible
+  select                        : view
+  insert                        : workspace.manage or ((workspace.work or workspace.connected) and {kind = 'customer'})
+  update                        : self or workspace.manage or see_notes
+  update notes                  : see_notes
+  update role, active           : workspace.manage
+  update customer_org_id        : workspace.work
+  update customer_org_id after  : org.view
+  update id, workspace_id, kind : nobody
+  mask notes                    : see_notes
+
+rules hd.integrations
+  select                  : view
+  insert                  : workspace.manage
+  update                  : workspace.manage
+  update id, workspace_id : nobody
+  delete                  : workspace.manage
+
+rules hd.customer_orgs
+  select                  : view
+  insert                  : workspace.manage
+  update                  : manage
+  update id, workspace_id : nobody
+  delete                  : manage
+
+rules hd.teams
+  select                  : view
+  insert                  : workspace.manage
+  update                  : manage
+  update parent_id after  : parent.manage
+  update id, workspace_id : nobody
+  delete                  : workspace.manage
+
+rules hd.team_members
+  cascade from hd.teams
+  cascade from hd.users
+  select : team.view
+  insert : team.manage
+  update : nobody
+  delete : team.manage or person.self
+
+rules hd.team_leads
+  cascade from hd.teams
+  cascade from hd.users
+  select : team.view
+  insert : team.manage
+  update : nobody
+  delete : team.manage
+
+rules hd.support_access
+  cascade from hd.workspaces
+  cascade from hd.users
+  select : workspace.manage or staff.self
+  insert : workspace.manage and {until <= now() + interval '7 days' and hd.is_staff(staff_id::text)}
+  update : nobody
+  delete : workspace.manage
+
+rules hd.tickets
+  select : view
+  insert : (workspace.view and requester and {status = 'open' and team_id is null and assignee_id is null}) or workspace.work or workspace.connected
+  update : work or requester
+  -- whoever works a ticket may hand it to another agent of the workspace, and no longer work it after
+  update after                          : workspace.work or requester
+  update subject                        : work or requester
+  update status                         : work or (requester and {status <> 'closed'})
+  update status after                   : work or {status in ('open', 'solved')}
+  update team_id, assignee_id           : work
+  update team_id after                  : team.view or {team_id is null}
+  update id, workspace_id, requester_id : nobody
+  delete                                : workspace.manage
+
+rules hd.comments
+  cascade from hd.tickets
+  select : view
+  insert : (ticket.work and author) or (ticket.reply and author and {not internal}) or (ticket.view and via)
+  update : nobody
+  delete : nobody
+
+invariants
+  never ticket: view and not workspace.member and not responder and not workspace.connected
+  never ticket: work and not workspace.agent and not responder
+  never comment: view and not ticket.view
+  never user: view and not self and not workspace.member and not workspace.connected

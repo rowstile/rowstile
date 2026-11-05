@@ -1,0 +1,212 @@
+// The helpdesk's tables: several companies' support desks (workspaces) on one database. Every row of a workspace
+// names it, and a row that points at another of the workspace names it in its foreign key too, so the two can't
+// be of different workspaces. What Prisma can't say (CHECK constraints, the app's roles and grants, two SQL
+// functions the policy calls) is in the first migration, written by hand after Prisma's own SQL.
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["hd"]
+}
+
+model Workspace {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  // every agent works every ticket, not only their teams'
+  openQueue Boolean @default(false) @map("open_queue")
+
+  customerOrgs  CustomerOrg[]
+  users         User[]
+  teams         Team[]
+  supportAccess SupportAccess[]
+  integrations  Integration[]
+  tickets       Ticket[]
+
+  @@map("workspaces")
+  @@schema("hd")
+}
+
+model CustomerOrg {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String  @map("workspace_id") @db.Uuid
+  name          String
+  // its people see each other's tickets
+  sharedTickets Boolean @default(false) @map("shared_tickets")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  people    User[]
+
+  @@unique([workspaceId, id])
+  @@map("customer_orgs")
+  @@schema("hd")
+}
+
+// agents and customers of a workspace, and the vendor's own staff (no workspace)
+model User {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String? @map("workspace_id") @db.Uuid
+  kind          String
+  role          String?
+  customerOrgId String? @map("customer_org_id") @db.Uuid
+  name          String
+  email         String
+  // the agents' notes on a customer: the policy masks it from anyone else
+  notes         String?
+  active        Boolean @default(true)
+
+  workspace     Workspace?      @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  customerOrg   CustomerOrg?    @relation(fields: [workspaceId, customerOrgId], references: [workspaceId, id], onDelete: Restrict, onUpdate: Restrict)
+  teams         TeamMember[]
+  leads         TeamLead[]
+  supportAccess SupportAccess[]
+  requested     Ticket[]        @relation("requester")
+  assigned      Ticket[]        @relation("assignee")
+  comments      Comment[]
+  login         Login?
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, email])
+  @@index([customerOrgId])
+  @@map("users")
+  @@schema("hd")
+}
+
+// How someone signs in: an email, for the person it names. The app reads it before anyone is signed in, so the
+// policy doesn't govern it (and it says nothing of what anyone may do). A real app keeps a password hash or an
+// identity provider's subject here.
+model Login {
+  email  String @id
+  userId String @unique @map("user_id") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@map("logins")
+  @@schema("hd")
+}
+
+model Team {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String  @map("workspace_id") @db.Uuid
+  parentId    String? @map("parent_id") @db.Uuid
+  name        String
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  parent    Team?        @relation("inside", fields: [workspaceId, parentId], references: [workspaceId, id], onDelete: Restrict, onUpdate: Restrict)
+  inside    Team[]       @relation("inside")
+  members   TeamMember[]
+  leads     TeamLead[]
+  tickets   Ticket[]
+
+  @@unique([workspaceId, id])
+  @@index([parentId])
+  @@map("teams")
+  @@schema("hd")
+}
+
+// a team's members (what an identity provider's group sync keeps), and its leads, kept apart
+model TeamMember {
+  workspaceId String @map("workspace_id") @db.Uuid
+  teamId      String @map("team_id") @db.Uuid
+  userId      String @map("user_id") @db.Uuid
+
+  team Team @relation(fields: [workspaceId, teamId], references: [workspaceId, id], onDelete: Cascade, onUpdate: Restrict)
+  user User @relation(fields: [workspaceId, userId], references: [workspaceId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@id([teamId, userId])
+  @@index([userId])
+  @@map("team_members")
+  @@schema("hd")
+}
+
+model TeamLead {
+  workspaceId String @map("workspace_id") @db.Uuid
+  teamId      String @map("team_id") @db.Uuid
+  userId      String @map("user_id") @db.Uuid
+
+  team Team @relation(fields: [workspaceId, teamId], references: [workspaceId, id], onDelete: Cascade, onUpdate: Restrict)
+  user User @relation(fields: [workspaceId, userId], references: [workspaceId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@id([teamId, userId])
+  @@index([userId])
+  @@map("team_leads")
+  @@schema("hd")
+}
+
+// the vendor's staff a workspace lets in, until when
+model SupportAccess {
+  workspaceId String   @map("workspace_id") @db.Uuid
+  staffId     String   @map("staff_id") @db.Uuid
+  until       DateTime @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  staff     User      @relation(fields: [staffId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@id([workspaceId, staffId])
+  @@index([staffId])
+  @@map("support_access")
+  @@schema("hd")
+}
+
+// a workspace's integrations (the email intake): they sign in as themselves, with keys
+model Integration {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String  @map("workspace_id") @db.Uuid
+  name        String
+  active      Boolean @default(true)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  comments  Comment[]
+
+  @@unique([workspaceId, id])
+  @@map("integrations")
+  @@schema("hd")
+}
+
+model Ticket {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  subject     String
+  status      String   @default("open")
+  requesterId String   @map("requester_id") @db.Uuid
+  teamId      String?  @map("team_id") @db.Uuid
+  assigneeId  String?  @map("assignee_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  requester User      @relation("requester", fields: [workspaceId, requesterId], references: [workspaceId, id], onDelete: Restrict, onUpdate: Restrict)
+  team      Team?     @relation(fields: [workspaceId, teamId], references: [workspaceId, id], onDelete: Restrict, onUpdate: Restrict)
+  assignee  User?     @relation("assignee", fields: [workspaceId, assigneeId], references: [workspaceId, id], onDelete: Restrict, onUpdate: Restrict)
+  comments  Comment[]
+
+  @@index([workspaceId, status])
+  @@index([requesterId])
+  @@index([teamId])
+  @@index([assigneeId])
+  @@map("tickets")
+  @@schema("hd")
+}
+
+model Comment {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId      String   @map("ticket_id") @db.Uuid
+  // of the workspace, or the vendor's staff
+  authorId      String?  @map("author_id") @db.Uuid
+  integrationId String?  @map("integration_id") @db.Uuid
+  // agents only
+  internal      Boolean  @default(false)
+  body          String
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  ticket      Ticket       @relation(fields: [ticketId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  author      User?        @relation(fields: [authorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  integration Integration? @relation(fields: [integrationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([ticketId])
+  @@index([authorId])
+  @@index([integrationId])
+  @@map("comments")
+  @@schema("hd")
+}

@@ -1,0 +1,8 @@
+policy   = "db/policy.authz"
+tests    = ["db/tests/*.authz"]
+database = "env:DATABASE_URL"
+[clients]
+ts = "src/authz_client.ts"
+[migrations]
+tool = "prisma"
+dir  = "prisma/migrations"
