@@ -439,15 +439,15 @@ note    migrations holds migrations named <n>_<name>.up.sql, for a tool rowstile
 # --db the owner's, and DATABASE_URL another (the app's): rowstile.toml doesn't read DATABASE_URL, and says which
 mkdir -p "$T/dburl"
 out=$(cd "$T/dburl" && DATABASE_URL="postgresql://app_user@localhost/$DB" python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
-case "$out" in *"DATABASE_URL is another connection than --db's"*"ROWSTILE_DATABASE_URL"*)
-  grep -q '^database = "env:ROWSTILE_DATABASE_URL"     # the tables'"'"' owner'"'"'s connection: DATABASE_URL is another$' "$T/dburl/rowstile.toml" &&
-  ok "init with --db and another DATABASE_URL: rowstile.toml reads the owner's from ROWSTILE_DATABASE_URL, and says so" ||
+case "$out" in *"DATABASE_URL is another connection than --db's"*"ROWSTILE_OWNER_DSN"*"(ROWSTILE_OWNER_DSN, in the environment or in .env: a development database)")
+  grep -q '^database = "env:ROWSTILE_OWNER_DSN"     # the tables'"'"' owner'"'"'s connection: DATABASE_URL is another$' "$T/dburl/rowstile.toml" &&
+  ok "init with --db and another DATABASE_URL: rowstile.toml reads the owner's from ROWSTILE_OWNER_DSN, and says so, the next steps too" ||
   bad "init's database line" "$(cat "$T/dburl/rowstile.toml")";; *) bad "init with another DATABASE_URL" "$out";; esac
 # ...the same when DATABASE_URL is in .env, which the next command reads too: the note says so
 mkdir -p "$T/dburl2" && printf 'DATABASE_URL=postgresql://app_user@localhost/%s\n' "$DB" > "$T/dburl2/.env"
 out=$(cd "$T/dburl2" && env -u DATABASE_URL python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
 case "$out" in *"note    DATABASE_URL (in .env) is another connection than --db's (the app's, as its role?):"*)
-  grep -q '^database = "env:ROWSTILE_DATABASE_URL"' "$T/dburl2/rowstile.toml" &&
+  grep -q '^database = "env:ROWSTILE_OWNER_DSN"' "$T/dburl2/rowstile.toml" &&
   ok "... and with DATABASE_URL in .env: the same line, and the note says it is in .env" ||
   bad "init's database line, DATABASE_URL in .env" "$(cat "$T/dburl2/rowstile.toml")";; *) bad "init with DATABASE_URL in .env" "$out";; esac
 # ...and neither --db nor DATABASE_URL (the PG settings name the database): no note, and rowstile.toml reads DATABASE_URL
@@ -462,6 +462,7 @@ case "$out" in *"note    DATABASE_URL"*|*"from DATABASE_URL"*) bad "init with no
 before=$(cksum < "$T/k/package.json")
 out=$(cd "$T/k" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
 case "$out" in *"added "*) bad "init again adds packages the app has" "$out";;
+  *"no command reads the draft"*) bad "init again says its own draft is read by no command" "$out";;
   *"using rowstile.toml (it is there already)"*) [ "$(cksum < "$T/k/package.json")" = "$before" ] &&
     ok "... init again keeps rowstile.toml, and package.json as it is" || bad "init again changed package.json" "$(cat "$T/k/package.json")";;
   *) bad "init again in the Next.js app" "$out";; esac
@@ -472,6 +473,17 @@ case "$out" in *".gitattributes"*) bad "init marks the generated files again" "$
   *"wrote rowstile.toml"*) [ "$(cksum < "$T/k/.gitattributes")" = "$before" ] &&
     ok "... with rowstile.toml gone, writes it, and leaves .gitattributes as it is" || bad "init changed .gitattributes" "$(cat "$T/k/.gitattributes")";;
   *) bad "init without rowstile.toml" "$out";; esac
+# a rowstile.toml in a folder above, naming another policy, its tests and the database: init drafts for reading, says
+# that no command reads the draft, and AGENTS.md and the next steps say what rowstile.toml names
+mkdir -p "$T/up/app/checks" "$T/up/web" && printf -- '-- the app policy\n' > "$T/up/app/main.authz"
+printf 'policy = "app/main.authz"\ntests = ["app/checks/*.authz"]\ndatabase = "dbname=%s"\n' "$DB" > "$T/up/rowstile.toml"
+out=$(cd "$T/up/web" && python3 "$OLDPWD/cli/rowstile_cli.py" init --schema app 2>&1)
+case "$out" in *"using ../rowstile.toml (it is there already)
+note    ../rowstile.toml names the policy ../app/main.authz, not db/policy.authz: no command reads the draft until it does"*"(database in rowstile.toml: a development database)")
+  grep -qF 'The policy is `../app/main.authz`, its tests `../app/checks/*.authz`' "$T/up/web/AGENTS.md" &&
+  [ "$(cat "$T/up/app/main.authz")" = "-- the app policy" ] && [ -f "$T/up/web/db/policy.authz" ] &&
+  ok "init beside a rowstile.toml naming another policy: says no command reads the draft, and AGENTS.md names that policy" ||
+  bad "init beside another policy: AGENTS.md" "$(cat "$T/up/web/AGENTS.md")";; *) bad "init beside a rowstile.toml naming another policy" "$out";; esac
 # in a FastAPI app that got FastAPI through rowstile's extras, with a role of its own name: the stack is found, the
 # role named is the policy's, and rowstile isn't asked for again
 mkdir -p "$T/f"

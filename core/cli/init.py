@@ -98,6 +98,11 @@ def role_problem(role: str | None) -> str | None:
     return None
 
 
+def shown(path: str) -> str:
+    """A path as init prints it and AGENTS.md names it: from the current folder, with /."""
+    return os.path.relpath(path).replace(os.sep, "/")
+
+
 def init(
     policy: str,
     opts: dict[str, str],
@@ -155,16 +160,18 @@ test "nobody signed in sees a {example}"
             f"note    app role {role}: {len(granted)} roles are granted the tables ({', '.join(granted)}):\n"
             "        name the one your app connects as on the policy's app role line (or init --role)"
         )
+    tests = os.path.join(out, "tests").replace(os.sep, "/") + "/*.authz"
+    note_policy = policy_path.replace(os.sep, "/")
     if cfg.path is None:
         database, why = "env:DATABASE_URL", "a DSN or URL, or env:NAME for an environment variable holding one"
         if given and app_url and app_url[0] != given:
             # DATABASE_URL is another connection than the one --db named (often the app's, as its role): rowstile
             # applies as the tables' owner, so it reads the owner's from a name of its own
-            database, why = "env:ROWSTILE_DATABASE_URL", "the tables' owner's connection: DATABASE_URL is another"
+            database, why = "env:ROWSTILE_OWNER_DSN", "the tables' owner's connection: DATABASE_URL is another"
             print(
                 f"note    DATABASE_URL{f' (in {app_url[1]})' if app_url[1] else ''} is another connection than --db's "
                 "(the app's, as its role?):\n"
-                "        rowstile.toml reads the tables' owner's from ROWSTILE_DATABASE_URL. Set it, in the environment\n"
+                "        rowstile.toml reads the tables' owner's from ROWSTILE_OWNER_DSN. Set it, in the environment\n"
                 "        or .env.local, to what --db named"
             )
         extra = stack.config_lines(found) or [
@@ -174,8 +181,8 @@ test "nobody signed in sees a {example}"
         ]
         write_new(
             CONFIG,
-            f'''policy   = {stack.toml_text(policy_path.replace(os.sep, "/"))}
-tests    = [{stack.toml_text(os.path.join(out, "tests").replace(os.sep, "/") + "/*.authz")}]
+            f'''policy   = {stack.toml_text(note_policy)}
+tests    = [{stack.toml_text(tests)}]
 database = "{database}"     # {why}
 '''
             + "\n".join(extra)
@@ -183,11 +190,21 @@ database = "{database}"     # {why}
             written,
         )
     else:
-        print(f"using {os.path.relpath(cfg.path)} (it is there already)")
+        # the one there already says where the policy and its tests are: what AGENTS.md names, and the next commands
+        # read; a draft elsewhere is for reading
+        print(f"using {shown(cfg.path)} (it is there already)")
+        named = cfg.policy
+        if named is None or os.path.realpath(named) != os.path.realpath(policy_path):
+            said = f"the policy {shown(named)}" if named else "no policy"
+            print(
+                f"note    {shown(cfg.path)} names {said}, not {note_policy}: no command reads the draft until it does"
+            )
+        note_policy = shown(named) if named else note_policy
+        tests = ", ".join(shown(cfg.file(g)) for g in cfg.test_globs()) or tests
+        database = cfg.setting(None, "database") or "env:DATABASE_URL"
     for path in written:
         print(f"wrote {path}")
-    tests = os.path.join(out, "tests").replace(os.sep, "/") + "/*.authz"
-    noted = write_agents_note(agents_note(policy_path.replace(os.sep, "/"), tests, role))
+    noted = write_agents_note(agents_note(note_policy, tests, role))
     if noted == "wrote":
         print(f"wrote {AGENTS} (for coding agents: where the policy is, and the loop)")
     elif noted == "added":
@@ -244,8 +261,12 @@ database = "{database}"     # {why}
   2. {app_role}
      It says who is signed in first in each transaction: SELECT authz.act_as('user', '42')
      (the generated clients' sign_in does it)."""
+    # the database the next commands use, as rowstile.toml names it
+    source = (
+        f"{database[4:]}, in the environment or in .env" if database.startswith("env:") else f"database in {CONFIG}"
+    )
     print(f"""
 Next:
   1. Read {policy_path}: every '-- decide:' is a choice only you can make.{setup}
   3. rowstile dev      applies the policy on each save, runs the tests, writes the clients
-                       (DATABASE_URL, in the environment or in .env, or database in {CONFIG}: a development database)""")
+                       ({source}: a development database)""")
