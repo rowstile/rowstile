@@ -692,6 +692,35 @@ def test_quotas() -> None:
     assert (me["used"], me["quota"]) == (8, 10)
 
 
+def test_two_confirms_of_one_upload_take_turns(world: World) -> None:
+    """A confirm holds the file's row until it commits: a second one waits, then finds the file confirmed (404),
+    instead of storing what it moved, and its size, over the first's."""
+    import threading
+
+    alice, sub = world["alice"], world["sub"]
+    started = alice.post(
+        f"/api/folders/{sub['id']}/uploads", json={"name": "twice.txt", "size": 5, "content_type": "text/plain"}
+    ).json()
+    fid = started["file"]["id"]
+    put(started["url"], b"hello")
+    answers: list[int] = []
+    second = threading.Thread(target=lambda: answers.append(alice.post(f"/api/files/{fid}/ready").status_code))
+    with psycopg.connect(ADMIN) as first:  # the first confirm, as far as the row goes: it confirms it, and holds it
+        first.execute("UPDATE fm.files SET ready = true, size = 5 WHERE id = %s", (fid,))
+        second.start()
+        waiting: LiteralString = (
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        )
+        for _ in range(400):  # until the second waits for the row (the server says so), 20 seconds at most
+            if admin(waiting)[0][0]:
+                break
+            second.join(0.05)
+        first.commit()
+    second.join(30)
+    assert answers == [404]
+    assert alice.get(f"/api/files/{fid}").json()["size"] == 5
+
+
 def test_two_uploads_at_once_stay_within_the_quota() -> None:
     """Two uploads committing at the same time: the second waits for the first, then counts it."""
     import threading
