@@ -4,7 +4,8 @@ import java.util.Objects;
 
 /**
  * Who a transaction acts for: a user (type {@code user}), another principal type the policy declares (a service, a
- * bot), or nobody (id {@code null}: only what {@code anyone} may see).
+ * bot), or nobody (id {@code null}: only what {@code anyone} may see). Nobody has one spelling: a principal made
+ * without an id ({@code null} or empty), whatever its type, is {@link #NOBODY}, as the database signs it in.
  *
  * <p>A plain id is a user's, whatever it holds: {@code Principal.user("service:3")} is the user whose id that is (ids
  * often come from outside: a username, an identity provider's subject), never service 3. Another principal type is
@@ -19,14 +20,18 @@ public record Principal(String type, String id) {
 
     public Principal {
         Objects.requireNonNull(type, "type");
+        if (id == null || id.isEmpty()) {
+            type = "user";
+            id = null;
+        }
     }
 
-    /** The user whose id this is ({@code null}: nobody). */
+    /** The user whose id this is ({@code null} or empty: nobody). */
     public static Principal user(Object id) {
         return id == null ? NOBODY : new Principal("user", id.toString());
     }
 
-    /** A principal of the policy's type {@code type} ({@code service}, {@code bot}); {@code null} id: nobody. */
+    /** A principal of the policy's type {@code type} ({@code service}, {@code bot}); {@code null} or empty id: nobody. */
     public static Principal of(String type, Object id) {
         return id == null ? NOBODY : new Principal(type, id.toString());
     }

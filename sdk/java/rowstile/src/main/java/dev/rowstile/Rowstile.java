@@ -37,10 +37,13 @@ public final class Rowstile {
         return Optional.ofNullable(CURRENT.get());
     }
 
-    /** Runs {@code work} acting for {@code who}: every transaction it begins (the Spring starter's) signs in as them. */
+    /**
+     * Runs {@code work} acting for {@code who}: every transaction it begins (the Spring starter's) signs in as them.
+     * {@code null} is nobody, as {@link Principal#NOBODY} is: not whoever the request is.
+     */
     public static <T> T actingAs(Principal who, Supplier<T> work) {
         Principal before = CURRENT.get();
-        CURRENT.set(who);
+        CURRENT.set(who == null ? Principal.NOBODY : who);
         try {
             return work.get();
         } finally {
