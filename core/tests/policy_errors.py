@@ -1203,6 +1203,20 @@ COMPILE = [
         "AZ806",
     ),
     (
+        "a synced permission calling a function after its database's name",
+        "  can view = owner and not {mydb.alt.held(this.doc_no)}\nsync role eng\nsync alt.docs : view\n",
+        "reads more than its row",
+        10,
+        "AZ806",
+    ),
+    (
+        "a synced permission calling a function named like SQL's words",
+        "  can view = owner and not {filter(this.doc_no)}\nsync role eng\nsync alt.docs : view\n",
+        "reads more than its row",
+        10,
+        "AZ806",
+    ),
+    (
         "a synced type whose where reads other rows",
         "type t2 = alt.projects where {exists (select 1 from alt.holds)}\n  lead : user = lead_id\n  can view = lead\nsync role eng\nsync alt.projects : view\n",
         "(the where of t2, which is synced) reads more than its row",

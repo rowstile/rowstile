@@ -283,6 +283,7 @@ PURE_FUNCTIONS = frozenset(
         "num_nonnulls",
         "num_nulls",
         "octet_length",
+        "overlay",
         "pg_input_is_valid",
         "power",
         "random",
@@ -305,6 +306,7 @@ PURE_FUNCTIONS = frozenset(
         "string_to_array",
         "strpos",
         "substr",
+        "substring",
         "timeofday",
         "to_char",
         "to_date",
@@ -319,7 +321,10 @@ PURE_FUNCTIONS = frozenset(
         "authz.link_hashes",
     }
 )
-# words followed by ( that are SQL's own, not functions
+# words followed by ( that are SQL's own, not functions. Not filter, over, within or is: before a parenthesis,
+# Postgres calls a function by those names (filter(x)), but after an aggregate's call (count(*) filter (where
+# ...)), and an aggregate is no built-in that reads nothing. Substring and overlay call a function by that name
+# when their arguments are a list (substring(a, 2)): they are built-ins that read nothing (PURE_FUNCTIONS).
 CALL_WORDS = frozenset(
     {
         "all",
@@ -333,28 +338,23 @@ CALL_WORDS = frozenset(
         "else",
         "exists",
         "extract",
-        "filter",
         "greatest",
         "in",
-        "is",
         "least",
         "not",
         "nullif",
         "or",
-        "over",
-        "overlay",
         "position",
         "row",
         "some",
-        "substring",
         "then",
         "trim",
         "values",
         "when",
-        "within",
     }
 )
-CALL = re.compile(rf"(?<![{LETTER}0-9$.\"])({NAME}(?:\s*\.\s*{NAME})?)\s*\(")
+# a call, by its name as Postgres reads it: one part or more (database.schema.function too), from its first
+CALL = re.compile(rf"(?<![{LETTER}0-9$.\"])({NAME}(?:\s*\.\s*{NAME})*)\s*\(")
 # the operators Postgres has for its own types (comparison, arithmetic, text, patterns, arrays, JSON, ranges, network
 # addresses): any other is one an app made, and its function may read anything
 BUILTIN_OPERATORS = frozenset(

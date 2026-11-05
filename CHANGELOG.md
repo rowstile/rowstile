@@ -16,6 +16,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The sync index, a preview: a PowerSync mirror (`mirrored`) is made again when the policy masks a column of its
   table since, so the masked column leaves the mirror and the sync engine's role can't read it; `authz.sync_verify()`
   says false, and `authz.lint()` reports an error, while a mirror holds a masked column.
+- A condition that calls a function by its three-part name (`mydb.app.f(id)`), or a function named `filter`,
+  `within`, `over` or `is`, is read as calling the app's code, as one written `app.f(id)` is: it runs with the
+  policy's rights wherever it is checked, the change feed watches every column of its row, and the sync index
+  refuses it (AZ806).
 
 ## 0.1.0-beta.3 (2026-11-05)
 

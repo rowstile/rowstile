@@ -287,6 +287,18 @@ class ThisRow(unittest.TestCase):
             "id OPERATOR(app.===) 3",
             "a <=> b",
             "a ||- 1",
+            # with the database's name before the schema's, as Postgres reads it too
+            "mydb.app.member(this.id)",
+            '"mydb".app."Member"(this.id)',
+            "mydb . app /* c */ . member (id)",
+            "lower(name) = mydb.pg_catalog.lower(name)",
+            # a function of the app's named like SQL's words, which Postgres calls as a function
+            "filter(owner_id)",
+            "FILTER (owner_id)",
+            "within(owner_id)",
+            "over(owner_id)",
+            "is(owner_id)",
+            "not filter(owner_id)",
         ):
             self.assertTrue(reads_more(sql), sql)
         for sql in (
@@ -300,9 +312,29 @@ class ThisRow(unittest.TestCase):
             "n<>-1 and n*-2<=+3",
             "tags @> array['a'] and data->>'k' ~* '^x' and name || 'a' !~~ 'b%'",
             "'=!=' = name",
+            "substring(name from 2) = 'a' and substring(name, 2, 1) = 'b' and overlay(name placing 'x' from 1) <> ''",
+            "position('a' in name) > 0 and trim(both from name) <> '' and extract(year from at) > 2000",
         ):
             self.assertFalse(reads_more(sql), sql)
         self.assertEqual(operators("a=-1 and b<=+-2 and c@-3"), ["=", "-", "<=", "+", "-", "@-"])
+
+    def test_the_feed_watches_every_column_where_a_condition_calls_the_apps_code(self) -> None:
+        """A function of the app's may read any column of its row, however its name is written: the change feed
+        then announces a row whichever column changes."""
+        for call, watched in (
+            ("archived", ["archived"]),
+            ("app.held(id)", None),
+            ("mydb.app.held(id)", None),
+            ("filter(id)", None),
+            ("within(id)", None),
+        ):
+            c = Compiler(
+                parse_policy(
+                    "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+                    f"  can view = owner and not {{{call}}}\n"
+                )
+            )
+            self.assertEqual(c.feed_watched(c.T("doc")), watched, call)
 
     def test_a_condition_is_read_as_postgres_reads_its_quotes(self) -> None:
         """An apostrophe inside E'...', $$...$$, a quoted name or a comment ends nothing: the subquery after it is
