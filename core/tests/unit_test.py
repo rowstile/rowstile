@@ -7581,6 +7581,15 @@ class Fmt(unittest.TestCase):
         self.assertEqual(format(src), want)
         self.assertEqual(format(want), want)
 
+    def test_a_byte_order_mark(self) -> None:
+        # the parser reads a file without it, and so does fmt: the first block is laid out as the others, and the
+        # mark is left out
+        from authzlib.fmt import format
+
+        src = "﻿type folder = app.folders\n  owner : user = owner_id\n  viewer : user shared\n"
+        want = "type folder = app.folders\n  owner  : user = owner_id\n  viewer : user shared\n"
+        self.assertEqual(format(src), want)
+
     def test_a_condition_goes_on_as_written(self) -> None:
         # the lines of a condition after its first are its SQL: their spaces are kept, only the indent changes
         from authzlib.fmt import format
