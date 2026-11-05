@@ -1,6 +1,6 @@
 {
   "name": "@rowstile/vitest",
-  "version": "0.1.0-dev",
+  "version": "0.1.0-beta.3",
   "description": "rowstile with Vitest: asUser, toBeRefused, a database per worker",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
@@ -43,7 +43,7 @@
   "sideEffects": false,
   "engines": { "node": ">=22.12.0" },
   "dependencies": {
-    "@rowstile/client": "0.1.0-dev"
+    "@rowstile/client": "0.1.0-beta.3"
   },
   "peerDependencies": {
     "pg": "^8.23.1",

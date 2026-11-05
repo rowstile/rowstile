@@ -9,6 +9,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+## 0.1.0-beta.3 (2026-11-05)
+
 The sync index, its engines (Electric, Zero, PowerSync) and the new SDKs and stacks are previews: they may
 change in any release, and the SDKs not on a registry yet install from the repository.
 
