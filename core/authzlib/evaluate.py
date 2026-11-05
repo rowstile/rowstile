@@ -6,6 +6,9 @@ a policy without a database: whether two policies grant the same in every small 
 that a refactor changed nothing), and if not, a world where they don't, made as small as it can be (smallest); or
 whether an invariant holds in every one (`rowstile prove`).
 
+It reads a policy as parsed (parse_policy), what the policy says: not as the compiler reads it, which adds to its own
+copy of the types hidden permissions and arrows to some of a relation's types only (parse.ArrowOn, refused here).
+
 The data (Data; difftest reads it from a database, World makes it up):
     ids[type]                                   every id of the type (text)
     valid[type]                                 the ids that pass the type's where
@@ -181,11 +184,13 @@ class Reference:
                         pass  # the role holders' groups: the roles line's subjects, below
                     case Ref(name):
                         found.add((t.name, name))
-                    case Arrow(rel, perm) | ArrowOn(rel, perm, _):
+                    case Arrow(rel, perm):
                         found.add((t.name, rel))
                         for st, sr in t.relations[rel].subjects():
                             assert sr is None and st in self.types, FOLLOWS
                             found.add((st, perm))
+                    case ArrowOn():
+                        raise ValueError(f"the reference evaluator reads a policy as parsed, not {leaf!r}")
                 graph[key].update(found)
                 if nots:
                     negated.update((key, f) for f in found)
@@ -660,7 +665,7 @@ class World:
             out: set[tuple[str, str]] = set()
 
             def walk(t: Type, node: Expr) -> None:
-                out.update((t.name, leaf.rel) for leaf, _ in leaves(node) if isinstance(leaf, (Arrow, ArrowOn)))
+                out.update((t.name, leaf.rel) for leaf, _ in leaves(node) if isinstance(leaf, Arrow))
 
             for p in [*self.pols, pol]:
                 for t in p.types.values():
@@ -1212,7 +1217,7 @@ def reach(pols: Iterable[Policy]) -> int:
             match leaf:
                 case Ref(name):
                     return deep(t, name)
-                case Arrow(rel, perm) | ArrowOn(rel, perm, _) if rel in t.relations:
+                case Arrow(rel, perm) if rel in t.relations:
                     targets = [st for st, sr in t.relations[rel].subjects() if sr is None and st in pol.types]
                     return max((1 + deep(pol.types[st], perm) for st in targets), default=1)
             return 0
@@ -1367,11 +1372,11 @@ def cone(pols: Sequence[Policy]) -> Cone | None:
                     pass  # custom roles: the drawn worlds hold them, not the listed ones
                 case Ref(name):
                     visit(p, t, name)
-                case _:  # an arrow: Arrow or ArrowOn, the leaves left
-                    visit(p, t, leaf.rel)
-                    for st, _ in t.relations[leaf.rel].subjects():
+                case Arrow(rel, perm):
+                    visit(p, t, rel)
+                    for st, _ in t.relations[rel].subjects():
                         assert st in p.types, FOLLOWS
-                        visit(p, p.types[st], leaf.perm)
+                        visit(p, p.types[st], perm)
 
     for p, t, expr in start:
         walk(p, t, expr)
@@ -1827,7 +1832,7 @@ def names_read(types: Mapping[str, Type], t: Type, node: Expr) -> set[Name]:
         match leaf:
             case Ref(name):
                 out.add((t.name, name))
-            case Arrow(rel, perm) | ArrowOn(rel, perm, _):
+            case Arrow(rel, perm):
                 out.add((t.name, rel))
                 for st, sr in t.relations[rel].subjects():
                     assert sr is None and st in types, FOLLOWS
@@ -1879,7 +1884,7 @@ def first_difference(
             for pol in (pol_a, pol_b)
             for t in pol.types.values()
             for p in t.perms
-            if not t.perms[p].hidden and (told is None or (t.name, p) in told[0])
+            if told is None or (t.name, p) in told[0]
         }
     )
     rules_a = {rule_key(r): r for r in pol_a.rules if r.command != "mask" and (told is None or rule_key(r) in told[1])}
