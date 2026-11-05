@@ -14,6 +14,12 @@
   "engines": { "vscode": "^1.82.0" },
   "categories": ["Programming Languages", "Linters"],
   "main": "./extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode, .authz files are highlighted, and the language server doesn't start: rowstile.command is a program to run, and the server reads the folder's rowstile.toml."
+    }
+  },
   "activationEvents": ["onLanguage:authz"],
   "contributes": {
     "languages": [{

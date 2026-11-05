@@ -44,6 +44,10 @@ isn't on the PATH: set `rowstile.command` in the workspace's settings. A path in
 The server starts in the workspace folder, where it looks for `rowstile.toml`. When it doesn't start, the extension
 says why, with a button to the setting. A change to `rowstile.command` starts it again.
 
+In Restricted Mode (a folder VS Code doesn't trust yet), `.authz` files are highlighted, and the server doesn't
+start: `rowstile.command` is a program to run, and the server reads the folder's `rowstile.toml` and `.env`. It
+starts once you trust the folder.
+
 ## Zed
 
 `zed/` is the Zed extension: highlighting from the Tree-sitter grammar (`tree-sitter-authz/`), the outline, and
