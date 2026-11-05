@@ -8813,6 +8813,23 @@ class Confidence(unittest.TestCase):
             evaluate.corners([parse_policy(self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n")]), []
         )
 
+    def test_a_corner_leaves_a_link_tables_where_to_its_rows(self) -> None:
+        # a corner says which of the permissions' conditions hold: a link table's where is a condition on the
+        # table's rows, read or drawn there, even where a permission's condition has its text
+        from authzlib import evaluate
+
+        doc = self.HEAD + "type doc = app.docs\n  reader : user = app.doc_readers(doc_id -> user_id)"
+        pol = parse_policy(doc + " where {active}\n  can view = reader and {active}\n", "p.authz")
+        found = evaluate.corners([pol])
+        self.assertEqual([c["active"] for c in found], [True, False, True])
+        key = ("doc", "reader", 0, "user", "")
+        held = 0
+        for k in range(5):
+            rows = evaluate.World(f"s/{k}", 3, pols=[pol], density=0.5).data(pol).pairs[key]
+            self.assertEqual(rows, evaluate.World(f"s/{k}", 3, found[1], pols=[pol], density=0.5).data(pol).pairs[key])
+            held += len(rows)
+        self.assertGreater(held, 0)
+
     def test_a_polymorphic_row_names_an_object_of_its_type(self) -> None:
         # in every world drawn: a row's (type, id) gives one link, to an object of that type that is there
         from authzlib.evaluate import World

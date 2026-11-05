@@ -959,9 +959,8 @@ class World:
             # the table's rows are the same whatever its where says, and the where holds for some of them: a policy
             # that adds a where to a link table reads fewer of the same rows, never other ones
             bare = ("pairs", *source_key(t, r.name, dataclasses.replace(src, where=None), st, sr))
+            # (a corner says nothing of it: it is a condition on the table's rows, not on the type's, whatever its text)
             rows = self.pick(bare, lambda rng: [(o, x) for o in ids for x in subject_ids if rng.random() < rate])
-            if squeeze_sql(src.where) in self.conds:
-                return list(rows) if self.conds[squeeze_sql(src.where)] else []
             node = self.facts(pol, src.where)
             if node is None or uses_uid(node):
                 return self.pick((*key, "holds"), lambda rng: [row for row in rows if rng.random() < 0.5])
