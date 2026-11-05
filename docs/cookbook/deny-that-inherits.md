@@ -18,10 +18,14 @@ type page = app.pages
   is hidden. Being named a reader of a page inside a hidden part doesn't bring it back.
 - There is no `deny` keyword. A deny that doesn't inherit the same way as the permission it takes away is
   refused when the policy is compiled, with what to write.
+- `hidden` is a permission like the others, and everyone holds it on a hidden page. Asked of the API, it tells
+  nobody where those pages are: `authz.can`, `authz.list` and `authz.perms` answer only for the pages you may
+  read, so a hidden page reads as a missing one.
 
 ## Tested
 
-Ann reads the handbook. Drafts is hidden, and a draft below it names her as a reader:
+Ann reads the handbook. Drafts is hidden, and a draft below it names her as a reader. Nobody is told
+where the hidden pages are:
 
 ```authz
 test "a hidden page hides everything below it"
@@ -30,6 +34,8 @@ test "a hidden page hides everything below it"
   user $ann cannot read page $mid
   user $ann cannot read page $low
   as user $ann sees 2 {SELECT FROM app.pages WHERE id IN ($top, $mid, $low, $side)}
+  as user $ann sees 0 {SELECT WHERE authz.can('page', $mid, 'hidden')}
+  as user $bo sees 0 {SELECT FROM authz.list('page', 'hidden')}
 ```
 
 ## Try it

@@ -75,7 +75,8 @@
 - **Invariants** run with the policy's tests and on demand. <!-- checked: tests/governance.sh "the policy tests fail on it"; tests/governance.sh "a Globex user owning an Acme folder breaks it" -->
 - **Previewing a change**: `rowstile diff new.authz [--users 1,2]`
   applies the new policy inside a transaction, lists every (user, object) pair that
-  gains or loses each permission, readable row and masked column, then rolls back. <!-- checked: tests/cli.sh "diff lists who loses what"; tests/cli.sh "diff changed nothing"; tests/governance.sh "without links, erin would lose joint-plan.md"; tests/governance.sh "and could no longer read its row"; tests/governance.sh "the preview changed nothing"; tests/masks.sh "removing the mask: a viewer gains the text" -->
+  gains or loses each permission (as `authz.list` answers it: on rows they may select), readable row and masked
+  column, then rolls back. <!-- checked: tests/cli.sh "diff lists who loses what"; tests/cli.sh "diff changed nothing"; tests/governance.sh "without links, erin would lose joint-plan.md"; tests/governance.sh "and could no longer read its row"; tests/governance.sh "the preview changed nothing"; tests/masks.sh "removing the mask: a viewer gains the text" -->
   It asks as
   every user, as every service or other principal (named `service:7`, also in `--users`) and as nobody. <!-- checked: tests/principals.sh "the preview lists what a service gains"; tests/governance.sh "limits the preview" -->
   A user whose id holds `:` or is `nobody` is named `user:<id>` there, as in the audit trail. <!-- checked: tests/principals.sh "the preview names them the same way"; tests/principals.sh "and the users asked for are named so: user:service:1 is that user alone" -->

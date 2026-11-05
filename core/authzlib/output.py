@@ -55,6 +55,17 @@ def denied(item: Expr) -> str:
     return item.item.name
 
 
+def gives(t: Type, perm: str, expr: Expr) -> bool:
+    """Whether holding perm on a row makes expr hold on it: expr is perm, or an `or` with an item that gives it
+    (`view = edit or viewer` is given by edit, and by share if `edit = share or ...`)."""
+    match expr:
+        case Ref(name):
+            return name == perm or (name in t.perms and gives(t, perm, t.perms[name].expr))
+        case Or(items):
+            return any(gives(t, perm, x) for x in items)
+    return False
+
+
 def read_now(rows: list[str]) -> str:
     """What follows a PL/pgSQL function that holds conditions of the policy no view or rule holds (a type's where
     in authz.uid(), a `shared ... if`): Postgres reads such a function's queries only when they first run, so each
@@ -430,6 +441,17 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
             sql = f"({sql}\n    AND coalesce(({row_cond(t.where, 'o')}), false))"
         return sql
 
+    def shown_sql(self, t: Type, perm: str, point: bool) -> str:
+        """' AND (the select rule on the row aliased o)': authz.can, authz.list and authz.perms answer only for rows
+        the user may select, so a permission held on a row they can't see (the deny `{hidden} or parent.hidden`,
+        which everyone holds where it is true) reads as one on a missing row. Nothing where the table has no
+        select rule, or where holding the permission gives the rule (`view = edit or ...`, asked for edit). Scopes
+        aside: they limit what a session does, and authz_int.scope_perm has already asked them."""
+        sel = next((r for r in self.rules if r.table == t.table and r.command == "select" and not r.columns), None)
+        if sel is None or gives(t, perm, sel.expr):
+            return ""
+        return f"\n    AND ({self.row_sql(t, 'o', sel.expr, sel.loc, point=point)})"
+
     def list_cases_sql(self) -> str:
         """authz.list's branches: each row of the type tested with the permission's row check, as select
         rules do (lookups the planner hashes once for many rows, and what the object's own columns give
@@ -449,6 +471,8 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
                 cond = self.row_sql(t, "o", Ref(p), t.perms[p].loc)
                 if t.where:
                     cond = f"({cond}\n    AND coalesce(({row_cond(t.where, 'o')}), false))"
+                if shown := self.shown_sql(t, p, point=False):
+                    cond = f"(({cond}){shown})"
                 rows = f"SELECT {self.key_text(t, 'o')} FROM {tbl} o\n        WHERE "
                 cases.append(
                     f"    WHEN {lit(t.name + '.' + p)} THEN\n"
@@ -470,21 +494,23 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
             "RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';"
         )
 
-        def can_branch(t: Type) -> str:
+        def can_branch(t: Type, shown: bool) -> str:
             if not t.perms:  # a type without permissions is still a type: it has no such permission
                 return f"      {no_perm}"
             # the permission on the object's own row, as a write rule checks it: that object's lookups (and
             # its ancestors, for recursive permissions), not every object the user holds it on. On any row with
             # the key, as the views say: a table that inherits from this one may hold a second (the primary
-            # key doesn't cover its rows)
+            # key doesn't cover its rows). shown: on a row the user may select (authz.can's answer)
             cases = "\n".join(
                 f"        WHEN {lit(p)} THEN RETURN EXISTS (SELECT 1 FROM {qt(t.table)} o "
-                f"WHERE {self.key_is(t, 'o', 'v_' + t.pktype)} AND ({self.can_sql(t, p)}));"
+                f"WHERE {self.key_is(t, 'o', 'v_' + t.pktype)} AND ({self.can_sql(t, p)})"
+                f"{self.shown_sql(t, p, point=True) if shown else ''});"
                 for p in perms_of[t.name]
             )
             return f"      CASE p_perm\n{cases}\n        ELSE {no_perm}\n      END CASE;"
 
-        can_body = self.dispatch_type(can_branch, "RETURN false;")
+        can_body = self.dispatch_type(lambda t: can_branch(t, True), "RETURN false;")
+        held_body = self.dispatch_type(lambda t: can_branch(t, False), "RETURN false;")
         perms_cases = "\n".join(  # every type: one without permissions has an empty list of them
             f"    WHEN {lit(t.name)} THEN names := ARRAY[{', '.join(lit(p) for p in ps)}]::text[];"
             for t in self.types.values()
@@ -497,8 +523,19 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
             f"  $$ SELECT authz.perms(p_type, p_id::text) $$;"
             for pt in self.id_types()
         )
-        return f"""-- Check a permission from app code: SELECT authz.can('file', 11, 'edit')
--- (only objects that exist; plans are cached per session)
+        return f"""-- A permission on an object, whether the user may select its row or not: what the functions that act on the
+-- object ask (sharing, roles, keys, view_as, break_glass, requests), where authz.can's answer is for rows they may see
+CREATE FUNCTION authz_int.can(p_type text, p_id text, p_perm text) RETURNS boolean
+LANGUAGE plpgsql STABLE {DEFINER_FROM_CURRENT} AS $f$
+DECLARE{self.id_vars()}
+BEGIN
+  IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN false; END IF;
+{held_body}
+END $f$;
+
+-- Check a permission from app code: SELECT authz.can('file', 11, 'edit')
+-- (only objects that exist, and on a table with a select rule only rows the user may select: a row they can't see
+-- reads as a missing one; plans are cached per session)
 CREATE FUNCTION authz.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE {DEFINER_FROM_CURRENT} AS $f$
 DECLARE v_allowed boolean;{self.id_vars()}
@@ -772,9 +809,9 @@ BEGIN
   v_found := v_found AND EXISTS (
     SELECT 1 FROM (SELECT s.shared_by AS perm FROM authz_int.shared_relations s WHERE s.object_type = p_type
                    UNION SELECT 'share') x
-    -- (CASE: authz.can raises for a permission the type doesn't have, and AND doesn't say which runs first)
+    -- (CASE: authz_int.can raises for a permission the type doesn't have, and AND doesn't say which runs first)
     WHERE CASE WHEN EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = x.perm)
-               THEN authz.can(p_type, p_id, x.perm) ELSE false END);
+               THEN authz_int.can(p_type, p_id, x.perm) ELSE false END);
   IF NOT v_found THEN
     -- why, in what authz.explain tells the caller (a hidden object as a missing one): the permission sharing this
     -- relation takes (a custom role: share), or for a relation the type doesn't share, each one sharing there takes
@@ -814,12 +851,12 @@ BEGIN
       RAISE EXCEPTION 'custom roles on % cannot be given to %', p_type, v_key USING HINT = 'rowstile help AZ706';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = 'share')
-       OR NOT authz.can(p_type, p_id, 'share') THEN
+       OR NOT authz_int.can(p_type, p_id, 'share') THEN
       RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege',
         DETAIL = authz_int.share_why(p_type, p_id, ARRAY['share']), HINT = 'rowstile help AZ705';
     END IF;
     SELECT string_agg(permission, ', ') INTO v_need FROM authz.role_permissions
-    WHERE role_id = v_role.id AND NOT authz.can(p_type, p_id, permission);
+    WHERE role_id = v_role.id AND NOT authz_int.can(p_type, p_id, permission);
     IF v_need IS NOT NULL THEN
       RAISE EXCEPTION 'you cannot give role % on % %: you do not hold %', v_role.name, p_type, p_id, v_need
         USING ERRCODE = 'insufficient_privilege', DETAIL = authz_int.share_why(p_type, p_id, string_to_array(v_need, ', ')),
@@ -832,11 +869,11 @@ BEGIN
       RAISE EXCEPTION 'the policy does not allow sharing %.% with %', p_type, p_relation, v_key USING HINT = 'rowstile help AZ706';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = v_rel.shared_by)
-       OR NOT authz.can(p_type, p_id, v_rel.shared_by) THEN
+       OR NOT authz_int.can(p_type, p_id, v_rel.shared_by) THEN
       RAISE EXCEPTION 'you cannot share % % (needs %)', p_type, p_id, v_rel.shared_by USING ERRCODE = 'insufficient_privilege',
         DETAIL = authz_int.share_why(p_type, p_id, ARRAY[v_rel.shared_by]), HINT = 'rowstile help AZ705';
     END IF;
-    SELECT string_agg(n, ', ') INTO v_need FROM unnest(v_rel.required) n WHERE NOT authz.can(p_type, p_id, n);
+    SELECT string_agg(n, ', ') INTO v_need FROM unnest(v_rel.required) n WHERE NOT authz_int.can(p_type, p_id, n);
     IF v_need IS NOT NULL THEN
       RAISE EXCEPTION 'you cannot grant %.% on % %: you do not hold %', p_type, p_relation, p_type, p_id, v_need
         USING ERRCODE = 'insufficient_privilege', DETAIL = authz_int.share_why(p_type, p_id, string_to_array(v_need, ', ')),
@@ -879,7 +916,7 @@ BEGIN
   -- what it needs comes from the policy alone: the same words for a hidden object and a missing one
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) OR v_by IS NULL
      OR NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = v_by)
-     OR NOT authz.can(p_type, p_id, v_by) THEN
+     OR NOT authz_int.can(p_type, p_id, v_by) THEN
     IF v_by IS NULL THEN
       RAISE EXCEPTION 'you cannot unshare % on % %', p_relation, p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
     END IF;
@@ -978,7 +1015,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM authz_int.role_subjects WHERE object_type = p_object_type) THEN
     RAISE EXCEPTION 'no custom roles on % in the policy', p_object_type USING HINT = 'rowstile help AZ707';
   END IF;
-  IF authz.uid() IS NULL OR NOT authz.can(p_owner_type, p_owner_id, 'manage_roles') THEN
+  IF authz.uid() IS NULL OR NOT authz_int.can(p_owner_type, p_owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage roles of % %', p_owner_type, p_owner_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   IF p_owner_type IS DISTINCT FROM coalesce(authz_int.role_owner_type(p_object_type), p_owner_type) THEN
@@ -1004,7 +1041,7 @@ BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.set_role_permissions');
   SELECT * INTO v FROM authz.roles WHERE id = p_role;
-  IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz.can(v.owner_type, v.owner_id, 'manage_roles') THEN
+  IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz_int.can(v.owner_type, v.owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage role %', p_role USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   SELECT string_agg(p, ', ') INTO v_bad FROM unnest(p_permissions) p
@@ -1042,7 +1079,7 @@ BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.delete_role');
   SELECT * INTO v FROM authz.roles WHERE id = p_role;
-  IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz.can(v.owner_type, v.owner_id, 'manage_roles') THEN
+  IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz_int.can(v.owner_type, v.owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage role %', p_role USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   DELETE FROM authz.roles WHERE id = p_role;
@@ -1055,9 +1092,9 @@ BEGIN
   p_owner_id := authz_int.canon(p_owner_type, p_owner_id);
   IF authz.uid() IS NULL OR NOT (
        (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles')
-        AND authz.can(p_owner_type, p_owner_id, 'manage_roles'))
+        AND authz_int.can(p_owner_type, p_owner_id, 'manage_roles'))
     OR (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'view')
-        AND authz.can(p_owner_type, p_owner_id, 'view'))) THEN
+        AND authz_int.can(p_owner_type, p_owner_id, 'view'))) THEN
     RAISE EXCEPTION 'you cannot see roles of % %', p_owner_type, p_owner_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   RETURN QUERY SELECT r.id, r.object_type, r.name,

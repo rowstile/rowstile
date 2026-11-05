@@ -29,6 +29,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   giving it back as it was.
 - The Rust SDK's `per_binary` gives each slot of cargo-nextest (`NEXTEST_TEST_GLOBAL_SLOT`) a copy of its own, as
   each binary has under `cargo test`.
+- Seeing who has access to an object (`authz.who`, `authz.list_shares`, `authz.list_links`, `authz.explain` for
+  someone else, `authz.start_review`) takes `share` on a row the user may select, and `authz.who_among` lists those
+  for whom `authz.can` says yes (below). What acts on an object still asks the permission itself: sharing, roles,
+  API keys, `authz.view_as` and `authz.break_glass`, which works on a row the user can't see. So do `authz.who`'s
+  answers, the first line of `authz.explain`, `rowstile why` and a test's `user X can PERM TYPE ID`. The access
+  preview (`rowstile diff`, the review's access) lists what `authz.list` answers.
 
 ### Fixed
 
@@ -238,6 +244,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   migration the database holds already, AZ203's no longer names `shared by` and scopes (AZ207, AZ404),
   AZ107's names `roles`, and AZ208's message and page name the same uses: a permission, a rule, an invariant,
   a group or a roles line's `from`.
+- `authz.can`, `authz.list`, `authz.perms` and `authz.perms_of` answer for the rows the user may select: on a table
+  with a select rule, a row its rule doesn't let them select reads as a missing one (false, left out of the list,
+  no permissions). A permission made of conditions on the row, such as the deny the docs teach (`can hidden =
+  {hidden} or parent.hidden`), is held by everyone on the rows it marks, and these answers named those rows.
+  A table without a select rule answers as before.
 
 ### Upgrading
 

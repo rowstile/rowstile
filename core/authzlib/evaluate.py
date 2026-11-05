@@ -298,6 +298,14 @@ class Reference:
         t = self.type_of_table(rule.table)
         return self.eval_expr(state, t, rule.expr) & self.ids(t) & self.valid(t)
 
+    def answers(self, state: State, t: Type, perm: str) -> set[str]:
+        """The rows authz.can, authz.list and authz.perms say hold t's perm, in this state: the rows it holds on, and
+        on a table with a select rule only those the rule lets the user select. A permission held on a row they
+        can't see (a deny made of conditions, `{hidden} or parent.hidden`) reads as one on a missing row."""
+        held = set(state[(t.name, perm)]) & self.ids(t)
+        sel = next((r for r in self.rules if r.table == t.table and r.command == "select" and not r.columns), None)
+        return held & self.rule(state, sel) if sel else held
+
     def ids(self, t: Type) -> set[str]:
         return set(self.data.ids[t.name])
 

@@ -47,6 +47,15 @@ all=$(PSQL -c "SELECT count(*) FROM app.files")
 echo "-- reading what the policy hides"
 expect "a hidden file by id" "0" -c "SELECT count(*) FROM app.files WHERE id = 12"
 expect "a confidential file" "0" -c "SELECT count(*) FROM app.files WHERE id = 14"
+# carol holds break_glass on every Acme folder (org.member), Secrets (5) and Keys (6) too, which she can't see:
+# the answers name only the rows she may select, and say of a hidden one what they say of a missing one (999)
+expect "authz.list names only the rows she may see, of a permission she holds on hidden ones too" "1 2 3 4" \
+  -c "SELECT string_agg(x, ' ' ORDER BY x::int) FROM authz.list('folder', 'break_glass') x"
+expect "...authz.can says of a hidden folder what it says of a missing one" "f|f" \
+  -c "SELECT authz.can('folder', 5, 'break_glass'), authz.can('folder', 999, 'break_glass')"
+expect "...and so do authz.perms and authz.perms_of" "{}|{}|{}|{}" \
+  -c "SELECT authz.perms('folder', 6), authz.perms('folder', 999), (SELECT perms FROM authz.perms_of('folder', ARRAY['6'])),
+        (SELECT perms FROM authz.perms_of('folder', ARRAY['999']))"
 n=$(psql -X -q -At -1 -U "$ATTACKER" -d "$DB" -c "$(sign 3)" -c "\\copy app.files TO STDOUT" 2>&1 | wc -l)
 [ "$n" = "$visible" ] && echo "ok    COPY returns only visible rows" || { echo "FAIL  COPY returned $n rows"; fails=$((fails + 1)); }
 got=$(psql -X -q -At -1 -U "$ATTACKER" -d "$DB" -c "$(sign 3)" -c "\\copy app.files (name) TO STDOUT" 2>&1)

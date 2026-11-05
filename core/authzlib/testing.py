@@ -284,7 +284,7 @@ LANGUAGE plpgsql AS {tag}{body}{tag};
             return (
                 head
                 + self.sign_in_sql(st, names)
-                + f"""    v_ok := authz.can({lit(st.type)}, {obj}, {lit(st.perm)});
+                + f"""    v_ok := authz_int.can({lit(st.type)}, {obj}, {lit(st.perm)});
     IF v_ok IS DISTINCT FROM {want} THEN
       v_msg := (SELECT string_agg(l, E'\\n') FROM authz.explain({lit(st.type)}, {obj}, {lit(st.perm)}) l);
       {self.add_result("v_line", "false", "v_text || " + SQL_NL + " || coalesce(v_msg, '')")}

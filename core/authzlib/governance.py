@@ -740,7 +740,7 @@ RETURNS boolean LANGUAGE plpgsql STABLE {DEF} AS $f$
 DECLARE v_perm text := authz_int.manage_perm(p_type, p_relation, p_subject);
 BEGIN
   IF authz_int.caller_is_admin() THEN RETURN true; END IF;
-  RETURN v_perm IS NOT NULL AND EXISTS (SELECT 1 FROM authz.principal()) AND coalesce(authz.can(p_type, p_id, v_perm), false);
+  RETURN v_perm IS NOT NULL AND EXISTS (SELECT 1 FROM authz.principal()) AND coalesce(authz_int.can(p_type, p_id, v_perm), false);
 END $f$;
 
 -- Ask for access: SELECT authz.request_access('folder', '3', 'viewer', 'for the audit', '7 days')
@@ -880,7 +880,7 @@ BEGIN
   IF v_held THEN v_held := authz_int.hold('user', authz.uid()::text); END IF;
   IF NOT v_held
      OR NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = 'break_glass')
-     OR NOT authz.can(p_type, p_id, 'break_glass') THEN
+     OR NOT authz_int.can(p_type, p_id, 'break_glass') THEN
     RAISE EXCEPTION 'you cannot break the glass on % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   SELECT * INTO v_rel FROM authz_int.shared_relations

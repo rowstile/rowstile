@@ -5,7 +5,8 @@
 -- tables, c in an inheritance table of two relations, s for a link table's row (x in the audit trail, which
 -- tests/governance.sh asks), share in shared if. browse reads the row's own table by its name, as the select rule
 -- has it. A mark (ref_id) blocks a row; a seal stops what a folder inherits. peek names one column in two cases
--- (this.ID, this.id): one column, as Postgres folds names.
+-- (this.ID, this.id): one column, as Postgres folds names. authz.list names only the rows the select rule lets
+-- user 1 select: browse, folders 2 and 3 (theirs, with nothing inside), and no file (open: folder 1's and 3's).
 app role app_user
 
 type user = app.users where {not exists (select 1 from app.marks u where u.ref_id = this.id and u.kind = 'user')}
@@ -54,22 +55,22 @@ test "this. names the row, whatever the condition's subquery calls its table"
   as service 8 sees 1 {SELECT FROM authz.principal()}
   user 1 can view folder 1
   user 1 cannot view folder 3
-  as user 1 sees 2 {SELECT x FROM authz.list('folder', 'view') x}
+  as user 1 sees 1 {SELECT x FROM authz.list('folder', 'view') x}
   user 1 can peek folder 1
   user 1 cannot peek folder 3
-  as user 1 sees 2 {SELECT x FROM authz.list('folder', 'peek') x WHERE x IN ('1', '2', '3')}
+  as user 1 sees 1 {SELECT x FROM authz.list('folder', 'peek') x WHERE x IN ('1', '2', '3')}
   user 1 can read folder 5
   user 1 cannot read folder 4
   user 1 can reach folder 5
   user 1 cannot reach folder 4
-  as user 1 sees 4 {SELECT x FROM authz.list('folder', 'read') x}
-  as user 1 sees 4 {SELECT x FROM authz.list('folder', 'reach') x}
+  as user 1 sees 2 {SELECT x FROM authz.list('folder', 'read') x}
+  as user 1 sees 2 {SELECT x FROM authz.list('folder', 'reach') x}
   user 1 can read file 15
   user 1 cannot read file 14
   user 1 can reach file 15
   user 1 cannot reach file 14
-  as user 1 sees 1 {SELECT x FROM authz.list('file', 'read') x WHERE x IN ('14', '15')}
-  as user 1 sees 1 {SELECT x FROM authz.list('file', 'reach') x WHERE x IN ('14', '15')}
+  as user 1 sees 0 {SELECT x FROM authz.list('file', 'read') x WHERE x IN ('14', '15')}
+  as user 1 sees 0 {SELECT x FROM authz.list('file', 'reach') x WHERE x IN ('14', '15')}
   as user 2 sees 1 {SELECT FROM authz.explain('folder', 4, 'read', '1') e WHERE e LIKE '    no   {not exists (select 1 from app.marks r %'}
   as user 1 sees 0 {SELECT FROM authz.explain('folder', 3, 'view') WITH ORDINALITY x(e, n) WHERE n = 1 AND e LIKE 'yes%'}
   user 1 can open file 11

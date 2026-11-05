@@ -327,10 +327,10 @@ def replay(
 ) -> str | None:
     """A difference the review shows, replayed in a database (db's name, _replay): the world it was found in made as
     rows under the policy (its compiled sql), then under the rewrite (new); the user's answer asked each time
-    (authz.can) must be the review's. A condition the evaluator doesn't read holds where the rows say, which may not
-    be where the world says: so what the rows hold is read back (difftest's queries), and the database must answer
-    as the reference evaluator does on that; the review's world, where the rows hold it. The problem, if any;
-    Unloadable if rows can't make that world."""
+    (authz_int.can, the permission itself) must be the review's. A condition the evaluator doesn't read holds where
+    the rows say, which may not be where the world says: so what the rows hold is read back (difftest's queries), and
+    the database must answer as the reference evaluator does on that; the review's world, where the rows hold it. The
+    problem, if any; Unloadable if rows can't make that world."""
     found = m.get("counterexample")
     assert found is not None
     if m.get("unreadable") or not re.fullmatch(r"\w+\.\w+", found["what"]):
@@ -368,7 +368,8 @@ def replay(
 
     def answer(pol: Policy) -> tuple[bool, evaluate.Data]:
         """The user's answer, and what the rows hold for the evaluator (read in the user's session)."""
-        lines = [signed, f"SELECT 'can', authz.can({lit(tname)}, {lit(found['object'])}, {lit(perm)});"]
+        # (the permission itself, as the review compares it: authz.can answers only for rows the user may select)
+        lines = [signed, f"SELECT 'can', authz_int.can({lit(tname)}, {lit(found['object'])}, {lit(perm)});"]
         lines += [f"SELECT {lit(json.dumps(list(key)))}, ({q});" for key, q in Reader(pol).data_queries()]
         got = there.rows("\n".join(lines))
         assert got[0][0] == "can", got[0]

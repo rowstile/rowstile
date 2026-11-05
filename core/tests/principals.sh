@@ -633,6 +633,9 @@ done
 case "$got" in *": user user:"*) echo "FAIL  the policy tests say user user:...: $got"; fails=$((fails + 1));;
   *) echo "ok    ... and never user user:<id>";; esac
 sed 's/^  can break_glass = oncall$/  can break_glass = oncall\n  can page = oncall/' $T/principals_ids.authz > $T/principals_ids_page.authz
+# (the preview lists what authz.list answers, the rows each one may select: the user whose id is nobody, on call
+# for doc 1, reads it too)
+IPSQL -c "SET ROLE app_user; $AS_COLON SELECT authz.share('doc', 1, 'reader', 'user', 'nobody')" >/dev/null
 out=$(python3 compile_policy.py $T/principals_ids_page.authz --diff | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$IDB" 2>&1 | grep -E '^gains\|[^|]*\|doc\|' | sort | tr '\n' ' ')
 if [ "$out" = "gains|user:nobody|doc|permission page|1 gains|user:service:1|doc|permission page|2 " ]; then
   echo "ok    the preview names them the same way"

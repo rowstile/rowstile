@@ -553,7 +553,7 @@ END $f$;"""
                 f"          FOR v_c IN SELECT DISTINCT x::text FROM {self.who_fn(t, p)}(v_{t.pktype}) x WHERE {is_user} LOOP\n"
                 f"            PERFORM set_config('authz.user_id', v_c, true);\n"
                 f"            PERFORM authz_int.sign();\n"
-                f"            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;\n"
+                f"            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;\n"
                 f"          END LOOP;"
                 for p in self.public_perms(t)
             )
@@ -573,8 +573,8 @@ END $f$;"""
         why_body = self.dispatch_type(why_branch, "EXIT asking;")
         return f"""{self.visible_sql()}
 
--- May the current user look at who has access to this object? (they can share it, or the caller is an
--- administrator: the policy's owner, a superuser or BYPASSRLS)
+-- May the current user look at who has access to this object? (they can share it, as authz.can says: on a row they
+-- may select; or the caller is an administrator: the policy's owner, a superuser or BYPASSRLS)
 CREATE FUNCTION authz_int.may_inspect(p_type text, p_id text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
@@ -607,7 +607,7 @@ BEGIN
 END $f$;
 
 -- Everyone who holds a permission on an object: SELECT * FROM authz.who('folder', 3, 'view')
--- Candidates come from the data (a superset); each is checked with authz.can, as that user.
+-- Candidates come from the data (a superset); each is checked as that user (the permission itself, authz_int.can).
 CREATE FUNCTION authz.who(p_type text, p_id text, p_perm text) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_c text;
@@ -659,7 +659,7 @@ BEGIN
     PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
     PERFORM authz_int.sign();
   END IF;
-  v_ok := authz.can(p_type, p_id, p_perm);
+  v_ok := authz_int.can(p_type, p_id, p_perm);
   RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
     || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
   <<asking>> BEGIN

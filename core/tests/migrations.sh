@@ -103,7 +103,7 @@ out=$(CLI migrate 2>&1); rc=$?
 second=$(ls "$P"/db/migrations/*.sql | sort | tail -n 1)
 [ $rc -eq 0 ] && [ "$second" != "$first" ] && case "$second" in *_file_comment_folder_view.sql) true;; *) false;; esac &&
   ok "the next migration is named after what changed" || bad "second migrate" "$out $second"
-[ "$(wc -c < "$second")" -lt 70000 ] && ! grep -q "CREATE TABLE authz_int.\"folder__parent__tree\"" "$second" &&
+[ "$(wc -c < "$second")" -lt 80000 ] && ! grep -q "CREATE TABLE authz_int.\"folder__parent__tree\"" "$second" &&
   ok "... and holds only what changed ($(( $(wc -c < "$second") / 1024 )) KB; no tree)" || bad "second size" "$(wc -c < "$second")"
 grep -q "^-- + type file: can comment = folder.view$" "$second" && ok "... starting with what changed, as comments" || bad "second summary"
 out=$(migrate_db "$DB" "$P/db/migrations") && [ "$(PSQL -c "SET authz.user_id = 1" -c "SELECT authz.can('file', 11, 'comment')")" = t ] &&

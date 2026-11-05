@@ -9714,8 +9714,14 @@ class HandAnswers(unittest.TestCase):
         for who, expected in answers.items():
             state = ref.evaluate(data, who, links)
             for name, ids in expected.items():
-                tname, _, perm = name.partition(".")
-                got = ref.rule(state, rules[name]) if name in rules else state[(tname, perm)]
+                # 'answers folder.view': what authz.can, authz.list and authz.perms say of it
+                tname, _, perm = name.removeprefix("answers ").partition(".")
+                if name in rules:
+                    got = ref.rule(state, rules[name])
+                elif name.startswith("answers "):
+                    got = ref.answers(state, pol.types[tname], perm)
+                else:
+                    got = state[(tname, perm)]
                 want = {x.strip() for x in ids.split(",") if x.strip()}
                 self.assertEqual(sorted(got), sorted(want), f"{name}, asked as {who or 'nobody'}")
         if broken is not None:
@@ -10340,6 +10346,36 @@ class HandAnswers(unittest.TestCase):
             {
                 "ann": {"folder.view": "1, 5", "folder.hidden": "2, 3, 4"},
                 "bo": {"folder.view": "1, 2, 3, 4, 5", "folder.hidden": ""},
+            },
+        )
+
+    @worked_from("answers-seen")
+    def test_the_answers_name_only_rows_the_user_may_select(self) -> None:
+        # Drafts (2) is hidden, and so is 3 below it: everyone holds hidden there, nobody signed in too, and nobody
+        # is told, since nobody may select them; ann reads 1 and 4 (3 names her, but it is hidden). Notes have no
+        # select rule: their answers are what is held
+        policy = (
+            "type user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
+            "  reader : user = app.folder_readers(folder_id -> user_id)\n"
+            "  can hidden = {hidden} or parent.hidden\n  can read = (reader or parent.read) and not hidden\n"
+            "type note = app.notes\n  can flagged = {flagged}\n"
+            "rules app.folders\n  select : read\n"
+        )
+        self.check(
+            policy,
+            "user: ann, bo\nfolder: 1, 2, 3, 4\nfolder 2 parent folder 1\nfolder 3 parent folder 2\n"
+            "folder 4 parent folder 1\nfolder 1 reader user ann\nfolder 3 reader user ann\n{hidden} on folder 2\n"
+            "note: 1, 2\n{flagged} on note 1\n",
+            {
+                "ann": {
+                    "folder.hidden": "2, 3",
+                    "answers folder.hidden": "",
+                    "folder.read": "1, 4",
+                    "answers folder.read": "1, 4",
+                    "answers note.flagged": "1",
+                },
+                "bo": {"folder.hidden": "2, 3", "answers folder.hidden": "", "answers folder.read": ""},
+                "": {"folder.hidden": "2, 3", "answers folder.hidden": "", "answers note.flagged": "1"},
             },
         )
 

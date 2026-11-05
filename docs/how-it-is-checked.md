@@ -301,7 +301,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 
 | feature | tier | documented in | fixed checks | held to another answer by |
 |---|---|---|---|---|
-| Checks and lists: `authz.can`, `authz.list`, `authz.perms`, `authz.perms_of` | 1 | [app-code](reference/app-code.md) | `scenario.sql`, `devx.sh`, `capitals.sh` | `difftest.py`, `small.py`, `invariance.py`, `upgrade_world.py` |
+| Checks and lists: `authz.can`, `authz.list`, `authz.perms`, `authz.perms_of` | 1 | [app-code](reference/app-code.md) | `scenario.sql`, `devx.sh`, `capitals.sh`, `adversarial.sh` | `difftest.py`, `small.py`, `invariance.py`, `upgrade_world.py`, hand answers |
 | Inheritance tables that match a rebuild: `authz.verify` | 1 | [app-code](reference/app-code.md) | `scenario.sql`, `moves.sh`, `keep.sh`, `apply.sh` | `difftest.py`, `interleave.py`, `stress.sh` |
 | Who holds a permission: `authz.who`, `authz.who_among` | 2 | [app-code](reference/app-code.md) | `devx.sh`, `principals.sh` | `difftest.py` |
 | Why, or why not: `authz.explain`, `authz.explain_rule` | 2 | [app-code](reference/app-code.md) | `devx.sh`, `adversarial.sh`, `docs_test.sh` | `difftest.py` |

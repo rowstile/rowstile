@@ -450,7 +450,7 @@ BEGIN
     RAISE EXCEPTION 'the policy gives % no manage_keys permission, so nobody manages its keys', p_type
       USING HINT = 'rowstile help AZ707';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM authz.principal()) OR NOT coalesce(authz.can(p_type, p_id, 'manage_keys'), false) THEN
+  IF NOT EXISTS (SELECT 1 FROM authz.principal()) OR NOT coalesce(authz_int.can(p_type, p_id, 'manage_keys'), false) THEN
     RAISE EXCEPTION 'you cannot manage the keys of % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
 END $f$;
@@ -486,7 +486,7 @@ BEGIN
        OR (k.principal_type = 'user' AND authz_int.may_inspect('user', k.user_id))
        OR (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = k.principal_type AND perm = 'manage_keys')
            AND EXISTS (SELECT 1 FROM authz.principal())
-           AND coalesce(authz.can(k.principal_type, k.user_id, 'manage_keys'), false))) THEN
+           AND coalesce(authz_int.can(k.principal_type, k.user_id, 'manage_keys'), false))) THEN
     RAISE EXCEPTION 'no API key % of yours', p_id USING HINT = 'rowstile help AZ708';
   END IF;
   UPDATE authz.api_keys SET revoked_at = now() WHERE id = p_id;
@@ -648,7 +648,7 @@ BEGIN
     RAISE EXCEPTION 'say why (the reason is kept in the audit trail)' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
   END IF;
   IF NOT (authz_int.caller_is_admin()
-          {"OR (EXISTS (SELECT 1 FROM authz.principal()) AND authz.can(" + lit("user") + ", p_user, " + lit("impersonate") + "))" if imp else ""}) THEN
+          {"OR (EXISTS (SELECT 1 FROM authz.principal()) AND authz_int.can(" + lit("user") + ", p_user, " + lit("impersonate") + "))" if imp else ""}) THEN
     RAISE EXCEPTION 'you cannot view as user %', p_user USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   PERFORM set_config('authz.user_id', coalesce(authz_int.canon('user', p_user), ''), true);

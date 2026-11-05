@@ -4073,8 +4073,75 @@ END $mr$;
 
 CREATE TABLE authz_int.masked_columns (tbl text, col text, view text, PRIMARY KEY (tbl, col));
 
+-- A permission on an object, whether the user may select its row or not: what the functions that act on the
+-- object ask (sharing, roles, keys, view_as, break_glass, requests), where authz.can's answer is for rows they may see
+CREATE FUNCTION authz_int.can(p_type text, p_id text, p_perm text) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_bigint bigint;
+BEGIN
+  IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN false; END IF;
+  CASE p_type
+    WHEN 'user' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      CASE p_perm
+        WHEN 'impersonate' THEN RETURN EXISTS (SELECT 1 FROM "app"."users" o WHERE o."id" = v_bigint AND (coalesce((exists (select 1 from app.org_members a join app.org_members b on a.org_id = b.org_id where a.user_id = (SELECT authz.uid()) and a.role = 'admin' and b.user_id = o.id)), false)));
+        ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+      END CASE;
+    WHEN 'org' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+    WHEN 'team' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+    WHEN 'folder' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      CASE p_perm
+        WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR (coalesce((inherit), false)
+    AND authz_int."folder__share__has"(o."parent_id")))));
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND authz_int."folder__edit__has"(o."parent_id")))));
+        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND authz_int."folder__view__has"(o."parent_id"))
+    OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = o."id" AND authz_int."folder__view__has"(s."parent_id")))));
+        WHEN 'break_glass' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")));
+        ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+      END CASE;
+    WHEN 'file' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      CASE p_perm
+        WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR authz_int."folder__share__has"(o."folder_id"))));
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR authz_int."folder__edit__has"(o."folder_id"))));
+        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR authz_int."folder__edit__has"(o."folder_id")
+    OR (NOT coalesce((confidential), false)
+    AND authz_int."folder__view__has"(o."folder_id")))));
+        ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+      END CASE;
+    ELSE
+      RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';
+  END CASE;
+END $f$;
+
 -- Check a permission from app code: SELECT authz.can('file', 11, 'edit')
--- (only objects that exist; plans are cached per session)
+-- (only objects that exist, and on a table with a select rule only rows the user may select: a row they can't see
+-- reads as a missing one; plans are cached per session)
 CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE v_allowed boolean; v_bigint bigint;
@@ -4128,7 +4195,14 @@ BEGIN
     OR (coalesce((inherit), false)
     AND authz_int."folder__view__has"(o."parent_id"))
     OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = o."id" AND authz_int."folder__view__has"(s."parent_id")))));
-        WHEN 'break_glass' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")));
+        WHEN 'break_glass' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id"))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND authz_int."folder__view__has"(o."parent_id"))
+    OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = o."id" AND authz_int."folder__view__has"(s."parent_id")))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'file' THEN
@@ -4272,14 +4346,38 @@ BEGIN
     WHEN 'folder.break_glass' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
-        WHERE EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id");
+        WHERE ((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id"))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = o."id"))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
-        WHERE EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")
+        WHERE ((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id"))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = o."id"))))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
-        WHERE o."id" > p_after::bigint AND EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")
+        WHERE o."id" > p_after::bigint AND ((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id"))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = o."id"))))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'file.share' THEN
@@ -4428,9 +4526,9 @@ BEGIN
   v_found := v_found AND EXISTS (
     SELECT 1 FROM (SELECT s.shared_by AS perm FROM authz_int.shared_relations s WHERE s.object_type = p_type
                    UNION SELECT 'share') x
-    -- (CASE: authz.can raises for a permission the type doesn't have, and AND doesn't say which runs first)
+    -- (CASE: authz_int.can raises for a permission the type doesn't have, and AND doesn't say which runs first)
     WHERE CASE WHEN EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = x.perm)
-               THEN authz.can(p_type, p_id, x.perm) ELSE false END);
+               THEN authz_int.can(p_type, p_id, x.perm) ELSE false END);
   IF NOT v_found THEN
     -- why, in what authz.explain tells the caller (a hidden object as a missing one): the permission sharing this
     -- relation takes (a custom role: share), or for a relation the type doesn't share, each one sharing there takes
@@ -4470,12 +4568,12 @@ BEGIN
       RAISE EXCEPTION 'custom roles on % cannot be given to %', p_type, v_key USING HINT = 'rowstile help AZ706';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = 'share')
-       OR NOT authz.can(p_type, p_id, 'share') THEN
+       OR NOT authz_int.can(p_type, p_id, 'share') THEN
       RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege',
         DETAIL = authz_int.share_why(p_type, p_id, ARRAY['share']), HINT = 'rowstile help AZ705';
     END IF;
     SELECT string_agg(permission, ', ') INTO v_need FROM authz.role_permissions
-    WHERE role_id = v_role.id AND NOT authz.can(p_type, p_id, permission);
+    WHERE role_id = v_role.id AND NOT authz_int.can(p_type, p_id, permission);
     IF v_need IS NOT NULL THEN
       RAISE EXCEPTION 'you cannot give role % on % %: you do not hold %', v_role.name, p_type, p_id, v_need
         USING ERRCODE = 'insufficient_privilege', DETAIL = authz_int.share_why(p_type, p_id, string_to_array(v_need, ', ')),
@@ -4488,11 +4586,11 @@ BEGIN
       RAISE EXCEPTION 'the policy does not allow sharing %.% with %', p_type, p_relation, v_key USING HINT = 'rowstile help AZ706';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = v_rel.shared_by)
-       OR NOT authz.can(p_type, p_id, v_rel.shared_by) THEN
+       OR NOT authz_int.can(p_type, p_id, v_rel.shared_by) THEN
       RAISE EXCEPTION 'you cannot share % % (needs %)', p_type, p_id, v_rel.shared_by USING ERRCODE = 'insufficient_privilege',
         DETAIL = authz_int.share_why(p_type, p_id, ARRAY[v_rel.shared_by]), HINT = 'rowstile help AZ705';
     END IF;
-    SELECT string_agg(n, ', ') INTO v_need FROM unnest(v_rel.required) n WHERE NOT authz.can(p_type, p_id, n);
+    SELECT string_agg(n, ', ') INTO v_need FROM unnest(v_rel.required) n WHERE NOT authz_int.can(p_type, p_id, n);
     IF v_need IS NOT NULL THEN
       RAISE EXCEPTION 'you cannot grant %.% on % %: you do not hold %', p_type, p_relation, p_type, p_id, v_need
         USING ERRCODE = 'insufficient_privilege', DETAIL = authz_int.share_why(p_type, p_id, string_to_array(v_need, ', ')),
@@ -4549,7 +4647,7 @@ BEGIN
   -- what it needs comes from the policy alone: the same words for a hidden object and a missing one
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) OR v_by IS NULL
      OR NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = v_by)
-     OR NOT authz.can(p_type, p_id, v_by) THEN
+     OR NOT authz_int.can(p_type, p_id, v_by) THEN
     IF v_by IS NULL THEN
       RAISE EXCEPTION 'you cannot unshare % on % %', p_relation, p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
     END IF;
@@ -4660,7 +4758,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM authz_int.role_subjects WHERE object_type = p_object_type) THEN
     RAISE EXCEPTION 'no custom roles on % in the policy', p_object_type USING HINT = 'rowstile help AZ707';
   END IF;
-  IF authz.uid() IS NULL OR NOT authz.can(p_owner_type, p_owner_id, 'manage_roles') THEN
+  IF authz.uid() IS NULL OR NOT authz_int.can(p_owner_type, p_owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage roles of % %', p_owner_type, p_owner_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   IF p_owner_type IS DISTINCT FROM coalesce(authz_int.role_owner_type(p_object_type), p_owner_type) THEN
@@ -4688,7 +4786,7 @@ BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.set_role_permissions');
   SELECT * INTO v FROM authz.roles WHERE id = p_role;
-  IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz.can(v.owner_type, v.owner_id, 'manage_roles') THEN
+  IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz_int.can(v.owner_type, v.owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage role %', p_role USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   SELECT string_agg(p, ', ') INTO v_bad FROM unnest(p_permissions) p
@@ -4726,7 +4824,7 @@ BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.delete_role');
   SELECT * INTO v FROM authz.roles WHERE id = p_role;
-  IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz.can(v.owner_type, v.owner_id, 'manage_roles') THEN
+  IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz_int.can(v.owner_type, v.owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage role %', p_role USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   DELETE FROM authz.roles WHERE id = p_role;
@@ -4739,9 +4837,9 @@ BEGIN
   p_owner_id := authz_int.canon(p_owner_type, p_owner_id);
   IF authz.uid() IS NULL OR NOT (
        (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles')
-        AND authz.can(p_owner_type, p_owner_id, 'manage_roles'))
+        AND authz_int.can(p_owner_type, p_owner_id, 'manage_roles'))
     OR (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'view')
-        AND authz.can(p_owner_type, p_owner_id, 'view'))) THEN
+        AND authz_int.can(p_owner_type, p_owner_id, 'view'))) THEN
     RAISE EXCEPTION 'you cannot see roles of % %', p_owner_type, p_owner_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   RETURN QUERY SELECT r.id, r.object_type, r.name,
@@ -5404,8 +5502,8 @@ BEGIN
   END CASE;
 END $f$;
 
--- May the current user look at who has access to this object? (they can share it, or the caller is an
--- administrator: the policy's owner, a superuser or BYPASSRLS)
+-- May the current user look at who has access to this object? (they can share it, as authz.can says: on a row they
+-- may select; or the caller is an administrator: the policy's owner, a superuser or BYPASSRLS)
 CREATE FUNCTION authz_int.may_inspect(p_type text, p_id text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
@@ -5438,7 +5536,7 @@ BEGIN
 END $f$;
 
 -- Everyone who holds a permission on an object: SELECT * FROM authz.who('folder', 3, 'view')
--- Candidates come from the data (a superset); each is checked with authz.can, as that user.
+-- Candidates come from the data (a superset); each is checked as that user (the permission itself, authz_int.can).
 CREATE OR REPLACE FUNCTION authz.who(p_type text, p_id text, p_perm text) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_c text;
@@ -5462,7 +5560,7 @@ BEGIN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."user__impersonate__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -5482,25 +5580,25 @@ BEGIN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."folder__share__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'edit' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."folder__edit__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'view' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."folder__view__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'break_glass' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."folder__break_glass__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -5512,19 +5610,19 @@ BEGIN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."file__share__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'edit' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."file__edit__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'view' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."file__view__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -5567,7 +5665,7 @@ BEGIN
     PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
     PERFORM authz_int.sign();
   END IF;
-  v_ok := authz.can(p_type, p_id, p_perm);
+  v_ok := authz_int.can(p_type, p_id, p_perm);
   RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
     || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
   <<asking>> BEGIN
@@ -5749,7 +5847,7 @@ BEGIN
     RAISE EXCEPTION 'the policy gives % no manage_keys permission, so nobody manages its keys', p_type
       USING HINT = 'rowstile help AZ707';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM authz.principal()) OR NOT coalesce(authz.can(p_type, p_id, 'manage_keys'), false) THEN
+  IF NOT EXISTS (SELECT 1 FROM authz.principal()) OR NOT coalesce(authz_int.can(p_type, p_id, 'manage_keys'), false) THEN
     RAISE EXCEPTION 'you cannot manage the keys of % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
 END $f$;
@@ -5785,7 +5883,7 @@ BEGIN
        OR (k.principal_type = 'user' AND authz_int.may_inspect('user', k.user_id))
        OR (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = k.principal_type AND perm = 'manage_keys')
            AND EXISTS (SELECT 1 FROM authz.principal())
-           AND coalesce(authz.can(k.principal_type, k.user_id, 'manage_keys'), false))) THEN
+           AND coalesce(authz_int.can(k.principal_type, k.user_id, 'manage_keys'), false))) THEN
     RAISE EXCEPTION 'no API key % of yours', p_id USING HINT = 'rowstile help AZ708';
   END IF;
   UPDATE authz.api_keys SET revoked_at = now() WHERE id = p_id;
@@ -5947,7 +6045,7 @@ BEGIN
     RAISE EXCEPTION 'say why (the reason is kept in the audit trail)' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
   END IF;
   IF NOT (authz_int.caller_is_admin()
-          OR (EXISTS (SELECT 1 FROM authz.principal()) AND authz.can('user', p_user, 'impersonate'))) THEN
+          OR (EXISTS (SELECT 1 FROM authz.principal()) AND authz_int.can('user', p_user, 'impersonate'))) THEN
     RAISE EXCEPTION 'you cannot view as user %', p_user USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   PERFORM set_config('authz.user_id', coalesce(authz_int.canon('user', p_user), ''), true);
@@ -6069,7 +6167,7 @@ RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_ca
 DECLARE v_perm text := authz_int.manage_perm(p_type, p_relation, p_subject);
 BEGIN
   IF authz_int.caller_is_admin() THEN RETURN true; END IF;
-  RETURN v_perm IS NOT NULL AND EXISTS (SELECT 1 FROM authz.principal()) AND coalesce(authz.can(p_type, p_id, v_perm), false);
+  RETURN v_perm IS NOT NULL AND EXISTS (SELECT 1 FROM authz.principal()) AND coalesce(authz_int.can(p_type, p_id, v_perm), false);
 END $f$;
 
 -- Ask for access: SELECT authz.request_access('folder', '3', 'viewer', 'for the audit', '7 days')
@@ -6211,7 +6309,7 @@ BEGIN
   IF v_held THEN v_held := authz_int.hold('user', authz.uid()::text); END IF;
   IF NOT v_held
      OR NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = 'break_glass')
-     OR NOT authz.can(p_type, p_id, 'break_glass') THEN
+     OR NOT authz_int.can(p_type, p_id, 'break_glass') THEN
     RAISE EXCEPTION 'you cannot break the glass on % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   SELECT * INTO v_rel FROM authz_int.shared_relations
