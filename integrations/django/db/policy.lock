@@ -35,7 +35,7 @@
 > rules public.folders: select : edit
 > rules public.folders: update : edit
 
-always | 5704e1456cfe
+always | ac19cd8e7ae5
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
@@ -265,10 +265,10 @@ policy "authz_select" ON "public"."notes" | aa717b9a7396
 policy "authz_select" ON "public"."projects" | 4db5b6b49eca
 policy "authz_update" ON "public"."folders" | e5841f02a8ac
 policy "authz_update" ON "public"."notes" | 79fa96eb2188
-rls "public"."folders" | 2715cf49375e
-rls "public"."inbox" | 0e3a8275417d
-rls "public"."notes" | 9d1a02b33c6b
-rls "public"."projects" | 856095c4b11a
+rls "public"."folders" | a2dbc22f3b7a
+rls "public"."inbox" | 12e75f93902d
+rls "public"."notes" | 6c9dd2ffe760
+rls "public"."projects" | d696d28544c7
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | 2175b4f10f33

@@ -40,7 +40,7 @@
 > sync app.folders
 > sync app.notes
 
-always | 0a85b7ff7c0b
+always | 935bdab67e04
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394
@@ -297,9 +297,9 @@ policy "authz_select" ON "app"."folders" | e44d0c92e167
 policy "authz_select" ON "app"."notes" | 600445dfd65a
 policy "authz_update" ON "app"."files" | 9870ef630c3c
 policy "authz_update" ON "app"."folders" | 6fb7fecee514
-rls "app"."files" | c885920a4998
-rls "app"."folders" | 3a9ec931ab49
-rls "app"."notes" | 895f402ca9d0
+rls "app"."files" | e606f6344e50
+rls "app"."folders" | 9f29edac52a9
+rls "app"."notes" | dae2e4217f39
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | 2175b4f10f33

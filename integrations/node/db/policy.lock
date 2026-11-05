@@ -37,7 +37,7 @@
 > rules app.folders: select : edit
 > rules app.folders: update : edit
 
-always | 9932fead94f1
+always | f3ce875504ef
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394
@@ -277,10 +277,10 @@ policy "authz_select" ON "app"."notes" | d41154b3c107
 policy "authz_select" ON "app"."projects" | 4c0b3218871f
 policy "authz_update" ON "app"."folders" | 6fb7fecee514
 policy "authz_update" ON "app"."notes" | 14f9220ad6ca
-rls "app"."folders" | 3a9ec931ab49
-rls "app"."inbox" | e8128a72e9a7
-rls "app"."notes" | 895f402ca9d0
-rls "app"."projects" | 432b11d414de
+rls "app"."folders" | 9f29edac52a9
+rls "app"."inbox" | bc690cc87132
+rls "app"."notes" | dae2e4217f39
+rls "app"."projects" | 22205dcb8319
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | 2175b4f10f33
