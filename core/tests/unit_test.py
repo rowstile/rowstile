@@ -9885,6 +9885,21 @@ class HandAnswers(unittest.TestCase):
         ):
             self.assertIsNone(simple(sql), sql[:20])
         self.assertIsNotNone(simple("size > " + "9" * 7))
+        # SQL's words for who is signed in to the database and for the clock name no column: Postgres reads them as
+        # the role, the session or the time, so a condition on one is the database's to read, not a fact of the row
+        for sql in (
+            "user = 'alice'",
+            "current_user = 'x'",
+            "session_user <> 'x'",
+            "CURRENT_ROLE in ('a', 'b')",
+            "localtime is not null",
+            "current_date is null",
+            "kind = 'a' and current_timestamp is not null",
+        ):
+            self.assertIsNone(simple(sql), sql)
+        # but a column of that name, quoted or after `this.`, is the row's
+        for sql in ("\"user\" = 'alice'", "this.user = 'alice'", "this.current_date is null", "username = 'a'"):
+            self.assertIsNotNone(simple(sql), sql)
 
     @worked_from("conditions-sql")
     def test_not_in_a_list_is_read_as_a_fact_about_the_row(self) -> None:
