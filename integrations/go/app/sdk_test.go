@@ -112,6 +112,19 @@ func TestATransactionIsOnePrincipals(t *testing.T) {
 	if err == nil || err.Error() != signedInAlready("nobody", "user 2") {
 		t.Errorf("%v", err)
 	}
+	// nobody has one spelling: no id (or no type), whatever else it holds, is Nobody, and nobody's work runs inside
+	for _, spelling := range []rowstile.Principal{rowstile.As("service", ""), {Type: "service"}, {ID: "4"}, rowstile.User("")} {
+		err = rowstile.TxAs(ctx, pool, spelling, func(ctx context.Context, tx pgx.Tx) error {
+			return rowstile.TxAs(ctx, tx, rowstile.Nobody, func(ctx context.Context, inner pgx.Tx) error {
+				said = append(said, whom(ctx, inner))
+				return nil
+			})
+		})
+		if who, _ := rowstile.Current(rowstile.ActingAs(ctx, spelling)); err != nil || who != rowstile.Nobody ||
+			said[len(said)-1] != "nobody" {
+			t.Errorf("%+v: %v %v", spelling, said, err)
+		}
+	}
 	// a transaction Tx didn't begin: who it is signed in as can't be known, so the work is refused, and the
 	// transaction is as it was
 	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
@@ -287,6 +300,10 @@ func TestPostgresOwnRefusalsNameTheRule(t *testing.T) {
 	} {
 		p, _ := rowstile.ProblemOf(c.got)
 		body, _ := p.MarshalJSON()
+		var pg *pgconn.PgError // what tells it in any language: the function that raised it
+		if !errors.As(c.got, &pg) || pg.Routine != "ExecWithCheckOptions" {
+			t.Errorf("%+v", pg)
+		}
 		if c.got.Table != "notes" || c.got.Command != c.command || c.got.Message != c.message || len(c.got.Why) != 0 ||
 			!strings.Contains(string(body), c.problem) || !strings.Contains(string(body), `"why":[]`) {
 			t.Errorf("%+v %s", c.got, body)
@@ -309,9 +326,35 @@ func TestErrorsThatArentRowstiles(t *testing.T) {
 	if rowstile.ErrorCode(errors.New("rowstile help AZ709")) != "" {
 		t.Error("only a database error has a code")
 	}
-	// the code is read from the message too, where the HINT has none
-	if code := rowstile.ErrorCode(&pgconn.PgError{Message: "a check said no (rowstile help AZ612)"}); code != "AZ612" {
+	// the code is read from the HINT alone, never the message: Postgres's own words quote the request's input
+	if code := rowstile.ErrorCode(&pgconn.PgError{Message: "a check said no (rowstile help AZ612)"}); code != "" {
 		t.Error(code)
+	}
+	cast := rowstile.TxAs(ctx, pool, rowstile.User("1"), func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, "SELECT $1::bigint", "rowstile help AZ714")
+		return err
+	})
+	if _, ok := rowstile.ProblemOf(cast); ok || !errors.As(cast, &pg) || pg.Code != "22P02" || rowstile.ErrorCode(cast) != "" {
+		t.Errorf("%v", cast)
+	}
+	// a 28000 without code AZ701 (Postgres's own: a login refused when connecting) is not the not-signed-in error
+	login := rowstile.TxAs(ctx, pool, rowstile.User("1"), func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, "DO $$BEGIN RAISE 'no pg_hba.conf entry' USING ERRCODE = '28000'; END$$")
+		return err
+	})
+	var n *rowstile.NotSignedIn
+	if errors.As(login, &n) || !errors.As(login, &pg) || pg.Code != "28000" {
+		t.Errorf("%v", login)
+	}
+	// Postgres's own refusal on a server whose messages aren't English: told by the function that raised it, not its
+	// words, the table and the rule unnamed; another 42501 (a grant missing) is none
+	words := "neue Zeile verletzt Policy für Sicherheit auf Zeilenebene für Tabelle »notes«"
+	p, ok := rowstile.ProblemOf(&pgconn.PgError{Code: "42501", Message: words, Routine: "ExecWithCheckOptions"})
+	if !ok || p.Status != 403 || p.Detail != words || p.Table != nil || p.Command != nil || p.Code != "AZ709" {
+		t.Errorf("%+v", p)
+	}
+	if _, ok := rowstile.ProblemOf(&pgconn.PgError{Code: "42501", Message: "keine Berechtigung", Routine: "aclcheck_error"}); ok {
+		t.Error("a grant missing is no refusal")
 	}
 	// a body the handler can't read: its error, a 500
 	errs := logged(func() {

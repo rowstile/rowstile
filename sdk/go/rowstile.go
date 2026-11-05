@@ -25,7 +25,8 @@ import (
 )
 
 // Principal is who a transaction acts for: a user (Type "user"), another principal type the policy declares (a
-// service, a bot), or nobody (Type "": only what `anyone` may see).
+// service, a bot), or nobody (only what `anyone` may see). Nobody has one spelling: a principal without an ID (or
+// without a Type), whatever else it holds, is Nobody, as the database signs it in.
 type Principal struct {
 	Type string
 	ID   string
@@ -34,20 +35,28 @@ type Principal struct {
 // Nobody is no one signed in: only what `anyone` may see.
 var Nobody = Principal{}
 
-// User is the user whose id this is, whatever it holds ("service:3" too: ids come from outside).
-func User(id string) Principal { return Principal{Type: "user", ID: id} }
+// User is the user whose id this is, whatever it holds ("service:3" too: ids come from outside); Nobody for "".
+func User(id string) Principal { return Principal{Type: "user", ID: id}.canon() }
 
-// As is a principal of another type the policy declares: As("service", "3").
-func As(principalType, id string) Principal { return Principal{Type: principalType, ID: id} }
+// As is a principal of another type the policy declares: As("service", "3"); Nobody without an id.
+func As(principalType, id string) Principal { return Principal{Type: principalType, ID: id}.canon() }
 
-// IsNobody says whether p is no one signed in.
-func (p Principal) IsNobody() bool { return p.Type == "" }
+// IsNobody says whether p is no one signed in: no ID, or no Type.
+func (p Principal) IsNobody() bool { return p.Type == "" || p.ID == "" }
+
+// canon is p, or Nobody for any principal that is no one: one value, which == compares.
+func (p Principal) canon() Principal {
+	if p.IsNobody() {
+		return Nobody
+	}
+	return p
+}
 
 type actingKey struct{}
 
 // ActingAs is ctx acting for who: every transaction Tx begins with it signs in as them.
 func ActingAs(ctx context.Context, who Principal) context.Context {
-	return context.WithValue(ctx, actingKey{}, who)
+	return context.WithValue(ctx, actingKey{}, who.canon())
 }
 
 // Current is who ctx acts for, and whether anything set it (ActingAs, Middleware, Tx).
@@ -123,7 +132,7 @@ func entered(db Beginner, who Principal) (inside bool, err error) {
 		return false, nil
 	}
 	before, known := signed.Load(c)
-	if outer, _ := before.(Principal); known && outer != who {
+	if outer, _ := before.(Principal); known && outer != who.canon() {
 		return true, errors.New("this transaction is signed in as " + name(outer) + " already, and a sign-in lasts " +
 			"the database transaction: " + name(who) + "'s work can't run inside it. Run it after, or in a " +
 			"transaction of its own (another connection)")
@@ -173,7 +182,7 @@ func login(ctx context.Context, tx pgx.Tx, sql, secret string) (context.Context,
 		return ctx, Principal{}, translate(err)
 	}
 	if _, known := signed.Load(tx.Conn()); known {
-		signed.Store(tx.Conn(), who)
+		signed.Store(tx.Conn(), who.canon())
 	}
 	return ActingAs(ctx, who), who, nil
 }
@@ -204,7 +213,7 @@ func TxAs(ctx context.Context, db Beginner, who Principal, fn func(ctx context.C
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx)) // after a commit, a no-op that says so
 	if !inside {
-		signed.Store(tx.Conn(), who)
+		signed.Store(tx.Conn(), who.canon())
 		defer signed.Delete(tx.Conn())
 		err = signIn(ctx, tx, who)
 	}

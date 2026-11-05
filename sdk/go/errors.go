@@ -81,16 +81,15 @@ func (e *ConnectionProblem) Error() string {
 var codeIn = regexp.MustCompile(`rowstile help (AZ\d{3})`)
 
 // ErrorCode is rowstile's code for a database error in err (AZ709; `rowstile help AZ709` says what it means), from
-// its HINT, where the runtime puts it, or its message; "" for an error rowstile didn't raise.
+// its HINT, where the runtime puts it, and never its message, which may hold the request's own input (Postgres's
+// own words quote a value it couldn't read); "" for an error rowstile didn't raise.
 func ErrorCode(err error) string {
 	var pg *pgconn.PgError
 	if !errors.As(err, &pg) {
 		return ""
 	}
-	for _, text := range []string{pg.Hint, pg.Message} {
-		if m := codeIn.FindStringSubmatch(text); m != nil {
-			return m[1]
-		}
+	if m := codeIn.FindStringSubmatch(pg.Hint); m != nil {
+		return m[1]
 	}
 	return ""
 }
@@ -102,6 +101,9 @@ var callStatus = map[string]int{"AZ703": 401, "AZ708": 404, "AZ710": 400, "AZ713
 // without its schema
 var rlsGeneric = regexp.MustCompile(
 	`^(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"`)
+
+// the function in Postgres that raises those refusals (the error's Routine): what tells one in another language
+const rowCheck = "ExecWithCheckOptions"
 
 const unseen = "this user may not see the row as written (the select rule). An insert that reads it back " +
 	"(RETURNING), an upsert, and an update with a WHERE need to see it."
@@ -128,6 +130,11 @@ func refusal(err error, pg *pgconn.PgError) *Refused {
 		// the select rule, on the row as written: an insert that reads it back, an upsert, or an update after which
 		// the row would be out of this user's sight
 		return &Refused{Message: pg.Message + ": " + unseen, Table: table, Command: "select", Code: "AZ709", Err: err}
+	}
+	if code == "" && pg.Routine == rowCheck {
+		// Postgres's own refusal in another language (the server's lc_messages): which table and rule, its words alone
+		// say
+		return &Refused{Message: pg.Message, Code: "AZ709", Why: []string{}, Err: err}
 	}
 	if _, call := callStatus[code]; code == "" || call { // sign in first (AZ714) is a 42501 too, but no refusal
 		return nil
@@ -162,8 +169,9 @@ func translate(err error) error {
 	if status, call := callStatus[code]; call {
 		return &CallError{Code: code, Status: status, Message: pg.Message, Err: err}
 	}
-	// a login refused (AZ703) and settings changed by hand (AZ702) share the SQLSTATE, and are no such thing
-	if pg.Code == "28000" && (code == "" || code == "AZ701") {
+	// a login refused (AZ703), settings changed by hand (AZ702) and Postgres's own refusals to connect (no code) share
+	// the SQLSTATE, and are no such thing
+	if pg.Code == "28000" && code == "AZ701" {
 		return &NotSignedIn{Err: err}
 	}
 	return err
