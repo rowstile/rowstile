@@ -7748,6 +7748,29 @@ class Confidence(unittest.TestCase):
         held = [prove.prove(parse_policy(t, "policy.authz"))[0]["holds"] for t in (text, member, own)]
         self.assertEqual(held, [True, True, False])
 
+    def test_a_relation_on_the_types_own_key_links_each_row_to_itself(self) -> None:
+        # `self : user = id` (docs/cookbook/your-own-row.md): in every world each user is their own self, so an
+        # invariant that leaves it out holds; drawn as any column, a world without it gave a counterexample that
+        # can't happen (a user seeing their own row through their org, and self not holding there)
+        from authzlib import prove
+
+        org = "type org = app.orgs\n  member : user = app.users(org_id -> id)\n"
+        user = "type user = app.users\n  self : user = id\n  org : org = org_id\n  can view = self or org.member\n"
+
+        def holds(view: str, invariant: str) -> bool:
+            text = "app role app_user\n\n" + org + user.replace("self or org.member", view)
+            [r] = prove.prove(parse_policy(text + f"invariants\n  never user: {invariant}\n", "p.authz"))
+            return bool(r["holds"])
+
+        self.assertTrue(holds("self", "view and not self"))
+        self.assertTrue(holds("self or org.member", "view and not self and not org.member"))
+        # colleagues do see each other: that one is found
+        self.assertFalse(holds("org.member", "view and not self"))
+        pol = parse_policy("app role app_user\n\n" + org + user, "p.authz")
+        for seed in map(str, range(20)):
+            data = evaluate.World(seed, 3, pols=[pol]).data(pol)
+            self.assertEqual(data.pairs[("user", "self", 0, "user", "")], [(i, i) for i in data.ids["user"]])
+
     def test_prove_says_when_none_is_found(self) -> None:
         from authzlib import evaluate, prove
 
