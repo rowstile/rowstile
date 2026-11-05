@@ -20,10 +20,14 @@ type Rows interface {
 }
 
 // Can says whether whoever q's transaction signed in as holds perm on the object with this id:
-// Can(ctx, tx, authz.NoteEdit, 7).
+// Can(ctx, tx, authz.NoteEdit, 7), or a slice or an array of its columns for a key of several.
 func Can[P Permission](ctx context.Context, q Querier, perm P, id any) (bool, error) {
+	key, err := keyText(id)
+	if err != nil {
+		return false, err
+	}
 	var ok bool
-	err := q.QueryRow(ctx, "SELECT authz.can($1, $2::text, $3)", perm.ObjectType(), keyText(id), string(perm)).Scan(&ok)
+	err = q.QueryRow(ctx, "SELECT authz.can($1, $2::text, $3)", perm.ObjectType(), key, string(perm)).Scan(&ok)
 	return ok, translate(err)
 }
 
@@ -31,9 +35,15 @@ func Can[P Permission](ctx context.Context, q Querier, perm P, id any) (bool, er
 // list's buttons): PermsOf[authz.ProjectPermission](ctx, tx, ids).
 func PermsOf[P Permission, ID any](ctx context.Context, q Rows, ids []ID) (map[string][]P, error) {
 	var kind P
-	texts := make([]string, len(ids))
+	texts := make([]*string, len(ids)) // nil: no key, NULL
 	for i, id := range ids {
-		texts[i] = keyText(id)
+		key, err := keyText(id)
+		if err != nil {
+			return nil, err
+		}
+		if text, ok := key.(string); ok {
+			texts[i] = &text
+		}
 	}
 	rows, _ := q.Query(ctx, "SELECT id, perms FROM authz.perms_of($1, $2::text[])", kind.ObjectType(), texts)
 	out := map[string][]P{}
@@ -52,7 +62,8 @@ func PermsOf[P Permission, ID any](ctx context.Context, q Rows, ids []ID) (map[s
 	return out, nil
 }
 
-// Page is a page of List: the ids after After (nil: from the first), Limit of them.
+// Page is a page of List: the ids after After (nil: from the first), Limit of them (0: every one after it, as a
+// page without a size is in every SDK).
 type Page struct {
 	After any
 	Limit int
@@ -63,11 +74,15 @@ type Page struct {
 // To filter a query to them instead, join authz.list(type, perm) in it.
 func List[P Permission](ctx context.Context, q Rows, perm P, page *Page) ([]string, error) {
 	args := []any{perm.ObjectType(), string(perm), nil, nil}
-	if page != nil {
+	if page != nil && page.Limit != 0 {
 		args[3] = page.Limit
-		if page.After != nil {
-			args[2] = keyText(page.After)
+	}
+	if page != nil {
+		after, err := keyText(page.After)
+		if err != nil {
+			return nil, err
 		}
+		args[2] = after
 	}
 	rows, _ := q.Query(ctx, "SELECT x FROM authz.list($1, $2, $3, $4) x", args...)
 	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])

@@ -19,6 +19,7 @@ package rowstile
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -43,6 +44,34 @@ func As(principalType, id string) Principal { return Principal{Type: principalTy
 
 // IsNobody says whether p is no one signed in: no ID, or no Type.
 func (p Principal) IsNobody() bool { return p.Type == "" || p.ID == "" }
+
+// String is p as every SDK writes a principal, and as the audit trail and created_by name who acted: "42" for a
+// user, "service:3", or "nobody"; a user whose id holds ":" or is "nobody" is "user:<id>" ("user:a:b"), so that
+// ParsePrincipal reads every principal back as itself.
+func (p Principal) String() string {
+	switch {
+	case p.IsNobody():
+		return "nobody"
+	case p.Type != "user":
+		return p.Type + ":" + p.ID
+	case strings.Contains(p.ID, ":") || p.ID == "nobody":
+		return "user:" + p.ID
+	}
+	return p.ID
+}
+
+// ParsePrincipal is what String wrote, read back: "service:3" is service 3, "42" and "user:42" user 42, "nobody"
+// Nobody. For text your own code wrote (a job's argument) and for who acted in the audit trail (its user_id, a
+// share's created_by), which the database writes the same way; not for an id that came from outside (User).
+func ParsePrincipal(text string) Principal {
+	if text == "nobody" {
+		return Nobody
+	}
+	if kind, id, ok := strings.Cut(text, ":"); ok && kind != "" && !strings.HasPrefix(text, "(") {
+		return As(kind, id)
+	}
+	return User(text)
+}
 
 // canon is p, or Nobody for any principal that is no one: one value, which == compares.
 func (p Principal) canon() Principal {
