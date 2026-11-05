@@ -4669,6 +4669,40 @@ rules app.folders
             [(c["what"], c["after"]) for c in r["meaning"]["changed"]],
             [("sync role", "sync role sync_engine"), ("sync app.folders", "sync app.folders : view")],
         )
+        # Risk: a sync line added, synced by another permission or mirrored now gives the sync engine rows, and who
+        # may read each, it didn't have; one taken away, or keyed otherwise, gives it none
+        why = "a sync line added or widened"
+        self.assertEqual(
+            [(f["flag"], f["line"]) for f in r["risk"] if f["why"] == why],
+            [
+                (
+                    "`sync app.folders : view` is new: the sync engine gets each row of app.folders, and its readers "
+                    "(by `view`)",
+                    "line 20",
+                )
+            ],
+        )
+        for h, flags in (
+            (
+                synced.replace("folders : view\n", "folders : edit\n"),
+                ["`sync app.folders` now finds each row's readers by `edit` (was by `view`)"],
+            ),
+            (
+                synced.replace("folders : view\n", "folders\n"),
+                ["`sync app.folders` now finds each row's readers by its select rule (was by `view`)"],
+            ),
+            (
+                synced.replace("folders : view\n", "folders : view mirrored\n"),
+                [
+                    "`sync app.folders` is now mirrored: the sync engine gets a copy of each row, every column but the "
+                    "masked ones"
+                ],
+            ),
+            (self.SMALL, []),
+            (synced.replace("sync role sync_engine\n", "sync role engine\n"), []),
+        ):
+            r = self.review.review((synced, {}, {}), (h, {}, {}), worlds=10)
+            self.assertEqual([f["flag"] for f in r["risk"] if f["why"] == why], flags, h)
 
     def test_what_changes_through_two_changes(self) -> None:
         h = self.SMALL.replace("can edit = owner or org.admin", "can edit = org.admin")
