@@ -389,6 +389,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile indexes` says that Prisma's and Drizzle's line takes the fields that map the columns, where a model names
   them otherwise, and, for goose and dbmate, that dropping an index a failed build left goes in a migration of its
   own outside a transaction, as the index's line does.
+- `rowstile why` and Studio judge a `shared if` as the first 20 of those who may share the object, and say so when
+  there are more. Before, they signed in as each of them in turn, for each share they looked at, which took seconds
+  on an object a thousand people may share.
 
 ### Upgrading
 

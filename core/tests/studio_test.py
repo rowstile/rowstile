@@ -37,7 +37,7 @@ import pgwire  # noqa: E402
 import rowstile_cli  # noqa: E402
 import studio  # noqa: E402
 from authzlib import database, grant  # noqa: E402
-from authzlib.connection import Db  # noqa: E402
+from authzlib.connection import Db, Value  # noqa: E402
 from authzlib.parse import Type  # noqa: E402
 
 fails = 0
@@ -2173,6 +2173,9 @@ CREATE TABLE cn.org_members (org_id bigint REFERENCES cn.orgs, user_id bigint RE
 CREATE TABLE cn.desks (id bigint PRIMARY KEY, org_id bigint REFERENCES cn.orgs);
 CREATE TABLE cn.chairs (id bigint PRIMARY KEY, desk_id bigint REFERENCES cn.desks);
 CREATE TABLE cn.halls (id bigint PRIMARY KEY, owner_id bigint REFERENCES cn.users);
+CREATE TABLE cn.boards (id bigint PRIMARY KEY);
+CREATE TABLE cn.board_admins (board_id bigint REFERENCES cn.boards, user_id bigint REFERENCES cn.users,
+  PRIMARY KEY (board_id, user_id));
 GRANT USAGE ON SCHEMA cn TO app_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA cn TO app_user;
 -- ann (1) owns docs 1 to 5, each inside the one before, and doc 6, archived; bo (2) is in group 2, which is in
@@ -2208,6 +2211,9 @@ INSERT INTO cn.desks VALUES (1, 1);
 INSERT INTO cn.chairs VALUES (1, 1), (2, 1);
 -- hall 1 is ann's; its ushers are shared with a team's members or a person, the team first
 INSERT INTO cn.halls VALUES (1, 1);
+-- ann, bo and eve are board 1's admins
+INSERT INTO cn.boards VALUES (1);
+INSERT INTO cn.board_admins VALUES (1, 1), (1, 2), (1, 5);
 -- crate 1 is ann's and weighs 10; crate 2 weighs nothing: who may weigh it can't be worked out (division by zero)
 CREATE TABLE cn.crates (id bigint PRIMARY KEY, owner_id bigint REFERENCES cn.users, weight int NOT NULL);
 GRANT SELECT ON cn.crates TO app_user;
@@ -2304,6 +2310,13 @@ type crate = cn.crates
   owner : user = owner_id
   can open  = owner
   can weigh = owner or {100 / weight > 50}
+
+type board = cn.boards
+  admin  : user = cn.board_admins(board_id -> user_id)
+  viewer : user shared if {subject_id in (select id::text from cn.users where active)}
+  helper : user shared if {subject_id in (select id::text from cn.users where active)}
+  can share = admin
+  can view  = viewer or helper
 """
 
 
@@ -2843,6 +2856,34 @@ def corners(db: str) -> None:
         )
     finally:
         s.stop()
+    # a `shared if` is judged as some of those who may share the object, each signed in in turn: the first SHARERS
+    # (here 2 of board 1's 3 admins), and the note says so; who they are is asked once, for both relations
+    asked: list[str] = []
+    probe_now = grant.Grants.probe
+
+    def probing(g: grant.Grants, sql: str, args: Sequence[Value] = ()) -> list[dict[str, Value]]:
+        asked.append(sql)
+        return probe_now(g, sql, args)
+
+    conn = pgwire.connect(**pgwire.parse_dsn(f"dbname={db}"))
+    with mock.patch.object(grant, "SHARERS", 2), mock.patch.object(grant.Grants, "probe", probing):
+        board = rowstile_cli.transaction(conn, lambda d: database.why(d, "user", "4", "board", "1", "view"), keep=False)
+    conn.close()
+    judged = "{subject_id in (select id::text from cn.users where active)} refuses it to the first 2 of the 3 people"
+    check(
+        "a shared if judged as the first of those who may share it, said, and who they are asked once",
+        board.ways == []
+        and board.notes
+        == [
+            f"board.viewer wasn't tried with user 4: its shared if {judged} who may share board 1 (the others "
+            "weren't asked)",
+            f"board.helper wasn't tried with user 4: its shared if {judged} who may share board 1 (the others "
+            "weren't asked)",
+        ]
+        and sum("authz.who(" in x for x in asked) == 1
+        and sum("share_if(" in x for x in asked) == 4,
+        (board.notes, asked),
+    )
     check("... and nothing it tried stays", psql(db, data) == before, (before, psql(db, data)))
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
 

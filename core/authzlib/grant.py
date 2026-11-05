@@ -28,6 +28,7 @@ DEPTH = 3  # how far up inheritance (rel.perm) and into groups it looks
 LINKED = 3  # how many current parents or groups of an object it follows
 TRIES = 40  # how many candidate changes (or combinations) it tries
 SHOWN = 5
+SHARERS = 20  # how many of those who may share an object a `shared if` is judged as, each signed in in turn
 
 
 def settles(where: str) -> dict[str, Scalar] | None:
@@ -262,6 +263,7 @@ class Grants:
         self.notes: list[str] = []
         self.reads = reads(c)
         self.was: dict[Person, Held] = {}  # what each person held before any change, as far as it was counted
+        self.sharers: dict[tuple[str, str, str], list[str]] = {}  # who may share each object (authz.who), once
 
     # --- reading what is there now -------------------------------------------------------------------
     def probe(self, sql: str, args: Sequence[Value] = ()) -> list[dict[str, Value]]:
@@ -313,17 +315,16 @@ class Grants:
         assert src.shared_if, f"{t.name}.{r.name}: a share without a condition"
         key = f"{t.name}.{r.name}.{st}#{sr}" if sr else f"{t.name}.{r.name}.{st}"
         obj, subj = f"authz_int.canon({lit(t.name)}, {lit(oid)})", f"authz_int.canon({lit(st)}, {lit(sid)})"
-        self.sign_in(False)
-        sharers = sorted(
-            {
-                text(x, "x")
-                for x in self.probe("SELECT x FROM authz.who($1, $2, $3) x", [t.name, oid, src.shared_by or "share"])
-            }
-        )
+        perm = src.shared_by or "share"
+        if (t.name, oid, perm) not in self.sharers:
+            self.sign_in(False)
+            found = {text(x, "x") for x in self.probe("SELECT x FROM authz.who($1, $2, $3) x", [t.name, oid, perm])}
+            self.sharers[(t.name, oid, perm)] = sorted(found)
+        sharers = self.sharers[(t.name, oid, perm)]
         # authz.share also asks that they hold what the relation gives
         need = text_array(self.c.required_perms(t, r.name))
         ok = False
-        for u in sharers:
+        for u in sharers[:SHARERS]:
             self.sign_in(("user", u))
             if self.probe(
                 f"SELECT 1 AS x WHERE coalesce(authz_int.share_if({lit(key)}, {obj}, {lit(st)}, {subj}, {lit(sr)}), "
@@ -335,9 +336,14 @@ class Grants:
                 break
         self.sign_in()
         if not ok:
+            whom = (
+                f"everyone who may share {t.name} {oid}"
+                if len(sharers) <= SHARERS
+                else f"the first {SHARERS} of the {len(sharers)} people who may share {t.name} {oid} (the others "
+                "weren't asked)"
+            )
             self.notes.append(
-                f"{t.name}.{r.name} wasn't tried with {who}: its shared if {{{src.shared_if}}} refuses it to everyone "
-                f"who may share {t.name} {oid}"
+                f"{t.name}.{r.name} wasn't tried with {who}: its shared if {{{src.shared_if}}} refuses it to {whom}"
                 if sharers
                 else f"{t.name}.{r.name} wasn't tried with {who}: nobody may share {t.name} {oid}, and its shared if "
                 f"{{{src.shared_if}}} is judged as the one who shares"
