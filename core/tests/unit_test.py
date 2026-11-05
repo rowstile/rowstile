@@ -19214,6 +19214,49 @@ class Version(unittest.TestCase):
             sys.path.pop(0)
         self.assertEqual(list(version.found()), [authzlib.__version__])
 
+    def test_the_review_for_cis_examples_name_a_release(self) -> None:
+        # the lines a user copies (docs/reference/review.md's workflow, the action's and the template's comments)
+        # name a tag that exists: a release sets them, and main's X.Y.Z-dev, which has no tag, leaves them
+        sys.path.insert(0, os.path.join(self.REPO, "packaging"))
+        try:
+            import version
+        finally:
+            sys.path.pop(0)
+        shown = version.found(version.EXAMPLES)
+        self.assertEqual(version.examples_wrong(authzlib.__version__, list(shown)), "")
+        self.assertEqual(
+            sorted({p for paths in shown.values() for p in paths}),
+            [
+                "docs/reference/review.md",
+                "review-ci/github/action.yml",
+                "review-ci/gitlab/rowstile-review.gitlab-ci.yml",
+            ],
+        )
+        wrong = version.examples_wrong
+        for mine, theirs in (("0.2.0-dev", "0.1.0"), ("0.2.0-dev", "0.2.0-rc.1"), ("0.2.0-rc.1", "0.2.0-rc.1")):
+            self.assertEqual(wrong(mine, [theirs]), "", (mine, theirs))
+        for mine, theirs, said in (
+            ("0.2.0-dev", ["0.2.0-dev"], "not a release"),
+            ("0.2.0-dev", ["0.2.0"], "not before 0.2.0-dev"),
+            ("0.2.0-dev", ["0.3.0-alpha.1"], "not before 0.2.0-dev"),
+            ("0.2.0", ["0.2.0-rc.1"], "not 0.2.0"),
+            ("0.2.0", ["0.2.0", "0.1.0"], "2 versions"),
+        ):
+            self.assertIn(said, wrong(mine, theirs), (mine, theirs))
+        # set: a -dev version leaves them, a release writes itself there
+        import shutil
+
+        with tempfile.TemporaryDirectory() as d:
+            for path, _ in [*version.places(), *version.places(version.EXAMPLES)]:
+                os.makedirs(os.path.dirname(os.path.join(d, path)), exist_ok=True)
+                shutil.copyfile(os.path.join(self.REPO, path), os.path.join(d, path))
+            with mock.patch.object(version, "ROOT", d):
+                version.set_version("9.0.0-dev")
+                self.assertEqual(list(version.found()), ["9.0.0-dev"])
+                self.assertEqual(version.found(version.EXAMPLES), shown)
+                version.set_version("9.0.0-rc.1")
+                self.assertEqual(list(version.found(version.EXAMPLES)), ["9.0.0-rc.1"])
+
     def test_npms_latest_follows_next_until_a_release(self) -> None:
         # while only alphas and candidates are published, a plain `npm i rowstile` gets the newest: each release
         # moves `latest` to where `next` is (packaging/npm_latest.py); a final release ends that

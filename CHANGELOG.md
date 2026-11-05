@@ -379,6 +379,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - Studio's page: after the person viewed as changes, the Shares tab's buttons name the new person, and each button
   acts as the person it names. A table's rows that come after rows asked for since are dropped. A graph node the
   policy doesn't name (a permission's inheritance before a deny, a permission's custom roles) shows what it is.
+- The lines that show how to use the review for CI (the reference's workflow, the action's and the GitLab
+  template's comments) name the newest release, `v0.1.0-beta.3`. On `main` between releases they named its `-dev`
+  version, which has no tag to use.
 
 ### Upgrading
 
