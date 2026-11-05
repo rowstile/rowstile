@@ -60,6 +60,24 @@ tests hold each rule:
 - Nobody has one spelling: a principal without an id (none, or empty), whatever its type, is the SDK's nobody,
   as `authz.act_as` signs it in. So work for nobody runs inside a transaction begun for any spelling of it.
 
+**What every SDK writes of a key, a page and a principal.** The SDKs write these the same way, and each SDK's own
+tests hold each rule:
+
+- A key of several columns is given as any of the language's arrays, lists or tuples, its values in the key's
+  order (in Rust, `composite_key`). An array of one value is that value, and no key (null) is sent as NULL.
+- It is written as Postgres writes the row: `(1,"a b",)`. A field is quoted when it is empty, or holds a quote,
+  a comma, a backslash, a parenthesis or one of ASCII's six spaces (space, tab, newline, carriage return,
+  vertical tab, form feed), as `record_out` does; a no-break space or an em space is not quoted. A NULL field is
+  nothing. So a hidden row's id, a refusal's message and the keys of `permsOf`'s answer spell a key as
+  `authz.list` does. In Go, a value whose text in Go isn't Postgres's (a `time.Time`, a `[]byte`, a struct
+  without `String` or `Value`) is an error before anything is sent: give its text.
+- A page without a cursor (null) starts at the first row, and a page without a size is every row after its
+  cursor (a NULL size). In Go, `Page.Limit` 0 is no size; in Rust, `Page.limit` is an `Option`.
+- A hidden row's 404 says `app.notes 7 not found`: `app.notes not found` without the key, `row 7 not found`
+  without the table, `not found` with neither.
+- A principal is written as text as the audit trail and `created_by` name who acted, and read back by the SDK:
+  `42` for a user, `service:3`, `nobody`, and `user:<id>` for a user whose id holds `:` or is `nobody`.
+
 The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
 `listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
 `ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,
