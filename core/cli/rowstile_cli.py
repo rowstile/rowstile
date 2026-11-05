@@ -52,15 +52,19 @@
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
-    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust|elixir|php|electric|zero|powersync] [POLICY.authz]
-                                                   typed helpers for app code (go, csharp, ruby, java, rust,
-                                                   elixir, php: the policy's names, for those SDKs; rbs: the Ruby names'
+    rowstile client  [py|ts|ts-sdk|go|csharp|ruby|rbs|java|rust|elixir|php|electric|zero|powersync] [POLICY.authz]
+                                                   typed helpers for app code, of the file, else of the policy
+                                                   rowstile.toml names, else (and with --db) of the policy in force
+                                                   (ts: a client for pg; ts-sdk: the policy's names alone, for an
+                                                   app on the TypeScript SDK; go, csharp, ruby, java, rust, elixir,
+                                                   php: the policy's names, for those SDKs; rbs: the Ruby names'
                                                    signatures; electric: the synced tables' shapes, for the app's
                                                    proxy in front of Electric; zero: the sync index's tables and
                                                    each synced table's filter, for a Zero schema and its query
                                                    endpoint; powersync: the streams of the mirrored tables, their
                                                    columns read from the database: previews); with none, writes the
-                                                   clients rowstile.toml names
+                                                   clients rowstile.toml names ([clients] ts: ts-sdk in an app on
+                                                   the SDK)
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
                                                    a first policy from the database's tables (every schema of
                                                    the app's, or those --schema names), and rowstile.toml
@@ -473,7 +477,8 @@ class Config:
         out: dict[str, str] = {}
         for lang, p in self.section("clients").items():
             assert isinstance(p, str), "check_settings refuses a client that isn't a path"
-            out["ts-sdk" if lang == "ts" and self.uses_ts_sdk() else lang] = self.written(p, f"[clients] {lang}")
+            path = self.written(p, f"[clients] {lang}")
+            out["ts-sdk" if lang == "ts" and self.uses_ts_sdk(path) else lang] = path
         return out
 
     @property
@@ -511,21 +516,24 @@ class Config:
         value = self.section("migrations").get("write_after", 300)
         return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 300
 
-    def uses_ts_sdk(self) -> bool:
-        d = self.dir
+    def uses_ts_sdk(self, client: str) -> bool:
+        """Whether the app a TypeScript client is written for uses the SDK: the package.json nearest the client's
+        file decides, from its folder up to the git repository's top (or rowstile.toml's folder, in none), where
+        written() keeps it, never one above (a package.json in $HOME is another app's)."""
+        import stack
+
+        top = self.repository() or os.path.realpath(self.dir)
+        d = os.path.dirname(os.path.realpath(client))
         while True:
             try:
-                with open(os.path.join(d, "package.json"), encoding="utf-8") as fh:
-                    import stack
-
+                with open(os.path.join(d, "package.json"), encoding="utf-8-sig") as fh:
                     deps = stack.dependencies(json.load(fh))
                 return any(name.startswith("@rowstile/") for name in deps)
             except (OSError, ValueError):
                 pass
-            parent = os.path.dirname(d)
-            if parent == d:
+            if d == top or not within(top, d):
                 return False
-            d = parent
+            d = os.path.dirname(d)
 
     @property
     def database(self) -> str | None:
@@ -562,26 +570,16 @@ POWERSYNC_NEEDS_DB = (
     "rowstile client powersync reads each mirror's columns from the database: give it one (--db, or database in "
     "rowstile.toml), where the policy is applied"
 )
-# the languages rowstile client writes: for Ruby, the policy's names and their signatures (RBS)
+# the clients [clients] in rowstile.toml may name: for Ruby, the policy's names and their signatures (RBS)
 CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust", "elixir", "php", "electric", "zero", "powersync")
+# and those rowstile client writes when asked by name: ts-sdk too, the TypeScript names alone, for an app on the SDK
+# (what [clients] ts writes in such an app)
+LANGUAGES = (*CLIENTS[:2], "ts-sdk", *CLIENTS[2:])
+WHICH_LANGUAGE = f"rowstile client: which language, {', '.join(LANGUAGES[:-1])} or {LANGUAGES[-1]}?"
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
-    "clients": {
-        "py": "text",
-        "ts": "text",
-        "go": "text",
-        "csharp": "text",
-        "ruby": "text",
-        "rbs": "text",
-        "java": "text",
-        "rust": "text",
-        "elixir": "text",
-        "php": "text",
-        "electric": "text",
-        "zero": "text",
-        "powersync": "text",
-    },
+    "clients": dict.fromkeys(CLIENTS, "text"),
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
 }
@@ -773,6 +771,12 @@ def write_clients(
             fh.write(code)
         written.append(path)
     return written
+
+
+def say_written(cfg: Config, written: list[str]) -> None:
+    """What rowstile client did with each file rowstile.toml names: wrote it, or left it, being up to date."""
+    for path in cfg.clients.values():
+        print(f"wrote {relative(path)}" if path in written else f"{relative(path)}: up to date")
 
 
 def report_tests(rows: list[database.TestRow], out: Callable[[str], None] = print, verbose: bool = True) -> int:
@@ -1293,8 +1297,9 @@ def main(argv: list[str]) -> None:
         mcp.serve(dsn)
         return
 
-    def policy_arg() -> tuple[str, str, dict[str, str]]:
-        path = args[-1] if args else cfg.policy
+    def policy_arg(named: list[str] = args) -> tuple[str, str, dict[str, str]]:
+        """The policy file the command names (its last argument), else rowstile.toml's."""
+        path = named[-1] if named else cfg.policy
         if not path:
             fail(f'rowstile {cmd}: which policy file? (or name it in {CONFIG}: policy = "db/policy.authz")', 2)
         try:
@@ -1306,6 +1311,9 @@ def main(argv: list[str]) -> None:
     # without a database: the compiler alone (graph and client read the policy file, or with --db the database's)
     if cmd in ("graph", "client") and dsn is not None and len(args) > (cmd == "client"):
         fail(f"rowstile {cmd}: --db or a policy file, not both: a file is read without a database", 2)
+    # the language before any database: one rowstile doesn't write, or none and no [clients]
+    if cmd == "client" and (args[0] not in LANGUAGES if args else not cfg.clients):
+        fail(WHICH_LANGUAGE, 2)
     try:
         if cmd == "check":
             path, text, files = policy_arg()
@@ -1318,16 +1326,18 @@ def main(argv: list[str]) -> None:
             _, text, files = policy_arg()
             sys.stdout.write(database.graph(text, files))
             return
-        if cmd == "client" and args[1:]:
-            if args[0] not in CLIENTS:
-                fail(
-                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?",
-                    2,
-                )
-            if args[0] == "powersync":
+        # a client of the file named, else of the policy rowstile.toml names (as graph): no database
+        if cmd == "client" and (args[1:] or (args and cfg.policy and dsn is None)):
+            if args[0] == "powersync" and args[1:]:
                 fail(POWERSYNC_NEEDS_DB, 2)
-            _, text, files = policy_arg()
-            sys.stdout.write(database.client(args[0], text, files, cfg.java_class, cfg.elixir_module))
+            _, text, files = policy_arg(args[1:])
+            columns = None
+            if args[0] == "powersync":  # each mirror's columns, read in the database rowstile.toml names
+                read = mirror_columns_at(cfg.database or os.environ.get("DATABASE_URL") or None, text, files)
+                if read is None:
+                    fail(POWERSYNC_NEEDS_DB, 2)
+                columns = read()
+            sys.stdout.write(database.client(args[0], text, files, cfg.java_class, cfg.elixir_module, columns))
             return
         if cmd == "prove":
             from authzlib import parse_policy, prove
@@ -1360,9 +1370,7 @@ def main(argv: list[str]) -> None:
             _, text, files = policy_arg()
             # (PowerSync's streams list each mirror's columns: read in the database rowstile.toml names)
             at = (cfg.database or os.environ.get("DATABASE_URL") or None) if "powersync" in cfg.clients else None
-            write_clients(cfg, text, files, mirror_columns_at(at, text, files))
-            for path in cfg.clients.values():
-                print(f"wrote {relative(path)}")
+            say_written(cfg, write_clients(cfg, text, files, mirror_columns_at(at, text, files)))
             return
     except database.Error as e:
         fail(str(e) + (f"\nHINT: {e.hint}" if e.hint else ""))
@@ -1520,16 +1528,9 @@ def main(argv: list[str]) -> None:
             def columns() -> dict[str, list[str]]:
                 return transaction(conn, lambda db: database.mirror_columns(db, text, files), keep=False)
 
-            if not args and cfg.clients:
-                write_clients(cfg, text, files, columns)
-                for path in cfg.clients.values():
-                    print(f"wrote {relative(path)}")
+            if not args:  # (no [clients] and no language is refused before connecting)
+                say_written(cfg, write_clients(cfg, text, files, columns))
                 return
-            if not args or args[0] not in CLIENTS:
-                fail(
-                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?",
-                    2,
-                )
             sys.stdout.write(
                 database.client(
                     args[0],

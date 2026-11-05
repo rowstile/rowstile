@@ -101,7 +101,7 @@ run client php; case "$out" in "<?php"*"namespace Authz;"*"enum FilePermission: 
 run client electric; case "$out" in *"export const shapes = {}"*"export type SyncedTable"*) ok "client electric: a policy that syncs nothing has no shapes";; *) bad "client electric" "${out:0:200}";; esac
 run client zero; case "$out" in *"export const syncTables = [keys] as const;"*"export const readable = {"*"} as const;"*) ok "client zero: a policy that syncs nothing has only the keys";; *) bad "client zero" "${out:0:200}";; esac
 run client powersync; case "$out" in *"streams:"*"  {}"*) ok "client powersync, on the database: a policy that mirrors nothing has no streams";; *) bad "client powersync" "${out:0:200}";; esac
-run client rb; [ "$rc $out" = "2 rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?" ] && ok "client with an unknown language: exit 2" || bad "client rb" "$rc $out"
+run client rb; [ "$rc $out" = "2 rowstile client: which language, py, ts, ts-sdk, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?" ] && ok "client with an unknown language: exit 2" || bad "client rb" "$rc $out"
 
 echo "-- reapply and remove"
 run reapply; [ $rc -eq 0 ] && ok "reapply" || bad "reapply" "$out"
@@ -202,7 +202,7 @@ run studio --port 70000; [ $rc -eq 2 ] && [ "$out" = "--port needs a port, a who
   ok "a port above 65535 is refused" || bad "studio --port 70000" "$rc ${out: -200}"
 run dev --once --studio-port 99999 "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "--studio-port needs a port, a whole number from 1 to 65535, not '99999'" ] &&
   ok "... and one for Studio beside dev" || bad "dev --studio-port 99999" "$rc ${out: -200}"
-run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
+run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, ts-sdk, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
 run client powersync "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client powersync reads each mirror's columns from the database: give it one (--db, or database in rowstile.toml), where the policy is applied" ] && ok "client powersync from a file: exit 2, it reads the database" || bad "client powersync from a file" "$rc $out"
 run client py; fromdb=$out
 run client py "$T/main.authz"; [ $rc -eq 0 ] && [ -n "$out" ] && [ "$out" = "$fromdb" ] && ok "client py from the file alone is the one the applied policy gives" || bad "client py from a file" "$rc ${out:0:120}"
@@ -424,6 +424,27 @@ out=$(OWN client 2>&1); rc=$?
   grep -q "^impl rowstile::Permission for " "$P/out/authz.rs" && grep -q "^defmodule MyApp.Authz do$" "$P/out/lib/my_app/authz.ex" &&
   grep -q "^namespace Authz;" "$P/out/authz.php" &&
   ok "rowstile client writes them" || bad "client files" "$rc $out"
+out=$(OWN client 2>&1); rc=$?
+[ $rc -eq 0 ] && [ "$out" = "out/c.py: up to date
+out/java/com/example/Names.java: up to date
+out/authz.rs: up to date
+out/lib/my_app/authz.ex: up to date
+out/authz.php: up to date" ] && ok "... and again, each said up to date, none written" || bad "clients up to date" "$rc $out"
+# a language and no file: of the policy rowstile.toml names, as graph, with no database; the language is checked first
+NODB() { ( cd "$P" && PGHOST=/nowhere PGPORT=1 python3 "$OLDPWD/cli/rowstile_cli.py" "$@" ); }
+out=$(NODB client py 2>&1); rc=$?
+[ $rc -eq 0 ] && [ -n "$out" ] && [ "$out" = "$(OWN client py db/policy.authz)" ] &&
+  ok "client py with no file: of the policy rowstile.toml names, no database" || bad "client LANG, rowstile.toml's policy" "$rc ${out:0:200}"
+out=$(NODB client ts-sdk 2>&1); rc=$?
+[ $rc -eq 0 ] && case "$out" in *'declare module "@rowstile/client"'*) true;; *) false;; esac &&
+  ok "client ts-sdk: the names alone, asked by name" || bad "client ts-sdk" "$rc ${out:0:200}"
+out=$(NODB client rb 2>&1); rc=$?
+[ "$rc $out" = "2 rowstile client: which language, py, ts, ts-sdk, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?" ] &&
+  ok "... a language it doesn't write, refused before connecting" || bad "client rb, no database" "$rc $out"
+printf 'policy = "db/policy.authz"\n' > "$P/rowstile.toml"
+out=$(NODB client 2>&1); rc=$?
+[ "$rc $out" = "2 rowstile client: which language, py, ts, ts-sdk, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?" ] &&
+  ok "... and none, with no [clients]: refused before connecting" || bad "client, no [clients], no database" "$rc $out"
 printf 'policy = "db/policy.authz"\n[clients]\nruby = "out/authz.rb"\nrbs = "out/authz.rbs"\n' > "$P/rowstile.toml"
 out=$(OWN client 2>&1); rc=$?
 [ $rc -eq 0 ] && [ "$(cat "$P/out/authz.rb")" = "$(OWN client ruby db/policy.authz)" ] &&
@@ -449,8 +470,8 @@ toml 'policy = "db/policy.authz"\n' graph
 [ $rc -eq 0 ] && [ "$out" = "$(CLI graph)" ] && ! grep -q comment <<< "$out" &&
   ok "graph --db reads the policy in force, though rowstile.toml names a file" || bad "graph --db with rowstile.toml" "$rc ${out:0:200}"
 toml 'policy = "db/policy.authz"\n[clients]\npy = "out/db.py"\n' client
-[ $rc -eq 0 ] && [ "$out" = "wrote out/db.py" ] && [ "$(cat "$P/out/db.py")" = "$(CLI client py)" ] &&
-  ok "... and client --db" || bad "client --db with rowstile.toml" "$rc $out"
+[ $rc -eq 0 ] && [ "$out" = "out/db.py: up to date" ] && [ "$(cat "$P/out/db.py")" = "$(CLI client py)" ] &&
+  ok "... and client --db (the same client: up to date)" || bad "client --db with rowstile.toml" "$rc $out"
 cp example/docs.authz "$P/db/policy.authz"
 
 echo "-- snapshot: where it writes"

@@ -2597,16 +2597,26 @@ class Command(unittest.TestCase):
                 os.chdir(before)
 
     def test_typescript_sdk_gets_only_the_names(self) -> None:
-        # an app on the TypeScript SDK (a @rowstile/* dependency) gets the policy's names, registered with it
+        # an app on the TypeScript SDK (a @rowstile/* dependency) gets the policy's names, registered with it: the
+        # package.json nearest the client's file decides, up to the git repository's top, never one above it
         with tempfile.TemporaryDirectory() as d:
-            toml = os.path.join(d, "rowstile.toml")
-            cfg = rowstile_cli.Config(toml, {"clients": {"ts": "src/authz.gen.ts", "py": "authz.py"}})
+            repo = os.path.join(d, "repo")
+            os.makedirs(os.path.join(repo, ".git"))
+            os.makedirs(os.path.join(repo, "frontend"))
+
+            def package(folder: str, deps: str, bom: str = "") -> None:
+                with open(os.path.join(folder, "package.json"), "w", encoding="utf-8") as fh:
+                    fh.write(bom + '{"dependencies": {' + deps + "}}")
+
+            toml = os.path.join(repo, "rowstile.toml")
+            cfg = rowstile_cli.Config(toml, {"clients": {"ts": "frontend/src/authz.ts", "py": "authz.py"}})
+            package(d, '"@rowstile/client": "0.1.0"')  # above the repository: another app's
             self.assertEqual(sorted(cfg.clients), ["py", "ts"])
-            with open(os.path.join(d, "package.json"), "w", encoding="utf-8") as fh:
-                fh.write('{"dependencies": {"next": "16", "pg": "8"}}')
-            self.assertEqual(sorted(cfg.clients), ["py", "ts"])  # an app without the SDK: the whole client
-            with open(os.path.join(d, "package.json"), "w", encoding="utf-8") as fh:
-                fh.write('{"dependencies": {"next": "16", "@rowstile/prisma": "0.1.0"}}')
+            package(repo, '"next": "16", "@rowstile/prisma": "0.1.0"')
+            self.assertEqual(sorted(cfg.clients), ["py", "ts-sdk"])
+            package(os.path.join(repo, "frontend"), '"next": "16", "pg": "8"')  # the client's app, without the SDK
+            self.assertEqual(sorted(cfg.clients), ["py", "ts"])
+            package(os.path.join(repo, "frontend"), '"@rowstile/pg": "0.1.0"', bom="\ufeff")  # (a byte order mark)
             self.assertEqual(sorted(cfg.clients), ["py", "ts-sdk"])
         names = database.client("ts-sdk", read(POLICIES["docs"]))
         self.assertIn('declare module "@rowstile/client"', names)

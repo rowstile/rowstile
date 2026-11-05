@@ -11,6 +11,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Added
 
+- `rowstile client ts-sdk`: the policy's names alone, registered with the TypeScript SDK, asked for by name. It is
+  what `[clients] ts` writes in an app on the SDK; `rowstile client ts` is the client for `pg` without it.
 - `authz.sign_out()`: nobody is signed in in the transaction afterwards, and it may sign in again, as anyone. It
   is for a test's transaction that acts for one person, then another, and is rolled back at the end; the SDKs'
   test modes call it ([Identity](docs/reference/identity.md)).
@@ -30,6 +32,14 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- `rowstile client LANG` with no file is of the policy `rowstile.toml` names, as `rowstile graph` is and the reference
+  says, with no database (but `powersync`, which reads the database `rowstile.toml` names); before, it connected and
+  wrote the client of the policy in force. A language it doesn't write, or none with no `[clients]`, is refused
+  before connecting. With no language, it says of each file that it wrote it or that it was up to date.
+- `[clients] ts` is the names alone when the package.json nearest the client's file depends on `@rowstile/*`
+  (`frontend/package.json` for `frontend/src/authz.ts`), looked for up to the git repository's top. Before, the one
+  in `rowstile.toml`'s folder decided, or one above it, even above the repository. A package.json with a byte order
+  mark is read.
 - `rowstile client powersync`, a preview: a table the policy mirrors and the database doesn't yet is said, with
   what to do (apply or push first), instead of a traceback. Each stream's alias, the table's name on the client, is
   quoted, so a table named with a keyword (`app.order`) gives a stream the service takes. Two mirrored tables of

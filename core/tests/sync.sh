@@ -1225,6 +1225,15 @@ toml ""
 out=$(env -u DATABASE_URL bash -c "cd $P && python3 $PWD/cli/rowstile_cli.py client" 2>&1); rc=$?
 [ $rc -eq 2 ] && [ "$out" = "rowstile client powersync reads each mirror's columns from the database: give it one (--db, or database in rowstile.toml), where the policy is applied" ] &&
   ok "... and none named: exit 2, it reads the database" || bad "client powersync, no database" "$rc $out"
+out=$(env -u DATABASE_URL bash -c "cd $P && python3 $PWD/cli/rowstile_cli.py client powersync" 2>&1); rc=$?
+[ $rc -eq 2 ] && [ "$out" = "rowstile client powersync reads each mirror's columns from the database: give it one (--db, or database in rowstile.toml), where the policy is applied" ] &&
+  ok "... asked by name, likewise" || bad "client powersync by name, no database" "$rc $out"
+toml "database = \"dbname=$DB\"
+"
+out=$(in_proj client powersync 2>&1); rc=$?
+[ $rc -eq 0 ] && [ "$out" = "$(cat "$P/sync-config.yaml")" ] &&
+  ok "... and with the database rowstile.toml names: the streams of its policy, as rowstile client writes them" ||
+  bad "client powersync by name, rowstile.toml's database" "$rc ${out:0:300}"
 # (the masked view reads every column: it goes with the column, and applying makes it again)
 PSQL -c "ALTER TABLE app.files DROP COLUMN size CASCADE"
 check "a column dropped from the table since: its writes go on, its mirror rows hold NULL there" \
