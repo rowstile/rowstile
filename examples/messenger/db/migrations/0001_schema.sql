@@ -40,8 +40,68 @@ CREATE TABLE ms.members (
   role          text NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member')),
   joined_at     timestamptz NOT NULL DEFAULT now(),
   last_read_seq bigint NOT NULL DEFAULT 0,
+  joined_seq    bigint NOT NULL DEFAULT 0,          -- the chat's last message number when they joined
   PRIMARY KEY (chat_id, user_id));
 CREATE INDEX ON ms.members (user_id);
+-- one owner a chat, however many rows a statement adds and however many transactions add them (a rule checks
+-- each row against the table as the statement found it: one INSERT of several rows could make two)
+CREATE UNIQUE INDEX members_one_owner ON ms.members (chat_id) WHERE role = 'owner';
+
+-- joined_seq is set by the database, whatever the insert says: members read the messages after it, by number,
+-- not by the clock (a clock that steps back refuses nothing). SECURITY DEFINER: it reads the chat's counter,
+-- like ms.number_message below
+CREATE FUNCTION ms.stamp_joined_seq() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  NEW.joined_seq := coalesce((SELECT c.last_seq FROM ms.chats c WHERE c.id = NEW.chat_id), 0);
+  RETURN NEW;
+END $f$;
+CREATE TRIGGER stamp_joined_seq BEFORE INSERT ON ms.members FOR EACH ROW EXECUTE FUNCTION ms.stamp_joined_seq();
+
+-- the number the signed-in person joined at (NULL: not a member)
+-- (plpgsql: authz.uid() comes with the policy, applied after the migrations)
+CREATE FUNCTION ms.joined_seq(p_chat bigint) RETURNS bigint
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN (SELECT m.joined_seq FROM ms.members m WHERE m.chat_id = p_chat AND m.user_id = authz.uid());
+END $$;
+
+-- one direct chat for two people: the two of each direct chat, in order. Written by the database when the second
+-- joins, and not the app role's to read or write: it could otherwise take a pair's place
+CREATE TABLE ms.direct_pairs (
+  pair    uuid[] PRIMARY KEY CHECK (array_length(pair, 1) = 2),
+  chat_id bigint NOT NULL UNIQUE REFERENCES ms.chats ON DELETE CASCADE);
+
+-- a direct chat is two people: a third is refused here, after the statement, which sees all of its rows (the
+-- policy counts too, but row by row). Two transactions adding one each both see two, and both write the pair:
+-- chat_id UNIQUE refuses the second. (SECURITY DEFINER: it writes whoever adds the member)
+CREATE FUNCTION ms.pair_direct() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_pair uuid[];
+BEGIN
+  IF (SELECT c.kind FROM ms.chats c WHERE c.id = NEW.chat_id) = 'direct' THEN
+    SELECT array_agg(m.user_id ORDER BY m.user_id) INTO v_pair FROM ms.members m WHERE m.chat_id = NEW.chat_id;
+    IF array_length(v_pair, 1) > 2 THEN
+      RAISE EXCEPTION 'a direct chat is two people' USING ERRCODE = 'check_violation';
+    END IF;
+    -- once for the chat: two members added by one statement both see the two of them here
+    IF array_length(v_pair, 1) = 2 AND NOT EXISTS (SELECT 1 FROM ms.direct_pairs p WHERE p.chat_id = NEW.chat_id) THEN
+      -- a second chat for the same two is refused here (23505): the API then answers with the first
+      INSERT INTO ms.direct_pairs (pair, chat_id) VALUES (v_pair, NEW.chat_id);
+    END IF;
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER pair_direct AFTER INSERT ON ms.members FOR EACH ROW EXECUTE FUNCTION ms.pair_direct();
+
+-- a chat one of the two left is no longer the pair's: they may start another
+CREATE FUNCTION ms.unpair_direct() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  DELETE FROM ms.direct_pairs p WHERE p.chat_id = OLD.chat_id;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER unpair_direct AFTER DELETE ON ms.members FOR EACH ROW EXECUTE FUNCTION ms.unpair_direct();
 
 -- messages are numbered per chat: (chat_id, seq) is the key
 CREATE TABLE ms.messages (
@@ -103,14 +163,6 @@ CREATE TABLE ms.chat_bots (
   PRIMARY KEY (chat_id, bot_id));
 CREATE INDEX ON ms.chat_bots (bot_id);
 
--- when a person joined a chat: they read only what was said since (NULL: not a member)
--- (plpgsql: authz.uid() comes with the policy, applied after the migrations)
-CREATE FUNCTION ms.joined_at(p_chat bigint) RETURNS timestamptz
-LANGUAGE plpgsql STABLE AS $$
-BEGIN
-  RETURN (SELECT m.joined_at FROM ms.members m WHERE m.chat_id = p_chat AND m.user_id = authz.uid());
-END $$;
-
 -- signing up: an account is a profile and a password, made together
 CREATE FUNCTION ms.sign_up(p_phone text, p_name text, p_password_hash text) RETURNS SETOF ms.users
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
@@ -155,9 +207,12 @@ CREATE TRIGGER announce AFTER UPDATE OF title, about, admins_only ON ms.chats FO
 -- the app role reads and writes every table; row-level security (the policy) decides which rows
 GRANT USAGE ON SCHEMA ms TO ms_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ms TO ms_app;
--- ...but not the view the policy reads blocks through: views run with their owner's rights (authz.lint says so)
-REVOKE ALL ON ms.direct_blocks FROM ms_app;
-REVOKE ALL ON FUNCTION ms.number_message(), ms.announce(), ms.announce_chat() FROM PUBLIC;
+-- ...but not the view the policy reads blocks through: views run with their owner's rights (authz.lint says so);
+-- nor the pairs the database keeps; nor password hashes: signing in goes through ms.credentials_for() and
+-- ms.sign_up()
+REVOKE ALL ON ms.direct_blocks, ms.direct_pairs, ms.credentials FROM ms_app;
+REVOKE ALL ON FUNCTION ms.number_message(), ms.announce(), ms.announce_chat(), ms.stamp_joined_seq(),
+  ms.pair_direct(), ms.unpair_direct() FROM PUBLIC;
 REVOKE ALL ON FUNCTION ms.sign_up(text, text, text), ms.session_user(text), ms.credentials_for(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ms.sign_up(text, text, text), ms.session_user(text), ms.credentials_for(text),
-  ms.joined_at(bigint) TO ms_app;
+  ms.joined_seq(bigint) TO ms_app;
