@@ -269,7 +269,9 @@ module Rowstile
       { "type" => kind, "title" => title, "status" => status, "detail" => said.message, "code" => said.code }
     end
 
-    # A row's key as Postgres writes it: 7, or (1,2) for a composite key (a field quoted only where Postgres would).
+    # A row's key as Postgres writes it: 7, or (1,2) for a composite key, an Array of its values (a field quoted only
+    # where Postgres would: empty, or holding a comma, a quote, a backslash, a parenthesis or one of ASCII's six
+    # spaces, and for no other character).
     def key_text(key)
       key = key.first if key.is_a?(Array) && key.length == 1
       return "(#{key.map { |v| field_text(v) }.join(",")})" if key.is_a?(Array)
@@ -293,7 +295,7 @@ module Rowstile
       return "" if value.nil?
 
       text = value.to_s
-      return text unless text.empty? || text.match?(/[",\\()\s]/)
+      return text unless text.empty? || text.match?(/[",\\() \t\n\r\v\f]/)
 
       %("#{text.gsub("\\") { "\\\\" }.gsub('"', '""')}")
     end
