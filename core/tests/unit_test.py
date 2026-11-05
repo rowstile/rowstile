@@ -1697,6 +1697,14 @@ class ClientNames(unittest.TestCase):
         self.assertEqual([x for x in lines if x.startswith("const OrgTeamEditAll")], [])
         self.assertIn("// org_team.edit_all and org_team.editAll would both be OrgTeamEditAll: neither has it", lines)
         self.assertEqual(sum("would both be" in x for x in lines), 3, "said once for each name")
+        # object's permission type would be ObjectType, the file's own type: it has no name, and the file says so
+        lines = database.client(
+            "go", self.CASES + "type object = app.o\n  owner : user = owner_id\n  can type = owner\n"
+        ).split("\n")
+        self.assertEqual([x for x in lines if x.startswith("const ObjectType ")], [])
+        self.assertIn("type ObjectType string", lines)
+        self.assertIn("// object.type would be ObjectType, the file's own: it has no name", lines)
+        self.assertIn('const TypeObject ObjectType = "object"', lines)
 
     def test_the_rust_names_are_spelled_as_rust_spells_them(self) -> None:
         # a constant for each type (orgUnit's ORG_UNIT) and an enum of its permissions (OrgUnitPermission::See); two
@@ -1757,6 +1765,15 @@ class ClientNames(unittest.TestCase):
             self.assertIn(f"// {said}: it has no name here, use new Permission(...)", lines)
         self.assertIn('public static readonly Permission View = new(Type, "view");', lines)
         self.assertEqual(sum(1 for x in lines if x == "public static class Policy"), 1)
+        # a class named as the SDK's ObjectType or Permission would hide it in Policy: those types have none
+        sdk = errors_prelude() + "type permission = app.p\n  owner : user = owner_id\n  can view = owner\n"
+        sdk += "type object_type = app.o\n  owner : user = owner_id\n  can view = owner\n"
+        lines = [x.strip() for x in database.client("csharp", sdk).split("\n")]
+        for said in ("permission would be Permission", "object_type would be ObjectType"):
+            self.assertIn(f"// {said}: it has no name here, use new Permission(...)", lines)
+        self.assertEqual(
+            [x for x in lines if x.startswith("public static class") and x != "public static class Policy"], []
+        )
         # hidden permissions stay off it
         self.assertNotIn("view__base", Compiler(parse_policy(read(POLICIES["alt"]))).client("csharp", "x"))
 
@@ -1832,6 +1849,9 @@ class ClientNames(unittest.TestCase):
         self.assertEqual(
             (names, unnamed), ({"doc": ("Doc", {"viewAll": "view_all"})}, ["_1", "doc.module_info", "doc._x"])
         )
+        # a module named Rowstile or Kernel would hide the SDK's, or Elixir's, in the modules after it
+        taken = devtools._elixir_names({"rowstile": ["view"], "kernel": ["view"], "doc": ["view"]})
+        self.assertEqual((list(taken[0]), taken[1]), (["doc"], ["rowstile", "kernel"]))
         self.assertTrue(database.client("elixir", self.CASES).split("\n")[1] == "defmodule Authz do")
         # shared relations and scopes, and a list too long for a line: an item a line, as mix format lays it out
         long = [f"permission_{i}" for i in range(9)]
@@ -2045,6 +2065,15 @@ class ClientNames(unittest.TestCase):
             "sync app.org_units : view\n"
         )
         self.assertIn('const orgUnitReaders = table("rowstile_org_unit_readers")', database.client("zero", units))
+        # two types that camelCase would spell the same (a_b and aB): each one's constant as its name is written
+        both = (
+            units + "type orgUnit = app.units2\n  owner : user = owner_id\n  can view = owner\nsync app.units2 : view\n"
+        )
+        made = database.client("zero", both)
+        self.assertIn("export const syncTables = [keys, org_unitReaders, orgUnitReaders] as const;", made)
+        self.assertEqual(
+            len(re.findall(r"^const (\w+) =", made, re.M)), len(set(re.findall(r"^const (\w+) =", made, re.M)))
+        )
         # a policy that syncs nothing has the keys table alone, and no filter
         made = database.client("zero", self.CASES)
         self.assertIn("export const syncTables = [keys] as const;", made)
@@ -2598,6 +2627,9 @@ class Command(unittest.TestCase):
             "doc": ["type", "editRows", "edit_rows", "_x", "_9", "view"],
         }
         self.assertEqual(devtools._ruby_names(perms), {"doc": ("Doc", {"_x": "X", "view": "VIEW"})})
+        # nor a module the files name inside Authz: Rowstile (the SDK's), and Hash, Array and String (the signatures')
+        taken = {"rowstile": ["view"], "hash": ["view"], "array": ["view"], "string": ["view"], "doc": ["view"]}
+        self.assertEqual(list(devtools._ruby_names(taken)), ["doc"])
         none = devtools._client_ruby({}, {}, [], "the policy", True)
         self.assertIn("  type object_type = String\n", none)
         shared = devtools._client_ruby(
