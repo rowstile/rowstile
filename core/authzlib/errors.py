@@ -268,7 +268,8 @@ CODES = {
         "A key written wrongly, or of the wrong shape",
         "A type's key is its table's primary key: `id bigint` unless written after the table, "
         "`type folder = app.folders (folder_no)` or `(id uuid)`. A composite key names each column, "
-        "`(org_id, slug text)`, of integers, text or uuid. A type that signs in (the user type, principals) has "
+        "`(org_id, slug text)`, of integers, text or uuid. No key is a date, a time, an interval or money: ids are "
+        "kept as text, and these write theirs by the session's settings. A type that signs in (the user type, principals) has "
         "a key of one column. A relation to a type with a composite key gives its columns in brackets: "
         "`page : doc = [org_id, doc_slug]`.",
         "type folder = app.folders (id bigint uuid)\n  owner : user = owner_id\n  can view = owner\n",

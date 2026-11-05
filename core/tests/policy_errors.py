@@ -532,6 +532,20 @@ COMPILE = [
         "AZ206",
     ),
     (
+        "a key that is a date",
+        "type day = alt.docs (doc_no date)\n",
+        "doc_no is date: a key can't be a date, a time, an interval or money",
+        10,
+        "AZ206",
+    ),
+    (
+        "a key that is an interval",
+        "type span = alt.docs (doc_no interval)\n",
+        "doc_no is interval: a key can't be",
+        10,
+        "AZ206",
+    ),
+    (
         "a badly written key",
         "type ev = alt.docs (doc_no bigint uuid)\n",
         "write the key as (column [type])",

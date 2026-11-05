@@ -1249,6 +1249,9 @@ def read_cols(w: Words) -> Cols:
 # ----------------------------------------------------------------------
 # composite keys are compared as text: only types whose text form is canonical
 KEY_TYPES = ("bigint", "int8", "integer", "int", "int4", "smallint", "int2", "text", "uuid", "varchar")
+# no key at all: ids are kept as text, and these read and write theirs by the session's settings (DateStyle,
+# IntervalStyle, TimeZone, lc_monetary, and 'now' for a time), so an index can't read the shares' ids as them
+SETTINGS_KEY_TYPES = ("date", "time", "timetz", "timestamp", "timestamptz", "interval", "money")
 
 
 # a key's column, and its type if written: (id uuid), (org_id, id)
@@ -1279,6 +1282,15 @@ def parse_key(key: tuple[str, int] | None, loc: Loc) -> list[tuple[str, str]]:
         if any(c == m.group(1) for c, _, _ in out):
             fail(loc, "a key column is named twice", "AZ206", at=at)
         out.append((m.group(1), (m.group(2) or "bigint").lower(), at))
+    if len(out) == 1 and out[0][1] in SETTINGS_KEY_TYPES:
+        c, ty, at = out[0]
+        fail(
+            loc,
+            f"{c} is {ty}: a key can't be a date, a time, an interval or money (ids are kept as text, and these "
+            f"read and write theirs by the session's settings): key the table by integers, text or uuid",
+            "AZ206",
+            at=at,
+        )
     if len(out) > 1:
         for c, ty, at in out:
             if ty not in KEY_TYPES:

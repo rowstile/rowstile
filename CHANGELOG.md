@@ -621,6 +621,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   (`#/search/50%`): the page went blank.
 - The file manager's maintenance jobs remove the objects in storage that no file's version names, after a day: a
   deleted file's objects, when deleting them failed after its rows were gone, stayed in the bucket for good.
+- A type keyed by a date, a time, an interval or money is refused when the policy compiles, naming its line
+  (AZ206). Before, applying failed with Postgres's own message about an index, which named no line.
 
 ### Upgrading
 
