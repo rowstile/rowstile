@@ -30,19 +30,22 @@ transaction, and it refuses transactions.
   pooler in session mode (Supabase's session pooler, Neon's host without `-pooler`).
 - **Prepared statements.** A pooler that keeps them per client (PgBouncer 1.21 or newer with
   `max_prepared_statements` above 0) needs nothing. One that doesn't (older PgBouncer,
-  `max_prepared_statements = 0`, Supavisor in transaction mode) needs the Python drivers to make none:
+  `max_prepared_statements = 0`, Supavisor in transaction mode) needs the drivers to make none:
   - asyncpg, with SQLAlchemy: `?prepared_statement_cache_size=0` on the URL and
     `connect_args={"statement_cache_size": 0}`;
   - psycopg: `prepare_threshold=None` (`ConnectionPool(url, kwargs={"prepare_threshold": None})`, or in
     SQLAlchemy's `connect_args`);
-  - postgres.js: `{ prepare: false }`. node-postgres and Prisma need nothing.
+  - postgres.js: `{ prepare: false }`. node-postgres and Prisma need nothing;
+  - pgx (Go): `default_query_exec_mode=exec` on the URL, or `QueryExecModeExec` in the pool's
+    `ConnConfig.DefaultQueryExecMode`. pgx's default prepares each statement by name, the SDK's sign-in too.
 
   Without it, requests fail with "prepared statement ... does not exist" or "already exists". They fail; nobody
   is signed in as someone else. With no prepared statements, each query is planned anew, the policy's checks
   with it: [what that costs](reference/limits.md#limits).
 
   These settings come from trials by hand on Supabase's transaction pooler, before 0.1.0-alpha.1 ([Managed
-  Postgres](managed-postgres.md)). The nightly run keeps prepared statements, so no check runs them.
+  Postgres](managed-postgres.md)); pgx's from one on PgBouncer 1.26 with `max_prepared_statements = 0`, after
+  0.1.0-beta.3. The nightly run keeps prepared statements, so no check runs them.
 - **Nothing may outlive a transaction.** The next transaction on that server connection may be another
   client's. A session-level `SET`, a temporary table, a statement prepared by name, or a `WITH HOLD` cursor in
   your own code reaches it: a cursor declared while signed in as one user is read by the next client, signed
