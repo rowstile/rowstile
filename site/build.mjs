@@ -23,11 +23,11 @@ function run(cmd, ...args) {
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed`);
 }
 
-/** A file's Markdown links, for readers of the Markdown itself: a page's .md copy, or GitHub.
+/** A file's Markdown links, for readers of the Markdown itself: a page's .md copy, or GitHub (an image: the file).
  *  @param {string} source @param {string} text */
 function markdownLinks(source, text) {
-  return rewriteLinks(parse(source), source, text, (href) => {
-    const link = siteLink(source, href);
+  return rewriteLinks(parse(source), source, text, (href, image) => {
+    const link = siteLink(source, href, image);
     const cut = link.indexOf("#");
     const path = cut < 0 ? link : link.slice(0, cut);
     if (!path.startsWith("/")) return link;
@@ -81,8 +81,8 @@ if (POSTS.length) {
   /** @type {Map<string, string>} */
   const html = new Map();
   for (const post of POSTS) {
-    const body = rewriteLinks(parse(post.source), post.source, postBody(readFileSync(join(REPO, post.source), "utf8")), (href) => {
-      const link = siteLink(post.source, href);
+    const body = rewriteLinks(parse(post.source), post.source, postBody(readFileSync(join(REPO, post.source), "utf8")), (href, image) => {
+      const link = siteLink(post.source, href, image);
       return link.startsWith("/") ? ORIGIN + link : link;
     });
     // the renderer is the build's own, with the config's rules: they ask which file the text is from

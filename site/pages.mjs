@@ -11,6 +11,8 @@ import { FOLDERS, ORIGIN } from "./source.mjs";
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const GITHUB = "https://github.com/rowstile/rowstile";
+/** The repository's files themselves, as GitHub serves them. */
+const RAW = "https://raw.githubusercontent.com/rowstile/rowstile";
 // Where a link to a file on GitHub points: the tag the site is built from, and the blog tag whose articles and
 // comparison pages it shows (site.yml sets both, from site/source.mjs). A build of a branch links to main.
 const CODE = process.env.SITE_CODE || "main";
@@ -349,9 +351,10 @@ export function url(address) {
   return "/" + address.replace(/(^|\/)index\.md$/, "$1").replace(/\.md$/, "");
 }
 
-/** Where a link written in `source` (a repository path) goes on the site: a page's URL, or GitHub.
- *  @param {string} source @param {string} href @returns {string} */
-export function siteLink(source, href) {
+/** Where a link written in `source` (a repository path) goes on the site: a page's URL, or GitHub; an image, the file
+ *  itself (GitHub's page for a file is HTML, which no image shows).
+ *  @param {string} source @param {string} href @param {boolean} [image] @returns {string} */
+export function siteLink(source, href, image = false) {
   if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) return href;       // elsewhere, mailto:, or on the same page
   const cut = href.indexOf("#");
   const path = cut < 0 ? href : href.slice(0, cut);
@@ -366,6 +369,7 @@ export function siteLink(source, href) {
   if (page) return url(page) + hash;
   if (target === ".") return GITHUB;
   const at = FOLDERS.some((f) => target === f || target.startsWith(`${f}/`)) ? CONTENT : CODE;
+  if (image && !dir) return `${RAW}/${at}/${target}`;
   return `${GITHUB}/${dir ? "tree" : "blob"}/${at}/${target}${hash}`;
 }
 
@@ -421,10 +425,21 @@ export function deadAnchors(pages, more = []) {
 
 /** A Markdown file with its links rewritten, for the copies of the pages (/operations.md) and llms.txt: each
  *  [words](href) and ![words](src) outside code, its title kept. markdown-it's parse says which links the file
- *  holds: one written another way (a reference, [words][name]) can't be rewritten, and fails the build.
- *  @param {(text: string) => Token[]} parse @param {string} source the file, for messages
- *  @param {string} text @param {(href: string) => string} to the link's new address */
+ *  holds, and which are images: one written another way (a reference, [words][name]) can't be rewritten, and fails
+ *  the build. @param {(text: string) => Token[]} parse @param {string} source the file, for messages
+ *  @param {string} text @param {(href: string, image: boolean) => string} to the link's new address */
 export function rewriteLinks(parse, source, text, to) {
+  /** Whether the "]" at `at` ends an image's words: the "[" it closes has a "!" before it, not written \!.
+   *  @param {string} text @param {number} at */
+  const isImage = (text, at) => {
+    let depth = 0;
+    for (let i = at; i >= 0; i--) {
+      if (text[i - 1] === "\\") continue;
+      if (text[i] === "]") depth++;
+      else if (text[i] === "[" && --depth === 0) return text[i - 1] === "!" && text[i - 2] !== "\\";
+    }
+    return false;
+  };
   const lines = text.split("\n");
   const tokens = parse(text);
   /** @type {string[]} */
@@ -437,7 +452,7 @@ export function rewriteLinks(parse, source, text, to) {
       const href = t.type === "link_open" ? t.attrGet("href") : t.type === "image" ? t.attrGet("src") : null;
       // what the file says: not an autolink, a bare URL, or the link VitePress adds to each heading
       const made = t.markup === "autolink" || t.markup === "linkify" || t.attrGet("class") === "header-anchor";
-      if (href !== null && !made) links.push(href);
+      if (href !== null && !made) links.push(`${t.type === "image" ? "!" : ""}${href}`);
       if (t.children) walk(t.children);
     }
   })(tokens);
@@ -450,12 +465,14 @@ export function rewriteLinks(parse, source, text, to) {
   const flush = () => {
     if (!run.length) return;
     // a code span is kept as it is; a link's address, written bare or in <>, is rewritten, its title kept
-    out.push(run.join("\n").replace(/(`+)[^]*?\1|\]\(\s*(<[^>\n]*>|[^\s)]+)((?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*)\)/g,
-      (all, ticks, href, rest) => {
+    const text = run.join("\n");
+    out.push(text.replace(/(`+)[^]*?\1|\]\(\s*(<[^>\n]*>|[^\s)]+)((?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*)\)/g,
+      (all, ticks, href, rest, at) => {
         if (ticks) return all;
         const bare = href.startsWith("<") ? href.slice(1, -1) : href;
-        found.push(bare);
-        return `](${to(bare)}${rest})`;
+        const image = isImage(text, at);
+        found.push(`${image ? "!" : ""}${bare}`);
+        return `](${to(bare, image)}${rest})`;
       }));
     run = [];
   };
@@ -466,7 +483,8 @@ export function rewriteLinks(parse, source, text, to) {
     } else run.push(line);
   });
   flush();
-  // markdown-it gives an address as it reads it (&amp; read, non-ASCII percent-encoded): compare them so
+  // markdown-it gives an address as it reads it (&amp; read, non-ASCII percent-encoded): compare them so (an
+  // image's with its "!" before it)
   const same = (/** @type {string} */ s) => {
     try {
       return decodeURI(s.replace(/&amp;/g, "&"));

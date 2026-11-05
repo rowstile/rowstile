@@ -45,6 +45,13 @@ for (const [label, source, href, want] of [
   const got = siteLink(source, href);
   check(`a link at a tag: ${label}`, got === want, got);
 }
+// an image: the file itself (raw), not GitHub's page about it
+const RAW = "https://raw.githubusercontent.com/rowstile/rowstile";
+check("an image at a tag: the file itself", siteLink("examples/messenger/README.md", "docs/group.png", true) ===
+  `${RAW}/site-v4/examples/messenger/docs/group.png`, siteLink("examples/messenger/README.md", "docs/group.png", true));
+check("... a link to it stays GitHub's page", siteLink("examples/messenger/README.md", "docs/group.png") ===
+  `${GH}/blob/site-v4/examples/messenger/docs/group.png`);
+check("... an image elsewhere stays where it is", siteLink("README.md", "https://api.scorecard.dev/b", true) === "https://api.scorecard.dev/b");
 
 // headings' anchors as GitHub makes them, which the links are written for
 for (const [heading, want] of [
@@ -89,12 +96,13 @@ const md = await createMarkdownRenderer(REPO);
 /** @param {string} text */
 const parse = (text) => md.parse(text, {});
 /** @param {string} text */
-const rewrite = (text) => rewriteLinks(parse, "docs/x.md", text, (href) => `/to/${href}`);
+const rewrite = (text) => rewriteLinks(parse, "docs/x.md", text, (href, image) => `/to/${image ? "image:" : ""}${href}`);
 const text = [
   "# A page",
   "",
   "See [the pooler](operations.md#behind-a-pooler), [a title](a.md \"its title\") and [brackets](<b c.md>).",
   "![the mark](mark.svg) and <https://example.com> and https://example.org stay.",
+  "A badge: [![its [words]](badge.svg)](https://example.com/b), and \\![a link](not-an-image.md).",
   "Code isn't a link: `[x](not-a-link.md)`, nor ``a ` [y](tick.md)``.",
   "",
   "```sql",
@@ -114,7 +122,8 @@ const out = (() => {
   }
 })();
 check("a copy's links: rewritten, a title kept", out.includes("[the pooler](/to/operations.md#behind-a-pooler), " +
-  '[a title](/to/a.md "its title") and [brackets](/to/b c.md).') && out.includes("![the mark](/to/mark.svg)"), out);
+  '[a title](/to/a.md "its title") and [brackets](/to/b c.md).') && out.includes("![the mark](/to/image:mark.svg)") &&
+  out.includes("A badge: [![its [words]](/to/image:badge.svg)](/to/https://example.com/b), and \\![a link](/to/not-an-image.md)."), out);
 check("... what is code or HTML kept as it is", ["`[x](not-a-link.md)`", "``a ` [y](tick.md)``", "SELECT '[x](in-a-fence.md)';",
   "    [x](indented.md)", "<div>[x](in-html.md)</div>", "<https://example.com>"].every((s) => out.includes(s)), out);
 check("... and the rest of the file too", out.split("\n").length === text.split("\n").length && out.startsWith("# A page\n"), out);
