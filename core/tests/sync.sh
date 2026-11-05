@@ -24,7 +24,8 @@ cleanup() {
   dropdb --force --if-exists "${DB}_keyed" 2>/dev/null
   dropdb --force --if-exists "$LINKED" 2>/dev/null
   psql -X -q -d postgres -c "DROP ROLE IF EXISTS $OTHER" -c "DROP ROLE IF EXISTS ${OTHER}_away" 2>/dev/null
-  [ -z "${PGSUPERUSER:-}" ] || psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS ${OTHER}_owner" 2>/dev/null
+  [ -z "${PGSUPERUSER:-}" ] || psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS ${OTHER}_owner" \
+    -c "DROP ROLE IF EXISTS ${OTHER}_super" 2>/dev/null
   rm -rf "$T"
 }
 trap cleanup EXIT
@@ -406,8 +407,11 @@ if [ -n "${PGSUPERUSER:-}" ]; then
   refused "... and so is one that is a member of the policy's owner" \
     "$(echo "$SYNCED" | sed "s/^sync role $ROLE\$/sync role ${OTHER}_owner/")" "is the role that applies the policy"
   psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE ${OTHER}_owner" >/dev/null
+  refused "... and so is a superuser, saying so" "$(echo "$SYNCED" | sed "s/^sync role $ROLE\$/sync role $PGSUPERUSER/")" \
+    "the sync role $PGSUPERUSER is a superuser, which may turn row-level security off and change the rules [AZ808]"
 else
   ok "... and so is one that is a member of the policy's owner (skipped: no superuser to grant it)"
+  ok "... and so is a superuser, saying so (skipped: no superuser to name)"
 fi
 MASKED="$(echo "$SYNCED" | sed 's/^rules app.files$/rules app.files view app.files_visible/' | sed 's/^  delete                            : edit$/  delete                            : edit\n  mask name                         : edit/')"
 PSQL -c "GRANT SELECT ON app.files TO $OTHER" >/dev/null
@@ -438,9 +442,32 @@ if PSQL -c "SELECT 1 FROM pg_publication WHERE pubname = '${DB}_pub'" | grep -q 
 else
   ok "lint finds a publication that publishes a masked column (skipped: this role can't make a publication here)"
 fi
+# (the app role given the index meanwhile: lint still finds it, though it can't tell the sync role's grants)
+PSQL -c "GRANT USAGE ON SCHEMA authz_sync TO app_user" -c "GRANT SELECT ON authz_sync.keys TO app_user" >/dev/null
 PSQL -c "ALTER ROLE $OTHER RENAME TO ${OTHER}_away" >/dev/null
 [ "$(lint "$OTHER" "the sync role does not exist")" = t ] && ok "lint finds a sync role that is gone since" || bad "lint: gone"
+[ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object IN ('authz_sync', 'authz_sync.keys') AND problem LIKE 'app_user holds % on it%'")" = 2 ] &&
+  ok "... and still finds the app role's privileges on the index" || bad "lint: the app role's grants, the sync role gone" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE object LIKE 'authz_sync%'")"
+PSQL -c "REVOKE ALL ON authz_sync.keys FROM app_user" -c "REVOKE ALL ON SCHEMA authz_sync FROM app_user" >/dev/null
 PSQL -c "ALTER ROLE ${OTHER}_away RENAME TO $OTHER" >/dev/null
+if [ -n "${PGSUPERUSER:-}" ]; then
+  # (a role of the superuser's, which no role of the suites is a member of, made a superuser for one lint: roles are
+  # the server's, and other suites may be running beside this one)
+  psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS ${OTHER}_super" -c "CREATE ROLE ${OTHER}_super" >/dev/null
+  apply "$(echo "$MASKED" | sed "s/^sync role $ROLE\$/sync role ${OTHER}_super/")"
+  psql -X -q -U "$PGSUPERUSER" -d postgres -c "ALTER ROLE ${OTHER}_super SUPERUSER" >/dev/null
+  found=$(PSQL -c "SELECT string_agg(problem, ' | ') FROM authz.lint() WHERE object = '${OTHER}_super'")
+  psql -X -q -U "$PGSUPERUSER" -d postgres -c "ALTER ROLE ${OTHER}_super NOSUPERUSER" >/dev/null
+  case "$found" in
+    "the sync role is a superuser, which may turn row-level security off and change the rules: give the engine a role of its own, with LOGIN REPLICATION BYPASSRLS")
+      ok "lint finds a sync role made a superuser since, once" ;;
+    *) bad "lint: a superuser" "$found" ;;
+  esac
+  apply "$(echo "$MASKED" | sed "s/^sync role $ROLE\$/sync role $OTHER/")"
+  psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE ${OTHER}_super" >/dev/null
+else
+  ok "lint finds a sync role made a superuser since, once (skipped: no superuser to make it one)"
+fi
 PSQL -c "GRANT app_user TO $OTHER" >/dev/null
 [ "$(lint "$OTHER" "are one another")" = t ] && ok "lint finds a sync role made a member of the app role since" || bad "lint: member"
 PSQL -c "REVOKE app_user FROM $OTHER" >/dev/null

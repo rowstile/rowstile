@@ -27,8 +27,9 @@ sync after commit                 -- a worker keeps the index after each change 
 
 - `sync role` names the role the engine connects as. Make it for the engine: `CREATE ROLE sync_engine LOGIN
   REPLICATION BYPASSRLS`. It can't be the app role or PUBLIC (AZ803). <!-- checked: tests/policy_errors.py "the app role as the sync role"; tests/policy_errors.py "PUBLIC as the sync role" -->
-  Applying refuses a role that isn't there, one that is a member of the app role or has it as a member, and one
-  that is a member of the role applying the policy (AZ808). <!-- checked: tests/sync.sh "a sync role that isn't there is refused"; tests/sync.sh "a sync role that is a member of the app role is refused"; tests/sync.sh "... and so is one the app role is a member of"; tests/sync.sh "... and so is one that is a member of the policy's owner" -->
+  Applying refuses a role that isn't there, one that is a member of the app role or has it as a member, one
+  that is a member of the role applying the policy, and a superuser (AZ808), which may turn row-level security
+  off. <!-- checked: tests/sync.sh "a sync role that isn't there is refused"; tests/sync.sh "a sync role that is a member of the app role is refused"; tests/sync.sh "... and so is one the app role is a member of"; tests/sync.sh "... and so is one that is a member of the policy's owner"; tests/sync.sh "... and so is a superuser, saying so" -->
 - `sync schema.table : permission` names a type's table, one line each, and the permission its readers hold. With
   no permission, they hold the table's select rule, which the table must have (AZ801). <!-- checked: tests/policy_errors.py "a sync line naming no permission, for a table without a select rule"; tests/policy_errors.py "a sync line naming a permission its type hasn't" -->
 - Sync lines need a sync role, and a sync role needs a sync line (AZ802). <!-- checked: tests/policy_errors.py "sync lines and no sync role"; tests/policy_errors.py "a sync role and nothing synced" -->
@@ -233,7 +234,8 @@ The index fails closed: what it can't follow, compiling refuses, and what it lea
 
 With sync lines, `authz.lint()` reports these as errors:
 
-- the sync role doesn't exist; <!-- unchecked: applying refuses a sync role that isn't there (AZ808), so lint meets one only when it was dropped since -->
+- the sync role doesn't exist; <!-- checked: tests/sync.sh "lint finds a sync role that is gone since" -->
+- it is a superuser (one finding: the others below would be true of it too); <!-- checked: tests/sync.sh "lint finds a sync role made a superuser since, once" -->
 - it is a member of the app role, or the app role of it: the app would read every row through it; <!-- checked: tests/sync.sh "lint finds a sync role made a member of the app role since" -->
 - it lacks BYPASSRLS: the rules apply to the app role, so it reads no row of a table with rules, and an engine's
   first snapshot is empty while the changes it decodes hold every row; <!-- checked: tests/sync.sh "lint finds a sync role without BYPASSRLS: its engine's first snapshot is empty" -->

@@ -6557,13 +6557,13 @@ SELECT n.nspname::text, gw.who, a.privilege_type,
        format('REVOKE %s ON SCHEMA %I FROM %s CASCADE', a.privilege_type, n.nspname, gw.who)
   FROM pg_namespace n, aclexplode(n.nspacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE n.nspname = 'authz_sync' AND a.grantee <> n.nspowner
-    AND NOT (a.grantee = to_regrole('"sync_engine"') AND a.privilege_type = 'USAGE')
+    AND NOT coalesce(a.grantee = to_regrole('"sync_engine"') AND a.privilege_type = 'USAGE', false)
 UNION ALL
 SELECT c.oid::regclass::text, gw.who, a.privilege_type,
        format('REVOKE %s ON TABLE %s FROM %s CASCADE', a.privilege_type, c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace = 'authz_sync'::regnamespace AND a.grantee <> c.relowner
-    AND NOT (a.grantee = to_regrole('"sync_engine"') AND a.privilege_type = 'SELECT')
+    AND NOT coalesce(a.grantee = to_regrole('"sync_engine"') AND a.privilege_type = 'SELECT', false)
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -6612,6 +6612,10 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
   BEGIN
   IF v_sync IS NULL THEN
     severity := 'error'; object := v_sync_name; problem := 'the sync role does not exist: the engine can''t read the index'; RETURN NEXT;
+  ELSIF (SELECT ro.rolsuper FROM pg_roles ro WHERE ro.oid = v_sync) THEN
+    -- (a superuser is every role's member and may do anything: one finding says it)
+    severity := 'error'; object := v_sync_name;
+    problem := 'the sync role is a superuser, which may turn row-level security off and change the rules: give the engine a role of its own, with LOGIN REPLICATION BYPASSRLS'; RETURN NEXT;
   ELSE
     IF pg_has_role(v_sync, v_role, 'MEMBER') OR pg_has_role(v_role, v_sync, 'MEMBER') THEN
       severity := 'error'; object := v_sync_name;
@@ -7591,6 +7595,10 @@ BEGIN
     RAISE EXCEPTION 'the sync role sync_engine does not exist [AZ808]'
       USING HINT = 'make it for the engine: CREATE ROLE sync_engine LOGIN REPLICATION BYPASSRLS, then apply again';
   END IF;
+  IF (SELECT r.rolsuper FROM pg_catalog.pg_roles r WHERE r.oid = v_sync) THEN
+    RAISE EXCEPTION 'the sync role sync_engine is a superuser, which may turn row-level security off and change the rules [AZ808]'
+      USING HINT = 'the engine connects as a role of its own: CREATE ROLE sync_engine LOGIN REPLICATION BYPASSRLS';
+  END IF;
   IF pg_catalog.pg_has_role(v_sync, CURRENT_USER, 'MEMBER') THEN
     RAISE EXCEPTION 'the sync role sync_engine is the role that applies the policy (%), or a member of it [AZ808]', CURRENT_USER
       USING HINT = 'the engine connects as a role of its own, which owns nothing of the database';
@@ -7645,13 +7653,13 @@ SELECT n.nspname::text, gw.who, a.privilege_type,
        format('REVOKE %s ON SCHEMA %I FROM %s CASCADE', a.privilege_type, n.nspname, gw.who)
   FROM pg_namespace n, aclexplode(n.nspacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE n.nspname = 'authz_sync' AND a.grantee <> n.nspowner
-    AND NOT (a.grantee = to_regrole('"sync_engine"') AND a.privilege_type = 'USAGE')
+    AND NOT coalesce(a.grantee = to_regrole('"sync_engine"') AND a.privilege_type = 'USAGE', false)
 UNION ALL
 SELECT c.oid::regclass::text, gw.who, a.privilege_type,
        format('REVOKE %s ON TABLE %s FROM %s CASCADE', a.privilege_type, c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace = 'authz_sync'::regnamespace AND a.grantee <> c.relowner
-    AND NOT (a.grantee = to_regrole('"sync_engine"') AND a.privilege_type = 'SELECT')
+    AND NOT coalesce(a.grantee = to_regrole('"sync_engine"') AND a.privilege_type = 'SELECT', false)
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
