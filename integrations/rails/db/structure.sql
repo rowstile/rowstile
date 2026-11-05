@@ -304,6 +304,13 @@ CREATE TRIGGER authz_folder__parent__tree_trunc AFTER TRUNCATE ON app.folders FO
 
 
 --
+-- Name: TRIGGER authz_folder__parent__tree_trunc ON folders; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_folder__parent__tree_trunc ON app.folders IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
 -- Name: folders authz_folder__parent__tree_upd; Type: TRIGGER; Schema: app; Owner: -
 --
 
@@ -556,10 +563,24 @@ CREATE TRIGGER authz_service_keys_gone_trunc AFTER TRUNCATE ON app.services FOR 
 
 
 --
+-- Name: TRIGGER authz_service_keys_gone_trunc ON services; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_service_keys_gone_trunc ON app.services IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
 -- Name: services authz_service_keys_gone_trunc_first; Type: TRIGGER; Schema: app; Owner: -
 --
 
 CREATE TRIGGER authz_service_keys_gone_trunc_first BEFORE TRUNCATE ON app.services FOR EACH STATEMENT EXECUTE FUNCTION authz_int.service__keys_gone_all();
+
+
+--
+-- Name: TRIGGER authz_service_keys_gone_trunc_first ON services; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_service_keys_gone_trunc_first ON app.services IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 
 --
@@ -612,10 +633,24 @@ CREATE TRIGGER authz_user_keys_gone_trunc AFTER TRUNCATE ON app.users FOR EACH S
 
 
 --
+-- Name: TRIGGER authz_user_keys_gone_trunc ON users; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_user_keys_gone_trunc ON app.users IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
 -- Name: users authz_user_keys_gone_trunc_first; Type: TRIGGER; Schema: app; Owner: -
 --
 
 CREATE TRIGGER authz_user_keys_gone_trunc_first BEFORE TRUNCATE ON app.users FOR EACH STATEMENT EXECUTE FUNCTION authz_int.user__keys_gone_all();
+
+
+--
+-- Name: TRIGGER authz_user_keys_gone_trunc_first ON users; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_user_keys_gone_trunc_first ON app.users IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 
 --
@@ -881,6 +916,8 @@ ALTER TABLE app.projects ENABLE ROW LEVEL SECURITY;
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261105194058'),
+('20261105194057'),
 ('20261105193411'),
 ('20261105185215'),
 ('20261105184108'),

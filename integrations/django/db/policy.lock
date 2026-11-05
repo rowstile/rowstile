@@ -58,7 +58,7 @@ function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9fc8335de7a shape=0a2287cd
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 9d69786a8494 shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | d7e2b45a200c shape=1223ad2f
-function authz.lint() | 86fbdd69fdfa shape=54cb1505
+function authz.lint() | 75e6009f1bf6 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 1d7cd7fb8715 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
@@ -195,16 +195,16 @@ function authz_int."service__col_audit_del"() | 0b0ac8160036 shape=9f319e9b
 function authz_int."service__col_audit_ins"() | 093e7f870837 shape=6707a65f
 function authz_int."service__col_audit_trunc"() | cf4b4a811c01 shape=6b3baa05
 function authz_int."service__col_audit_upd"() | b7545fcefa8f shape=8b763d29
-function authz_int."service__keys_gone"() | 605fe5d2be4a shape=690fee79
-function authz_int."service__keys_gone_all"() | ece1ea2e9d93 shape=5a1e21d3
+function authz_int."service__keys_gone"() | 5fe46587189b shape=690fee79
+function authz_int."service__keys_gone_all"() | 71acacf9248e shape=5a1e21d3
 function authz_int."service__keys_gone_id"() | 09faffa6aefd shape=d3748469
 function authz_int."service__me"() | bd2d4649ddc4 shape=d516704a
 function authz_int."user__col_audit_del"() | 550865ecbaed shape=fc64ec43
 function authz_int."user__col_audit_ins"() | 51b037fe507a shape=dba70c6d
 function authz_int."user__col_audit_trunc"() | e8a01f21ab0e shape=f87e3f72
 function authz_int."user__col_audit_upd"() | 6c4014fc2d89 shape=9e749ca9
-function authz_int."user__keys_gone"() | 105cdeea339c shape=5bf35a03
-function authz_int."user__keys_gone_all"() | 21788bfb5093 shape=8da0a478
+function authz_int."user__keys_gone"() | cd459279e441 shape=5bf35a03
+function authz_int."user__keys_gone_all"() | 263c92760522 shape=8da0a478
 function authz_int."user__keys_gone_id"() | 22b32b93c393 shape=0e7cbdbc
 function authz_int.act_as(p_type text, p_id text, p_check boolean) | 953a2032006c shape=338b0233
 function authz_int.actor() | 597a3fabb14f shape=36514ce1
@@ -219,7 +219,7 @@ function authz_int.canon(p_type text, p_id text) | 8527cd8b257d shape=ab774d8a
 function authz_int.changed(p_type text, p_ids text[], p_cause text) | a711a89ca6d9 shape=7a5b1adc
 function authz_int.check_manage_keys(p_type text, p_id text) | 1e1b710abecd shape=391727a0
 function authz_int.check_writable() | 87ff3161cc1d shape=a16d3e7b
-function authz_int.child_triggers() | 00d9e2928aa2 shape=52e92456
+function authz_int.child_triggers() | 376787138a7e shape=52e92456
 function authz_int.dependents(p_type text, p_ids text[]) | 3109be8d3520 shape=8a4f5a6e
 function authz_int.forget_marks(p_type text, p_ids text[]) | 2ddee1fcc0be shape=8933fd55
 function authz_int.hmac_sha256(p_key bytea, p_msg bytea) | 33edf164bad5 shape=4d6b17ae
@@ -292,12 +292,12 @@ table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 04da39678f90 shape=c57707aa
-table authz_int.trees | 95c70a781b74 shape=02db6ec7
+table authz_int.trees | dab067773f56 shape=02db6ec7
 table authz_int.types | d6f43caa8672 shape=b6d5b497
-tree folder__parent__tree | 59f1daa95ee0aacfbf3c65a9a0571a0f
+tree folder__parent__tree | 1d78b53f45877338c4d3843f7796b358
 trigger "authz_folder__parent__tree_del" ON "public"."folders" | 37ed1487b6b5 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_ins" ON "public"."folders" | 2a003d444348 tree=folder__parent__tree
-trigger "authz_folder__parent__tree_trunc" ON "public"."folders" | 2b567bbead70 tree=folder__parent__tree
+trigger "authz_folder__parent__tree_trunc" ON "public"."folders" | 98cd9465d312 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_upd" ON "public"."folders" | afb7c1565a0d tree=folder__parent__tree
 trigger "authz_folder_col_audit_del" ON "public"."folders" | da7c4c469f42
 trigger "authz_folder_col_audit_ins" ON "public"."folders" | 205a7f66e436
@@ -334,8 +334,8 @@ trigger "authz_service_col_audit_upd" ON "public"."services" | 927d2ee65505
 trigger "authz_service_keys_gone_del" ON "public"."services" | abe676d7d50d
 trigger "authz_service_keys_gone_id" ON "public"."services" | ca6690a194fa
 trigger "authz_service_keys_gone_moved" ON "public"."services" | 92a6bf7b65d5
-trigger "authz_service_keys_gone_trunc" ON "public"."services" | e4c02b8c9656
-trigger "authz_service_keys_gone_trunc_first" ON "public"."services" | 1f9ddbc51b6e
+trigger "authz_service_keys_gone_trunc" ON "public"."services" | 82293692d07e
+trigger "authz_service_keys_gone_trunc_first" ON "public"."services" | 096a1ad7f3b9
 trigger "authz_user_col_audit_del" ON "public"."users" | 5180834c91df
 trigger "authz_user_col_audit_ins" ON "public"."users" | 31374b73a69e
 trigger "authz_user_col_audit_trunc" ON "public"."users" | a0c99cb465b2
@@ -343,8 +343,8 @@ trigger "authz_user_col_audit_upd" ON "public"."users" | 887e2f1cf314
 trigger "authz_user_keys_gone_del" ON "public"."users" | 6b4af8d876f0
 trigger "authz_user_keys_gone_id" ON "public"."users" | aa6bc0ed7a3f
 trigger "authz_user_keys_gone_moved" ON "public"."users" | f00cc6e9ea1e
-trigger "authz_user_keys_gone_trunc" ON "public"."users" | af2229fc3adf
-trigger "authz_user_keys_gone_trunc_first" ON "public"."users" | a236903543eb
+trigger "authz_user_keys_gone_trunc" ON "public"."users" | 68a9c8d87786
+trigger "authz_user_keys_gone_trunc_first" ON "public"."users" | 767386c374a5
 trigger authz_audit_append_only ON authz.audit | b7dda6de8867
 trigger authz_audit_no_truncate ON authz.audit | fa619d666219
 trigger authz_role_audit ON authz.roles | d4799a1152c8
