@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -430,6 +431,29 @@ with tempfile.TemporaryDirectory() as d:
     c.notify("textDocument/didClose", {"textDocument": {"uri": tu}})
     diags = flushed(c, tu)[0]
     ok("the test file closed: its mistake cleared", diags == {tu: []}, diags)
+
+    # the policy's diff opened beside it: its left side is the policy as committed, under another scheme (git:) and
+    # the same path. The test file is still checked against the policy being typed, and once the diff is closed too.
+    # (The policy is open under a spelling of its URI the server wouldn't make, as an editor on Windows may: only
+    # the open file's entry leads to what it holds.)
+    spelled = u.replace("policy.authz", "polic%79.authz")
+    committed = "git:" + Path(path).as_posix() + "?" + urllib.parse.quote(json.dumps({"path": path, "ref": "~"}))
+    for opened, body in ((spelled, vew), (tu, bad)):
+        c.notify(
+            "textDocument/didOpen", {"textDocument": {"uri": opened, "languageId": "authz", "version": 1, "text": body}}
+        )
+    clean("the policy open as the editor spells it: its test file is checked against it", c, tu)
+    c.notify(
+        "textDocument/didOpen",
+        {"textDocument": {"uri": committed, "languageId": "authz", "version": 1, "text": policy}},
+    )
+    diags = flushed(c, tu)[0]
+    ok("the policy's diff opened: its test file is still checked against the open policy", diags.get(tu) == [], diags)
+    c.notify("textDocument/didClose", {"textDocument": {"uri": committed}})
+    diags = flushed(c, tu)[0]
+    ok("... and once the diff is closed", diags.get(tu) == [], diags)
+    for opened in (spelled, tu):
+        c.notify("textDocument/didClose", {"textDocument": {"uri": opened}})
     c.close()
 
     # rowstile.toml names a variable for the database that the editor's environment doesn't have, a database the

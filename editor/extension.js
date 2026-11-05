@@ -15,9 +15,11 @@ function start() {
   // what holds a space is quoted.
   const windows = process.platform === "win32";
   const word = (/** @type {string} */ s) => (windows && /\s/.test(s) && !s.startsWith('"') ? `"${s}"` : s);
+  // Files, and new ones not saved yet; not the other side of a diff (git:), which has the file's path
+  const documentSelector = ["file", "untitled"].map((scheme) => ({ scheme, language: "authz" }));
   const started = new LanguageClient("rowstile", "rowstile",
     { command: word(command), args: args.map(word), options: { cwd, shell: windows } },
-    { documentSelector: [{ language: "authz" }] });
+    { documentSelector });
   client = started;
   const run = started.start();
   starting = run.then(() => undefined, () => undefined);

@@ -178,7 +178,7 @@ class Server:
         self.read: object = None  # what rowstile.toml held when last read, to see it change
         self.marked: str | None = None  # the uri of the rowstile.toml its mistake is shown on
         self.docs: dict[str, str] = {}  # uri -> text
-        self.open: dict[str, str] = {}  # the open files: same_file(path) -> the uri the editor calls it by
+        self.open: dict[str, str] = {}  # the open files (file:): same_file(path) -> the uri the editor calls it by
         self.sent: dict[str, set[str]] = {}  # uri checked -> the uris its last check published problems for
         # uri -> last policy that parsed: (pol, files, main path)
         self.models: dict[str, tuple[Policy, dict[str, str], str]] = {}
@@ -403,7 +403,9 @@ class Server:
         """A file closed: what its checks marked, and no other open file's did, is cleared (an editor keeps the
         last diagnostics it was sent); the open files are checked again if the policy was read from it."""
         self.docs.pop(uri, None)
-        self.open.pop(same_file(uri_path(uri)), None)
+        key = same_file(uri_path(uri))
+        if self.open.get(key) == uri:  # (a view of the file under another scheme never was the file)
+            del self.open[key]
         self.models.pop(uri, None)
         marked = self.sent.pop(uri, set()) | {uri}
         for target in marked - set().union(*self.sent.values()):
@@ -872,9 +874,13 @@ class Server:
             return
         elif method == "textDocument/didOpen":
             doc = obj(params.get("textDocument"))
-            self.docs[text(doc, "uri")] = text(doc, "text")
-            self.open[same_file(uri_path(text(doc, "uri")))] = text(doc, "uri")
-            self.check_with_tests(text(doc, "uri"))
+            uri = text(doc, "uri")
+            self.docs[uri] = text(doc, "text")
+            if uri.startswith("file:"):
+                # a file, not another view of it with the same path (a diff's git: side): that one holds what was
+                # committed, and the file stays what the editor shows
+                self.open[same_file(uri_path(uri))] = uri
+            self.check_with_tests(uri)
         elif method == "textDocument/didChange":
             uri = text(obj(params.get("textDocument")), "uri")
             changes = params.get("contentChanges")

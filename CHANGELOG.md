@@ -103,6 +103,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- The VS Code extension (0.1.5) sends the language server files only, and new ones not saved yet. The left side of
+  a diff has the file's path, and while it was open the test files were checked against the policy as committed,
+  not as typed. The language server keeps to the file too when another editor sends such a view of it.
 - VS Code leaves a relation named with a block's first word (`scope : user shared`) where it is typed. It moved it
   back to the margin, where the compiler refused it.
 - `rowstile init --role` refuses a name the policy's app role line can't hold (a space, a quote), before connecting.

@@ -1,12 +1,17 @@
 // extension.js against stand-ins for VS Code and its language client (node extension_test.js; editor/test.sh):
-// a server that doesn't start says what to do, a new rowstile.command starts it again, and it stops once.
+// a server that doesn't start says what to do, a new rowstile.command starts it again, and it stops once; only files
+// go to it.
 // Plain JavaScript, typed with JSDoc and checked strictly (editor/tsconfig.json).
 const assert = require("node:assert/strict");
 const Module = require("node:module");
 
 /** What the extension did, and what the stand-ins answer. */
 const world = {
-  /** @type {{command: string, args: string[], cwd: string | undefined}[]} */ clients: [],
+  /** @type {{command: string, args: string[], cwd: string | undefined, shell: boolean | undefined}[]} */ clients: [],
+  /** @type {LanguageClient[]} */ made: [],
+  /** @type {OutputChannel[]} */ channels: [],
+  /** @type {boolean} */ trusted: true,
+  /** @type {(() => unknown)[]} */ granted: [],
   /** @type {string[]} */ stops: [],
   /** @type {(string | undefined)[][]} */ errors: [],
   /** @type {unknown[][]} */ commands: [],
@@ -17,16 +22,47 @@ const world = {
   /** @type {((event: {affectsConfiguration: (name: string) => boolean}) => Promise<void>)[]} */ listeners: [],
 };
 
+class OutputChannel {
+  constructor() {
+    this.disposed = false;
+    world.channels.push(this);
+  }
+  dispose() {
+    this.disposed = true;
+  }
+}
+
+/**
+ * @typedef {{command: string, args: string[], options: {cwd?: string, shell?: boolean}}} Server
+ * @typedef {{documentSelector: unknown[], outputChannel?: OutputChannel}} Options
+ */
 class LanguageClient {
-  /** @param {string} _id @param {string} _name @param {{command: string, args: string[], options: {cwd?: string}}} server */
-  constructor(_id, _name, server) {
+  /** @param {string} _id @param {string} _name @param {Server} server @param {Options} options */
+  constructor(_id, _name, server, options) {
     this.command = server.command;
+    this.options = options;
     this.running = false;
     this.stopped = false;
-    world.clients.push({ command: server.command, args: server.args, cwd: server.options.cwd });
+    this.ownChannel = false;
+    /** the client makes its diagnostics when it starts; @type {OutputChannel | undefined} */
+    this.diagnostics = undefined;
+    world.made.push(this);
+    world.clients.push({ command: server.command, args: server.args, cwd: server.options.cwd, shell: server.options.shell });
+  }
+  /** its own channel, unless it was given one */
+  get outputChannel() {
+    if (this.options.outputChannel === undefined) {
+      this.options.outputChannel = new OutputChannel();
+      this.ownChannel = true;
+    }
+    return this.options.outputChannel;
   }
   start() {
-    if (world.startFails !== undefined) return Promise.reject(world.startFails);
+    this.diagnostics ??= new OutputChannel();
+    if (world.startFails !== undefined) {
+      this.outputChannel;   // where it says it couldn't start
+      return Promise.reject(world.startFails);
+    }
     // a server takes a moment to start (npx, a Python): until then the client is starting, not running
     return new Promise((resolve) => setTimeout(() => {
       this.running = true;
@@ -42,6 +78,9 @@ class LanguageClient {
     if (!this.running && !this.stopped) throw new Error("Client is not running and can't be stopped");
     this.running = false;
     this.stopped = true;
+    // as vscode-languageclient 9 does: its diagnostics go, and its log if it made it
+    this.diagnostics?.dispose();
+    if (this.ownChannel) this.options.outputChannel?.dispose();
     world.stops.push(this.command);
     return Promise.resolve();
   }
@@ -50,6 +89,14 @@ class LanguageClient {
 const vscode = {
   workspace: {
     workspaceFolders: [{ uri: { fsPath: "/work/app" } }],
+    get isTrusted() {
+      return world.trusted;
+    },
+    /** @param {() => unknown} listener */
+    onDidGrantWorkspaceTrust: (listener) => {
+      world.granted.push(listener);
+      return { dispose: () => world.granted.splice(world.granted.indexOf(listener), 1) };
+    },
     getConfiguration: () => ({ get: () => world.setting }),
     /** @param {(event: {affectsConfiguration: (name: string) => boolean}) => Promise<void>} listener */
     onDidChangeConfiguration: (listener) => {
@@ -58,6 +105,7 @@ const vscode = {
     },
   },
   window: {
+    createOutputChannel: () => new OutputChannel(),
     /** @param {string} message @param {string[]} items */
     showErrorMessage: (message, ...items) => {
       world.errors.push([message, ...items]);
@@ -94,7 +142,8 @@ const shutdown = async (subscriptions) => {
 
 /** @param {string} name @param {() => Promise<void>} body */
 async function check(name, body) {
-  Object.assign(world, { clients: [], stops: [], errors: [], commands: [], listeners: [] });
+  Object.assign(world, { clients: [], made: [], channels: [], stops: [], errors: [], commands: [], listeners: [], granted: [] });
+  world.trusted = true;
   Object.assign(world, { setting: ["rowstile", "lsp"], startFails: undefined, choice: undefined, startMs: 0 });
   try {
     await body();
@@ -133,8 +182,8 @@ async function check(name, body) {
     await change("rowstile.command");
     assert.deepEqual(world.stops, ["rowstile"]);
     assert.deepEqual(world.clients, [
-      { command: "rowstile", args: ["lsp"], cwd: "/work/app" },
-      { command: "npx", args: ["--no", "rowstile", "lsp"], cwd: "/work/app" },
+      { command: "rowstile", args: ["lsp"], cwd: "/work/app", shell: false },
+      { command: "npx", args: ["--no", "rowstile", "lsp"], cwd: "/work/app", shell: false },
     ]);
     await shutdown(subscriptions);
     assert.deepEqual(world.stops, ["rowstile", "npx"]);
@@ -160,4 +209,16 @@ async function check(name, body) {
     assert.deepEqual(world.stops, ["rowstile"]);
     assert.deepEqual(world.errors, []);
   });
+
+  await check("only files go to the server, and new ones not saved yet: not a diff's other side (git:)", async () => {
+    /** @type {{dispose: () => unknown}[]} */ const subscriptions = [];
+    extension.activate(/** @type {any} */ ({ subscriptions }));
+    await settle();
+    assert.deepEqual(world.made[0]?.options.documentSelector, [
+      { scheme: "file", language: "authz" },
+      { scheme: "untitled", language: "authz" },
+    ]);
+    await shutdown(subscriptions);
+  });
+
 })();
