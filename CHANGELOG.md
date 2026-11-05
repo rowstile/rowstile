@@ -155,6 +155,9 @@ change in any release, and the SDKs not on a registry yet install from the repos
 
 ### Fixed
 
+- `rowstile prove` and the review's refactor check: a relation on the type's own key (`self : user = id`) holds
+  on every row's own, in every world they try. They could report a counterexample where it didn't, which no
+  database can hold.
 - The pages of the SDKs that aren't on a registry yet install them from the repository: the Rails, ASP.NET Core,
   Laravel and Phoenix pages, and the .NET, Rust and Elixir SDKs' own, named packages RubyGems, NuGet, Packagist,
   Hex and crates.io don't have. The README and `llms.txt` list every stack page, and the guide every migration tool.

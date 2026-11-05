@@ -552,6 +552,9 @@ class World:
         """The links a column holds, one per row at most: the same whatever reads them (its relation, or a simple
         condition on the column)."""
         targets = self.ids(st) if st in pol.types else ["1"]
+        if col == pol.types[tname].pk:
+            # the row's own key (`self : user = id`): every row names itself, in every world
+            return [(o, o) for o in ids if o in targets]
         if self.chained and (tname, rname) in self.followed(pol):
             return self.chain(ids, targets)
         return self.pick(
