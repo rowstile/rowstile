@@ -1,8 +1,9 @@
 // extension.js against stand-ins for VS Code and its language client (node extension_test.js; editor/test.sh):
 // a server that doesn't start says what to do, a new rowstile.command starts it again, and it stops once; only files
-// go to it.
+// go to it; on Windows it starts through cmd.exe; in Restricted Mode it doesn't start.
 // Plain JavaScript, typed with JSDoc and checked strictly (editor/tsconfig.json).
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const Module = require("node:module");
 
 /** What the extension did, and what the stand-ins answer. */
@@ -221,4 +222,79 @@ async function check(name, body) {
     await shutdown(subscriptions);
   });
 
+  await check("two new rowstile.command while the server starts: one server is left, the last command's", async () => {
+    world.startMs = 30;
+    /** @type {{dispose: () => unknown}[]} */ const subscriptions = [];
+    extension.activate(/** @type {any} */ ({ subscriptions }));
+    world.setting = ["npx", "--no", "rowstile", "lsp"];
+    const first = change("rowstile.command");
+    world.setting = [".venv/bin/rowstile", "lsp"];
+    await Promise.all([first, change("rowstile.command")]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(world.made.filter((c) => c.running).map((c) => c.command), [".venv/bin/rowstile"]);
+    await shutdown(subscriptions);
+    assert.deepEqual(world.made.filter((c) => !c.stopped).map((c) => c.command), [], "every server started is stopped");
+  });
+
+  await check("a server that doesn't start leaves nothing open: every server writes to one log, closed at the end", async () => {
+    world.startFails = "Launching server using command rowstile failed. Error: spawn rowstile ENOENT";
+    /** @type {{dispose: () => unknown}[]} */ const subscriptions = [];
+    extension.activate(/** @type {any} */ ({ subscriptions }));
+    await settle();
+    world.startFails = undefined;
+    world.setting = ["npx", "--no", "rowstile", "lsp"];
+    await change("rowstile.command");
+    await settle();
+    assert.equal(world.made.length, 2);
+    assert.equal(world.made[0]?.diagnostics?.disposed, true, "the problems of the server that didn't start");
+    assert.ok(world.made[0]?.options.outputChannel === world.made[1]?.options.outputChannel, "one log");
+    await shutdown(subscriptions);
+    assert.deepEqual(world.channels.filter((c) => !c.disposed).length, 0, "the log and the problems are closed");
+  });
+
+  await check("on Windows the command goes through cmd.exe, each word cmd.exe would split on quoted", async () => {
+    const platform = /** @type {PropertyDescriptor} */ (Object.getOwnPropertyDescriptor(process, "platform"));
+    Object.defineProperty(process, "platform", { value: "win32" });
+    /** @type {{dispose: () => unknown}[]} */ const subscriptions = [];
+    try {
+      world.setting = ["C:\\Users\\R&D\\AppData\\Roaming\\npm\\rowstile.cmd", "lsp"];
+      extension.activate(/** @type {any} */ ({ subscriptions }));
+      await settle();
+      world.setting = ["C:\\Program Files\\Python\\python.exe", "C:\\src\\rowstile (2)\\core\\cli\\rowstile_cli.py", "lsp"];
+      await change("rowstile.command");
+      world.setting = ['"C:\\Program Files\\rowstile\\rowstile.cmd"', "lsp"];
+      await change("rowstile.command");
+      await shutdown(subscriptions);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+    assert.deepEqual(world.clients, [
+      { command: '"C:\\Users\\R&D\\AppData\\Roaming\\npm\\rowstile.cmd"', args: ["lsp"], cwd: "/work/app", shell: true },
+      {
+        command: '"C:\\Program Files\\Python\\python.exe"',
+        args: ['"C:\\src\\rowstile (2)\\core\\cli\\rowstile_cli.py"', "lsp"],
+        cwd: "/work/app",
+        shell: true,
+      },
+      { command: '"C:\\Program Files\\rowstile\\rowstile.cmd"', args: ["lsp"], cwd: "/work/app", shell: true },
+    ]);
+  });
+
+  await check("in Restricted Mode the server doesn't start; it starts once the folder is trusted", async () => {
+    const manifest = JSON.parse(fs.readFileSync(`${__dirname}/package.json`, "utf8"));
+    assert.equal(manifest.capabilities?.untrustedWorkspaces?.supported, "limited", "package.json says so");
+    world.trusted = false;
+    /** @type {{dispose: () => unknown}[]} */ const subscriptions = [];
+    extension.activate(/** @type {any} */ ({ subscriptions }));
+    await settle();
+    world.setting = ["npx", "--no", "rowstile", "lsp"];
+    await change("rowstile.command");
+    assert.equal(world.clients.length, 0, "no server");
+    world.trusted = true;
+    for (const listener of [...world.granted]) await listener();
+    await settle();
+    assert.deepEqual(world.clients.map((c) => c.command), ["npx"]);
+    await shutdown(subscriptions);
+    assert.deepEqual(world.stops, ["npx"]);
+  });
 })();

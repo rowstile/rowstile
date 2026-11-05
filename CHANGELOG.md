@@ -96,6 +96,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   transaction, and its answer was about the row as it was then.
 - The PHP SDK's `permitted` compares a uuid key (a model with `HasUuids`) as uuid, so its index is used. Before, it
   cast the column to text, and the query read the whole table.
+- The VS Code extension (0.1.5) works in Restricted Mode: `.authz` files are highlighted there, and the language
+  server starts once the folder is trusted (it runs the program `rowstile.command` names). The extension was
+  turned off there, its highlighting too.
 
 ### Removed
 
@@ -572,6 +575,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - In a Laravel app, a model's `increment`, `decrement`, `incrementEach`, `decrementEach` and `forceDelete` that
   change no row say why, as its update and delete do: `Rowstile\NotFound` or `Rowstile\Refused`. Before, they
   changed nothing and said nothing.
+- The VS Code extension (0.1.5) leaves one language server running when `rowstile.command` changes twice while a
+  server starts: another was left running beside it, its mistakes shown twice. A server that didn't start leaves no
+  log or problems behind: every server writes to one log, `rowstile`.
+- On Windows, the VS Code extension (0.1.5) quotes a word of `rowstile.command` that holds `&`, `|`, `<`, `>`, `^`,
+  `(` or `)`, as it did one with a space: `cmd.exe` read them (a folder `R&D`, say).
 
 ### Upgrading
 
