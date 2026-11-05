@@ -147,7 +147,8 @@ func conn(db any) *pgx.Conn {
 	return nil
 }
 
-// name is how the database's refusals name who: "user 42", "service 3", or "nobody".
+// name is how the SDK's own errors name who: "user 42", "service 3", or "nobody" (the database's refusals say
+// "someone not signed in").
 func name(who Principal) string {
 	if who.IsNobody() {
 		return "nobody"
