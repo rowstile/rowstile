@@ -108,7 +108,7 @@ check "the readers table has the type's key columns, typed as its key, then key"
   "SELECT array_agg(a.attname || ' ' || format_type(a.atttypid, NULL) ORDER BY a.attnum) = '{\"id bigint\",\"key text\"}'
    FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__readers'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
 check "every table of the index has REPLICA IDENTITY FULL, as Electric asks" \
-  "SELECT bool_and(c.relreplident = 'f') AND count(*) = 6 FROM pg_class c WHERE c.relnamespace = 'authz_sync'::regnamespace AND c.relkind = 'r'"
+  "SELECT bool_and(c.relreplident = 'f') AND count(*) = 7 FROM pg_class c WHERE c.relnamespace = 'authz_sync'::regnamespace AND c.relkind = 'r'"
 check "an org admin holds the org's group key, and a team's member its team's and the teams it sits in" \
   "SELECT EXISTS (SELECT 1 FROM authz_sync.keys WHERE principal_id = '5' AND key = 'org#admin:1')
       AND EXISTS (SELECT 1 FROM authz_sync.keys WHERE principal_id = '7' AND key = 'team#member:10')"
@@ -147,6 +147,53 @@ check "authz.sync_tick() works out again the readers of the shares that ended or
 same "... and the index holds what authz.list gives, after the tick"
 check "run again, it finds nothing new" "SELECT authz.sync_tick() = 0"
 PSQL -c "DELETE FROM authz.shares WHERE subject_id = '6' AND (expires_at IS NOT NULL OR starts_at IS NOT NULL)"
+# a writer's transaction open while a share ends or begins, and a tick meanwhile: the writer works the share out as
+# of when it began, after the tick (which can't see a share not committed yet); the next tick works it out again
+timed() {   # $1 the share's column, $2 its object, $3 its user: at the start of the writer's transaction, plus 1us
+  echo "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, $1)
+        VALUES ('file', '$2', 'viewer', 'user', '$3', now() + interval '1 microsecond')"
+}
+race
+PGAPPNAME=authz_sync_a psql -X -q -v ON_ERROR_STOP=1 -d "$DB" > "$T/a" 2>&1 <<SQL &
+BEGIN;
+$(timed expires_at 13 6);
+$(timed starts_at 12 6);
+$HOLD;
+COMMIT;
+SQL
+held authz_sync_a
+PSQL -c "SELECT authz.sync_tick()" >/dev/null
+go; wait
+[ "$(reads 6 13)$(reads 6 12)" = tf ] &&
+  ok "shares made by a writer open across their end and their start, and a tick: the index holds them as the writer saw them" ||
+  bad "a writer open across a tick" "$(reads 6 13)$(reads 6 12) $(cat "$T/a")"
+check "... and the next authz.sync_tick() works them out again: both" "SELECT authz.sync_tick() = 2"
+[ "$(reads 6 13)$(reads 6 12)" = ft ] && ok "... file 13 is gone, file 12 is there" || bad "the tick after the writer" "$(reads 6 13)$(reads 6 12)"
+same "... and the index holds what authz.list gives"
+check "... and authz.sync_verify() finds it current" "SELECT authz.sync_verify()"
+PSQL -c "DELETE FROM authz.shares WHERE subject_id = '6'"
+# a share that ends while a writer's transaction is open, the writer then writing on its object after the tick
+race
+PGAPPNAME=authz_sync_a psql -X -q -v ON_ERROR_STOP=1 -d "$DB" > "$T/a" 2>&1 <<SQL &
+BEGIN;
+SELECT 1;
+$HOLD;
+INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('file', '13', 'viewer', 'user', '3');
+COMMIT;
+SQL
+held authz_sync_a
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
+         SELECT 'file', '13', 'viewer', 'user', '6', a.xact_start + interval '1 microsecond' FROM pg_stat_activity a
+         WHERE a.datname = current_database() AND a.application_name = 'authz_sync_a'"
+PSQL -c "SELECT authz.sync_tick()" >/dev/null
+go; wait
+[ "$(reads 6 13)$(reads 3 13)" = tt ] &&
+  ok "a share that ended after a writer began, the writer writing on its object after a tick: it works the share out as of when it began" ||
+  bad "a writer open across the end" "$(reads 6 13)$(reads 3 13) $(cat "$T/a")"
+check "... and the next authz.sync_tick() works it out again" "SELECT authz.sync_tick() = 1"
+[ "$(reads 6 13)$(reads 3 13)" = ft ] && ok "... frank no longer reads file 13, carol still does" || bad "the tick after the writer" "$(reads 6 13)$(reads 3 13)"
+same "... and the index holds what authz.list gives"
+PSQL -c "DELETE FROM authz.shares WHERE subject_id IN ('3', '6')"
 
 echo "-- moves"
 before=$(PSQL -c "SELECT string_agg(u.id::text, ',' ORDER BY u.id) FROM app.users u WHERE '11' = ANY (public.sync_reads(u.id::text, 'file'))")

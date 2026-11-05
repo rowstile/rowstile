@@ -34,6 +34,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   sources other than columns is now `doc__r:ext`, apart from the view of an arrow to a permission named `ext`
   (`r.ext`, `doc__r__ext`), and an arrow followed to some of its types joins them with `__` (`__on_a__b`). The
   compiler fails rather than give one name to two views.
+- The sync index, a preview: a share that starts or ends while a writer's transaction is open is worked out again
+  by the first `authz.sync_tick()` after that transaction commits, even when a tick ran meanwhile. Before, the index
+  kept what the writer worked out (a reader whose share had ended, or none for one that had begun) until something
+  else changed that object. The index keeps each object's next share start or end in `authz_sync.due`; applying
+  works the index out once again to fill it.
 
 ### Upgrading
 
