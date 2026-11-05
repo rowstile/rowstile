@@ -18797,6 +18797,88 @@ class Delivery(unittest.TestCase):
             # by hand, a dry run anywhere
             self.assertEqual(self.tag_check(d, "0.3.0-dev", other, "workflow_dispatch")[::2], (0, "none"))
 
+    def test_a_tag_is_published_once_every_suite_passed_on_it(self) -> None:
+        # RELEASING.md: a release's commit, rebased onto main with main's next version after it, has no CI run of its
+        # own; the next one's, green, holds it when the two differ only by the version (the files version.py sets)
+        job = self.release_jobs()["check"]
+        self.assertIn("    permissions: {contents: read, actions: read}\n", job)
+        self.assertIn("      - id: ci\n        if: github.event_name == 'push'\n", job)
+        self.assertLess(job.index("      - id: ci\n"), job.index("      - run: python3 core/tests/unit_test.py\n"))
+        step = textwrap.dedent(self.step_script(job, "ci"))
+        with tempfile.TemporaryDirectory() as d:
+            repo, stubs = os.path.join(d, "repo"), os.path.join(d, "bin")
+            os.makedirs(os.path.join(repo, "packaging"))
+            os.mkdir(stubs)
+            git = {
+                "PATH": stubs + os.pathsep + os.environ["PATH"],
+                "HOME": d,
+                **dict.fromkeys(("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"), "t"),
+                **dict.fromkeys(("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"), "t@example.com"),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+            }
+
+            def commit(files: dict[str, str], message: str) -> str:
+                for name, text in files.items():
+                    with open(os.path.join(repo, name), "w", encoding="utf-8") as fh:
+                        fh.write(text)
+                subprocess.run(["git", "add", "-A"], cwd=repo, env=git, check=True)
+                subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo, env=git, check=True)
+                return subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=repo, env=git, check=True, capture_output=True, text=True
+                ).stdout.strip()
+
+            # a version.py that sets the version in its one file, as the real one sets it in each of its files
+            stub = "import pathlib, sys\n(pathlib.Path(__file__).parent.parent / 'VERSION').write_text(sys.argv[1] + '\\n')\n"
+            subprocess.run(["git", "init", "-q"], cwd=repo, env=git, check=True)
+            base = commit({"packaging/version.py": stub, "VERSION": "0.2.0-dev\n", "app.txt": "a\n"}, "base")
+            release = commit({"VERSION": "0.2.0\n", "app.txt": "b\n"}, "0.2.0")
+            dev = commit({"VERSION": "0.3.0-dev\n"}, "0.3.0-dev")
+            later = commit({"app.txt": "c\n"}, "a fix")
+            subprocess.run(["git", "checkout", "-q", "--detach", release], cwd=repo, env=git, check=True)
+            # gh: the runs RUNS names, and what it was asked
+            with open(os.path.join(stubs, "gh"), "w", encoding="utf-8") as fh:
+                fh.write('#!/bin/sh\necho "$@" >> "$ASKED"\nprintf "%s" "$RUNS"\n')
+            os.chmod(os.path.join(stubs, "gh"), 0o755)
+
+            def green(runs: list[tuple[int, str]], branches: str = "main") -> tuple[int, str]:
+                asked = os.path.join(d, "asked")
+                env = {
+                    **git,
+                    "GH_TOKEN": "t",
+                    "GITHUB_REPOSITORY": "rowstile/rowstile",
+                    "BRANCHES": branches,
+                    "VERSION": "0.2.0",
+                    "RUNS": "".join(f"{i} {sha}\n" for i, sha in runs),
+                    "ASKED": asked,
+                    "TMPDIR": d,
+                }
+                p = subprocess.run(
+                    ["bash", "-e", "-c", step], cwd=repo, env=env, capture_output=True, text=True, timeout=60
+                )
+                subprocess.run(["git", "worktree", "prune"], cwd=repo, env=git, check=True)
+                with open(asked, encoding="utf-8") as fh:
+                    for line in fh.read().splitlines():
+                        self.assertRegex(line, r"^api repos/rowstile/rowstile/actions/workflows/ci\.yml/runs\?branch=")
+                        self.assertIn("&event=push&status=success&", line)
+                os.remove(asked)
+                return p.returncode, p.stdout
+
+            # main's next version, green: the release's commit but for its version
+            self.assertEqual(
+                green([(9, later), (8, dev)]),
+                (0, f"every suite passed on {dev}, this commit but for its version (ci.yml's run 8)\n"),
+            )
+            # the commit itself, on its release line
+            self.assertEqual(green([(7, release)], "main release/0.2")[0], 0)
+            # none yet; a later commit that changed more; one before it
+            refused = (
+                f"::error::no green run of ci.yml on a push to main is on {release}, or on a later commit that is it "
+                "but for its version: run this workflow again once CI is green on the release's commits (RELEASING.md)\n"
+            )
+            for runs in ([], [(9, later)], [(1, base)]):
+                self.assertEqual(green(runs), (1, refused), runs)
+
     def test_what_is_published_is_built_where_nothing_can_be_written(self) -> None:
         # a job that can publish (a right to write, or an environment's secrets and trust) runs no build: an install
         # script or a build tool could publish under rowstile's name with the job's token. It publishes the files a

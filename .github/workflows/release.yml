@@ -1,6 +1,7 @@
 # Publishes a version (RELEASING.md): set it with `python3 packaging/version.py X.Y.Z` (or X.Y.Z-alpha.N,
 # X.Y.Z-beta.N, X.Y.Z-rc.N), commit,
-# push the tag vX.Y.Z on a commit of main or of release/X.Y. A -dev version (main between releases) is refused.
+# push the tag vX.Y.Z on a commit of main or of release/X.Y, once CI is green on it (its version aside: below). A -dev
+# version (main between releases) is refused.
 # It publishes to PyPI and npm (trusted publishing: no token; PyPI with its attestations, npm with provenance), the
 # image on ghcr.io (with its provenance), and a GitHub release that holds the wheel, the sdist, the launcher and the
 # editor extension (.vsix) with their provenance (.intoto.jsonl); the docs site is site.yml's (GitHub Pages). Each
@@ -33,6 +34,8 @@ jobs:
     if: ${{ !inputs.latest }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # actions: read, for ci.yml's runs (below)
+    permissions: {contents: read, actions: read}
     outputs:
       version: ${{ steps.v.outputs.version }}
       publish: ${{ steps.v.outputs.publish }}
@@ -52,11 +55,12 @@ jobs:
             line=$(cut -d. -f1-2 <<< "$version")
             on=
             for branch in main "release/$line"; do
-              if git merge-base --is-ancestor HEAD "refs/remotes/origin/$branch" 2>/dev/null; then on=$branch; fi
+              if git merge-base --is-ancestor HEAD "refs/remotes/origin/$branch" 2>/dev/null; then on="$on $branch"; fi
             done
             [ -n "$on" ] || { echo "the tag $GITHUB_REF_NAME is on a commit of neither main nor release/$line (RELEASING.md)"; exit 1; }
             # its notes: CHANGELOG.md has its section, and nothing is left under Unreleased
             python3 packaging/changelog.py --tagged "$version" > /dev/null
+            echo "branches=${on# }" >> "$GITHUB_OUTPUT"
             publish=public
           else
             publish=none
@@ -65,6 +69,34 @@ jobs:
           tag=$(python3 packaging/version.py --dist-tag)
           echo "version $version: publish $publish, npm tag $tag"
           { echo "version=$version"; echo "publish=$publish"; echo "npm-tag=$tag"; } >> "$GITHUB_OUTPUT"
+      # every suite passed on it: ci.yml's run of a push to its branch, green, on this commit or on a later one of
+      # that branch that is this one but for its version. Rebased onto main, the release pull request's first commit has
+      # no run of its own: its second, main's next version, has (RELEASING.md). Tagged before that run is green, it
+      # stops here, and runs again once it is
+      - id: ci
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCHES: ${{ steps.v.outputs.branches }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          tagged=$(git rev-parse HEAD)
+          runs=$(for branch in $BRANCHES; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=$branch&event=push&status=success&per_page=100" \
+              --jq '.workflow_runs[] | "\(.id) \(.head_sha)"'
+          done)
+          tree=$(mktemp -d)/tree
+          while read -r id sha; do
+            [ -n "$sha" ] && git merge-base --is-ancestor "$tagged" "$sha" 2>/dev/null || continue
+            git worktree add -q --detach "$tree" "$sha"
+            if python3 "$tree/packaging/version.py" "$VERSION" > /dev/null 2>&1 && git -C "$tree" diff --quiet "$tagged"; then
+              echo "every suite passed on $sha, this commit but for its version (ci.yml's run $id)"
+              exit 0
+            fi
+            git worktree remove --force "$tree"
+          done <<< "$runs"
+          echo "::error::no green run of ci.yml on a push to $BRANCHES is on $tagged, or on a later commit that is it but for its version: run this workflow again once CI is green on the release's commits (RELEASING.md)"
+          exit 1
       - run: python3 core/tests/unit_test.py
       # arm64 under emulation, for the npm packages' and the image's packaging tests; the binfmt image by digest (Dependabot doesn't move it)
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1   # v4.4.0
