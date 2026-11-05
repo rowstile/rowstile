@@ -263,6 +263,9 @@ class SdkTest < ActionDispatch::IntegrationTest
   test "keys, words and verdicts" do
     shown = [7, [7], [1, 2], ["a b", "x,y"], ["", 'q"t'], ["b\\s", "(1)"], [1, nil], nil].map { |k| Rowstile.key_text(k) }
     assert_equal ["7", "7", "(1,2)", '("a b","x,y")', '("","q""t")', '("b\\\\s","(1)")', "(1,)", nil], shown
+    # a field quoted for ASCII's six spaces alone, as Postgres does: not for a no-break space, an em space
+    assert_equal ["(\"\vv\",a\u00a0b)", "(\u2003\x1c,\"\r\n\f\")"],
+                 [["\vv", "a\u00a0b"], ["\u2003\x1c", "\r\n\f"]].map { |k| Rowstile.key_text(k) }
     assert_equal ["not found", "app.x not found", "row 7 not found"],
                  [Rowstile::NotFound.new, Rowstile::NotFound.new("app.x"), Rowstile::NotFound.new(nil, 7)].map(&:message)
     refused = Rowstile.verdict("app.members", "delete", [1, 2], [], "service 3")
