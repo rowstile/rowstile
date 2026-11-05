@@ -253,6 +253,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile diff` waits for an apply, push or remove running at once, as they wait for each other, instead of the
   two meeting in the middle and one stopping with "deadlock detected". The docs now say that it holds the app's
   tables locked while it runs: run it on a copy or a staging database, not on production at its busiest.
+- A migration run a statement at a time (`psql -f` without `-1`), refused (AZ615) with its session made
+  read-only, puts the session's setting back in its last statement: a pooler's connection doesn't go on to the next
+  client read-only.
 - The second of two migrations, which swaps in an inheritance table built beside the one in use, computes the table
   again when the change feed was trimmed meanwhile of the entries of a transaction still open when the first one
   ran. Before, it could miss what that transaction changed. `authz.trim_changes()` records the transaction its trim

@@ -7,6 +7,7 @@ SELECT pg_catalog.set_config('authz_ctx.migration', 'd3ce5a3c75632b56', true);
 DO $authz_tx$
 BEGIN
   IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM 'd3ce5a3c75632b56' THEN
+    PERFORM pg_catalog.set_config('authz_migration.read_only', pg_catalog.current_setting('default_transaction_read_only'), false);
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
@@ -14,7 +15,7 @@ DO $authz_tx$
 BEGIN
   IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM 'd3ce5a3c75632b56' THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
-      USING HINT = 'nothing was changed, and this session is read-only from here on; run the file with your migration tool, or with psql -1 -f';
+      USING HINT = 'nothing was changed, and this session is read-only until the migration''s last statement; run the file with your migration tool, or with psql -1 -f';
   END IF;
 END $authz_tx$;
 
@@ -1096,3 +1097,12 @@ test
   user 5 cannot edit file 16   -- links pass on view rights only
 $authz_policy$,
   $authz_files${}$authz_files$::jsonb, 'BUILD', 'd3ce5a3c75632b56');
+
+-- the session made read-only above (its statements committed one by one) is as it was again
+DO $authz_tx$
+BEGIN
+  IF pg_catalog.current_setting('authz_migration.read_only', true) <> '' THEN
+    PERFORM pg_catalog.set_config('default_transaction_read_only', pg_catalog.current_setting('authz_migration.read_only'), false);
+    PERFORM pg_catalog.set_config('authz_migration.read_only', '', false);
+  END IF;
+END $authz_tx$;

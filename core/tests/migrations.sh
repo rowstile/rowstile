@@ -265,13 +265,17 @@ RACE_DB=${DB}_2 go; wait
 [ ! -s "$T/build.log" ] && ok "... and it finishes" || bad "build" "$(cat "$T/build.log")"
 echo "$build" >> "$T/applied_${DB}_2"
 # a statement at a time (psql -f alone, which also goes on after an error): refused before anything changes, where
-# the swap would stop half way with the old trees dropped
-out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -d "${DB}_2" -f "$swap" 2>&1)
+# the swap would stop half way with the old trees dropped. The session is read-only until the migration's last
+# statement, which puts the setting back: a pooler's connection, handed to another client next, doesn't keep it
+out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "${DB}_2" -f "$swap" \
+        -c "SELECT 'after it: read-only ' || current_setting('default_transaction_read_only')" 2>&1)
 case "$out" in *"must run in one transaction"*"[AZ615]"*)
   [ "$(PSQL -d "${DB}_2" -c "SELECT authz.verify()")" = t ] &&
   [ "$(PSQL -d "${DB}_2" -c "SELECT count(*) FROM pg_proc WHERE proname = 'folder__linked_into_parent__tree_verify'")" = 1 ] &&
   [ "$(PSQL -d "${DB}_2" -c "SELECT count(*) FROM authz_int.next_trees")" -ge 1 ] &&
-    ok "a migration run a statement at a time is refused (AZ615), and changes nothing" || bad "half a migration" "$(echo "$out" | head -n 5)";;
+    ok "a migration run a statement at a time is refused (AZ615), and changes nothing" || bad "half a migration" "$(echo "$out" | head -n 5)"
+  case "$out" in *"read-only transaction"*"after it: read-only off") ok "... read-only until its last statement, which puts the setting back";;
+    *) bad "the session after a migration run a statement at a time" "$(echo "$out" | tail -n 3)";; esac;;
   *) bad "a migration outside a transaction" "$(echo "$out" | head -n 5)";; esac
 out=$(migrate_db "${DB}_2" "$P/db/migrations") && [ "$(PSQL -d "${DB}_2" -c "SELECT authz.verify()")" = t ] &&
   [ "$(PSQL -d "${DB}_2" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 6 AND ancestor = 20")" = 1 ] &&

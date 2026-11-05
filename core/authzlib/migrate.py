@@ -338,12 +338,14 @@ class Migration:
 # A migration is one transaction: it uses temporary tables and settings that end with it, and its statements only
 # make sense together. Run a statement at a time (psql -f without -1: each one commits), a tree change would stop
 # half way with the old tree dropped. So it marks its transaction, and where the mark is gone by the next statement
-# it makes the session read-only first (psql goes on after an error unless told to stop) and then says so.
+# it makes the session read-only first (psql goes on after an error unless told to stop) and then says so. Its last
+# statement (ONE_TRANSACTION_END) puts the setting back: a pooler hands the connection to other clients next.
 ONE_TRANSACTION = """-- a migration is one transaction: outside one, nothing below changes anything
 SELECT pg_catalog.set_config('authz_ctx.migration', {mark}, true);
 DO $authz_tx$
 BEGIN
   IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM {mark} THEN
+    PERFORM pg_catalog.set_config('authz_migration.read_only', pg_catalog.current_setting('default_transaction_read_only'), false);
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
@@ -351,7 +353,15 @@ DO $authz_tx$
 BEGIN
   IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM {mark} THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
-      USING HINT = 'nothing was changed, and this session is read-only from here on; run the file with your migration tool, or with psql -1 -f';
+      USING HINT = 'nothing was changed, and this session is read-only until the migration''s last statement; run the file with your migration tool, or with psql -1 -f';
+  END IF;
+END $authz_tx$;"""
+ONE_TRANSACTION_END = """-- the session made read-only above (its statements committed one by one) is as it was again
+DO $authz_tx$
+BEGIN
+  IF pg_catalog.current_setting('authz_migration.read_only', true) <> '' THEN
+    PERFORM pg_catalog.set_config('default_transaction_read_only', pg_catalog.current_setting('authz_migration.read_only'), false);
+    PERFORM pg_catalog.set_config('authz_migration.read_only', '', false);
   END IF;
 END $authz_tx$;"""
 
@@ -745,6 +755,7 @@ END $authz_guard$;""")
             "-- the policy in force is the same; the next migration starts from here\n"
             f"UPDATE authz.policy_versions SET lock = {sql_lit(new_hash)} WHERE id = (SELECT max(id) FROM authz.policy_versions);"
         )
+        out.append(ONE_TRANSACTION_END)
         return "\n\n".join(x for x in out if x.strip()) + "\n"
     files = json.dumps(c.files or {}, sort_keys=True)
     out.append(
@@ -752,6 +763,7 @@ END $authz_guard$;""")
         "INSERT INTO authz.policy_versions (action, policy, files, version, lock)\n"
         f"VALUES ('apply', {dollar(c.policy)},\n  {dollar(files, 'authz_files')}::jsonb, {sql_lit(BUILD)}, {sql_lit(new_hash)});"
     )
+    out.append(ONE_TRANSACTION_END)
     return "\n\n".join(x for x in out if x.strip()) + "\n"
 
 
