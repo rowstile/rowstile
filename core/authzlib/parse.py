@@ -347,11 +347,11 @@ class CheckStep:
     text: str
     loc: Loc
     ptype: str  # the principal type, or 'anyone'
-    who: str | None  # an id or a $name (None for anyone)
+    who: str | None  # an id as written ('a b' in its quotes) or a $name (None for anyone)
     expect: bool  # can, or cannot
     perm: str
     type: str
-    obj: str  # an id or a $name
+    obj: str  # an id as written ('a b' in its quotes) or a $name
     scopes: tuple[str, ...] = ()  # `with scope a, b`: signed in limited to them, as a key with them is
     kind: Literal["check"] = field(default="check", init=False)
 
@@ -363,7 +363,7 @@ class AsStep:
     text: str
     loc: Loc
     ptype: str  # the principal type, or 'anyone'
-    who: str | None  # an id or a $name (None for anyone)
+    who: str | None  # an id as written ('a b' in its quotes) or a $name (None for anyone)
     expect: str | int  # 'allowed', 'refused', or how many rows the SELECT sees
     sql: str
     scopes: tuple[str, ...] = ()  # `with scope a, b`: signed in limited to them, as a key with them is
@@ -1692,15 +1692,14 @@ VALUE = re.compile(r"'(?:[^']|'')*'|[^\s{}']+")
 
 
 def test_value(w: Words) -> str:
-    """A test's id, after a space and before one: $name as written, a quoted literal unquoted, anything else as
-    is."""
+    """A test's id, after a space and before one, as written: $name, a 'quoted' literal in its quotes (one that
+    starts with $ is no name), anything else as is. The compiler reads it (TestMixin.value_sql)."""
     i = w.next_start()
     m = VALUE.match(w.text, i) if i > w.pos else None
     w.must(m is not None and (m.end() == len(w.text) or w.text[m.end()].isspace()))
     assert m is not None
     w.pos = m.end()
-    v = m.group(0)
-    return v[1:-1].replace("''", "'") if v.startswith("'") else v
+    return m.group(0)
 
 
 def scope_name(w: Words) -> tuple[str, tuple[int, int]]:

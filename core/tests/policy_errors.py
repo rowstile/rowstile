@@ -1679,6 +1679,14 @@ TESTS = [
         "AZ501",
     ),
     (
+        "an id that starts with $ and is no name",
+        'test "t"\n  user 1 can share doc $x$\n',
+        "$x$: an id that starts with $ is a name a given line binds ($ann); write an id that starts with $ in "
+        "quotes: '$x$'",
+        11,
+        "AZ106",
+    ),
+    (
         "... also inside a statement",
         'test "t"\n  as user 1 refused {INSERT INTO alt.docs VALUES ($doc)}\n',
         "$doc is not named yet",

@@ -139,6 +139,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile test` runs a test whose name, or an id in quotes on one of its lines, holds a dollar quote's tag such
   as `$authz_tests$`. Before, the tag ended the function the tests are compiled into, and Postgres gave a syntax
   error that named nothing of the policy.
+- A test's id in quotes is the text in them, `$` or not: `user 1 can view file '$x'` asks about the file whose id is
+  `$x`, where `'$x'` was read as the name `$x`; and `a$b` is that text, where it was refused as naming `$b`. An id
+  without quotes that starts with `$` and is no name (`$x$`) is refused with its line (AZ106), where compiling the
+  tests failed with a Python error.
 
 ### Upgrading
 
