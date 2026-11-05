@@ -60,7 +60,10 @@ async fn tokio_postgres_signs_in_and_asks() {
     assert_eq!(buttons["1"], [ProjectPermission::Edit, ProjectPermission::View]);
     assert_eq!(buttons["3"], [ProjectPermission::View]);
     assert_eq!(rowstile::pg::list(&tx, ProjectPermission::View, None).await.unwrap(), ["1", "3"]);
-    let page = Page { after: Some("1".into()), limit: 5 };
+    let page = Page { after: Some("1".into()), limit: Some(5) };
+    assert_eq!(rowstile::pg::list(&tx, ProjectPermission::View, Some(&page)).await.unwrap(), ["3"]);
+    // a cursor without a size: every id after it, as in every SDK
+    let page = Page { after: Some("1".into()), ..Page::default() };
     assert_eq!(rowstile::pg::list(&tx, ProjectPermission::View, Some(&page)).await.unwrap(), ["3"]);
     // a change is no error; a hidden row NotFound; a visible one the rule refuses, with the reason
     let changed = tx.execute("UPDATE app.notes SET body = body WHERE id = 4", &[]).await.unwrap();
@@ -96,7 +99,7 @@ async fn tokio_postgres_errors() {
     assert!(matches!(err, Error::NotSignedIn(_)), "{err:?}");
     drop(raw);
     let tx = rowstile::pg::begin(&mut client, &Principal::user("1")).await.unwrap();
-    let page = Page { after: None, limit: -1 };
+    let page = Page { after: None, limit: Some(-1) };
     let err = rowstile::pg::list(&tx, ProjectPermission::View, Some(&page)).await.unwrap_err();
     assert!(matches!(&err, Error::Call(c) if c.kind == CallKind::BadArgument), "{err:?}");
     drop(tx);
@@ -381,6 +384,30 @@ fn keys_principals_and_names() {
         rowstile::composite_key(&[Some("1"), Some("a b"), Some(""), Some("q\"t"), Some("b\\s"), Some("(1)"), None]),
         r#"(1,"a b","","q""t","b\\s","(1)",)"#
     );
+    // a field quoted for ASCII's six spaces alone, as Postgres does (not for a no-break space, an em space); a key
+    // of one field is its value
+    assert_eq!(
+        [
+            rowstile::composite_key(&[Some("\x0bv"), Some("a\u{a0}b")]),
+            rowstile::composite_key(&[Some("\u{2003}\x1c"), Some("\r\n\x0c")]),
+            rowstile::composite_key(&[Some("a b")]),
+            rowstile::composite_key(&[None]),
+        ],
+        ["(\"\x0bv\",a\u{a0}b)", "(\u{2003}\x1c,\"\r\n\x0c\")", "a b", ""]
+    );
+    // a principal as text, as every SDK writes it and the audit trail names who acted, and read back
+    for (p, text) in [
+        (Principal::Nobody, "nobody"),
+        (Principal::user("42"), "42"),
+        (Principal::of("service", "3"), "service:3"),
+        (Principal::user("a:b"), "user:a:b"),
+        (Principal::user("nobody"), "user:nobody"),
+        (Principal::user("(1,2)"), "(1,2)"),
+    ] {
+        assert_eq!((p.to_string(), text.parse::<Principal>().unwrap()), (text.to_owned(), p));
+    }
+    let read: Vec<Principal> = ["user:42", "service:", ":x"].iter().map(|t| t.parse().unwrap()).collect();
+    assert_eq!(read, [Principal::user("42"), Principal::Nobody, Principal::user(":x")]);
     assert_eq!(Principal::user("7"), Principal::Signed { principal_type: "user".into(), id: "7".into() });
     // nobody has one spelling: no id, whatever the type
     assert_eq!((Principal::user(""), Principal::of("service", "")), (Principal::Nobody, Principal::Nobody));
