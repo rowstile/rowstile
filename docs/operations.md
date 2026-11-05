@@ -182,6 +182,6 @@ SELECT authz.sync_behind();                     -- NULL: the index holds every c
 |---|---|
 | the inheritance tables are exact | `SELECT authz.verify()` (reads everything, a batch of rows at a time: about two and a half minutes for a million folders; run it off-peak); false: `rowstile reapply --force` |
 | the policy's invariants hold | `SELECT * FROM authz.check_invariants()` |
-| a tree write waits | `pg_locks` on `authz_int.locks`; a big move holds it for half a second to a second per 20k folders below (on the benchmark of 2026-10-03, a build from before the rename: `core/bench/results/2026-10-03-*.txt`) |
+| a tree write waits | in `pg_stat_activity`, a session whose query writes a tree's table with `wait_event_type = 'Lock'` (`transactionid` or `tuple`: the type's lock row, which another writer holds until it commits); `pg_blocking_pids(pid)` names that writer. A big move holds it for half a second to a second per 20k folders below (on the benchmark of 2026-10-03, a build from before the rename: `core/bench/results/2026-10-03-*.txt`) |
 | slow checks | `pg_stat_statements` on your app's queries; `EXPLAIN` shows the policy's subplans |
 | who did what | `authz.audit`; break-glass use is also announced on channel `authz_alerts` |
