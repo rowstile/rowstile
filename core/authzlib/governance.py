@@ -1089,8 +1089,14 @@ BEGIN
     PERFORM set_config('authz.principal_type', who.ptype, true);
     PERFORM set_config('authz.user_id', v_id, true);
     PERFORM authz_int.sign();
+    -- the permission itself, on rows they can't select too (authz.list answers for those they may): a write rule or
+    -- an action may use it. A policy applied before authz_int.list was made has authz.list answer so
     FOR p IN SELECT type, perm FROM authz_int.perms LOOP
-      INSERT INTO pg_temp.{into} SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz.list(p.type, p.perm) x;
+      IF to_regprocedure('authz_int.list(text, text)') IS NULL THEN
+        INSERT INTO pg_temp.{into} SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz.list(p.type, p.perm) x;
+      ELSE
+        INSERT INTO pg_temp.{into} SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz_int.list(p.type, p.perm) x;
+      END IF;
     END LOOP;
     -- (each type's select policy by its table's oid, never by a name read back as a table: the planner may try that
     -- on every table there is, and for one of pg_toast's it is refused to an owner who is no superuser)

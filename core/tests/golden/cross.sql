@@ -5956,6 +5956,76 @@ BEGIN
   END CASE;
 END $f$;
 
+-- Every object the user holds a permission on, whether they may select its row or not: what the access previews
+-- (rowstile diff, the review's access, rowstile snapshot) list, run as the owner. authz.list where it is the same
+CREATE FUNCTION authz_int.list(p_type text, p_perm text) RETURNS SETOF text
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN; END IF;
+  CASE p_type || '.' || p_perm
+    WHEN 'folder.file' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."folders" o
+        WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR (coalesce((owner_id is null /* this.owner_id: nobody's */ and parent_type <> $$this.id$$ and parent_type <> e'it\'s' and parent_type <> 'this.id''s' and id <>-1), false)
+    AND ((o."parent_type" = 'folder' AND (EXISTS (SELECT 1 FROM authz_int."folder__file__direct" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint)
+    OR EXISTS (SELECT 1 FROM authz_int."folder__file" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint)))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__file" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
+    AND coalesce((not archived), false));
+    WHEN 'folder.fund' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."folders" o
+        WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__fund" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__fund" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    AND coalesce((not archived), false));
+    WHEN 'folder.tidy' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."folders" o
+        WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    AND NOT coalesce(((o."parent_type" = 'folder' AND (EXISTS (SELECT 1 FROM authz_int."folder__file__direct" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint)
+    OR EXISTS (SELECT 1 FROM authz_int."folder__file" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint)))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__file" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))), false))
+    AND coalesce((not archived), false));
+    WHEN 'project.file' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."projects" o
+        WHERE coalesce(o."lead_id" = (SELECT authz.uid()), false);
+    WHEN 'project.fund' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."projects" o
+        WHERE (coalesce(o."lead_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."project__backer__fund" v WHERE v.id = o."id"));
+    WHEN 'project.judge' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."projects" o
+        WHERE ((coalesce(o."lead_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."project__inside__view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."project__host__view" v WHERE v.id = o."id"))
+    AND NOT coalesce(EXISTS (SELECT 1 FROM authz_int."project__backer__fund" v WHERE v.id = o."id"), false));
+    WHEN 'region.rename' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
+        WHERE (coalesce(o."chief_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"));
+    WHEN 'region.fund' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
+        WHERE (coalesce(o."chief_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"));
+    WHEN 'region.share' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
+        WHERE ((coalesce(o."chief_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"));
+    WHEN 'region.visit' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
+        WHERE (EXISTS (SELECT 1 FROM authz_int."region__guest" v WHERE v.id = o."id")
+    OR (coalesce(o."chief_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"));
+    WHEN 'site.guard' THEN
+      RETURN QUERY SELECT o."id"::text FROM "cx"."sites" o
+        WHERE ((EXISTS (SELECT 1 FROM authz_int."region__chief" v WHERE v.id = o."region_id")
+    OR EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = o."id"))
+    AND coalesce((not exists (select 1 from cx.closed c where c.site_id = o.id)), false));
+    ELSE
+      RETURN QUERY SELECT * FROM authz.list(p_type, p_perm);
+  END CASE;
+END $f$;
+
 -- Every permission the user holds on one object: SELECT authz.perms('file', 11)
 CREATE OR REPLACE FUNCTION authz.perms(p_type text, p_id text) RETURNS text[]
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$

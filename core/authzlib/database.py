@@ -1178,8 +1178,9 @@ SNAPSHOT_HEAD = (
 
 def snapshot(db: Db, limit: int = 500) -> list[str]:
     """Who holds each permission on each object, as sorted lines 'type id perm: who, who' (users by id, other
-    principals as type:id, 'anyone' for someone not signed in). Asks authz.list as each principal in the data
-    (at most `limit` of them, else an Error: snapshots are for small review data)."""
+    principals as type:id, 'anyone' for someone not signed in). Asks authz_int.list (the permission itself, on rows
+    they can't select too) as each principal in the data (at most `limit` of them, else an Error: snapshots are for
+    small review data)."""
     c = policy_compiler(*applied(db))
     principals: list[tuple[str | None, str | None]] = []
     for t in c.types.values():
@@ -1198,7 +1199,7 @@ def snapshot(db: Db, limit: int = 500) -> list[str]:
         db.rows("SELECT authz.act_as($1, $2)", [ptype, pid])
         who = "anyone" if pid is None else pid if ptype == "user" else f"{ptype}:{pid}"
         for tname, perm in perms:
-            for r in db.rows("SELECT x FROM authz.list($1, $2) x", [tname, perm]):
+            for r in db.rows("SELECT x FROM authz_int.list($1, $2) x", [tname, perm]):
                 held.setdefault((tname, text(r, "x"), perm), []).append(who)
     db.rows("SELECT authz.act_as(NULL, NULL)")
 

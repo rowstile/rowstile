@@ -4733,6 +4733,80 @@ BEGIN
   END CASE;
 END $f$;
 
+-- Every object the user holds a permission on, whether they may select its row or not: what the access previews
+-- (rowstile diff, the review's access, rowstile snapshot) list, run as the owner. authz.list where it is the same
+CREATE FUNCTION authz_int.list(p_type text, p_perm text) RETURNS SETOF text
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN; END IF;
+  CASE p_type || '.' || p_perm
+    WHEN 'doc.share' THEN
+      RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
+        WHERE coalesce(o."owner_id" = (SELECT authz.uid()), false);
+    WHEN 'doc.edit' THEN
+      RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
+        WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view:ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base:ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden:ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
+    OR (coalesce((not locked), false)
+    AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__edit" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__edit:ext" v WHERE v.id = o."doc_no"))));
+    WHEN 'doc.hidden' THEN
+      RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
+        WHERE (EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden:ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no"));
+    WHEN 'doc.publish' THEN
+      RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
+        WHERE (NOT coalesce((locked), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."doc__roles:publish" v WHERE v.id = o."doc_no")
+    OR (coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view:ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base:ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden:ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
+    OR (coalesce((not locked), false)
+    AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__edit" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__edit:ext" v WHERE v.id = o."doc_no"))))));
+    WHEN 'doc.mine' THEN
+      RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
+        WHERE coalesce((owner_id = (SELECT authz.uid())), false);
+    ELSE
+      RETURN QUERY SELECT * FROM authz.list(p_type, p_perm);
+  END CASE;
+END $f$;
+
 -- Every permission the user holds on one object: SELECT authz.perms('file', 11)
 CREATE OR REPLACE FUNCTION authz.perms(p_type text, p_id text) RETURNS text[]
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$

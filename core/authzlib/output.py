@@ -452,13 +452,15 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
             return ""
         return f"\n    AND ({self.row_sql(t, 'o', sel.expr, sel.loc, point=point)})"
 
-    def list_cases_sql(self) -> str:
+    def list_cases_sql(self) -> tuple[str, str]:
         """authz.list's branches: each row of the type tested with the permission's row check, as select
         rules do (lookups the planner hashes once for many rows, and what the object's own columns give
         first), rather than the permission's view, which builds every id through every path (46 s for an
         org admin over 5M files). With p_limit, pages in key order after p_after. Row checks may add views,
-        so this runs before the views are written out."""
+        so this runs before the views are written out. And authz_int.list's: the permission itself, whole, where
+        authz.list adds the select rule (shown_sql)."""
         cases = []
+        held = []
         for t in self.types.values():
             tbl = qt(t.table)
             order = ", ".join(f"o.{q(c)}" for c, _ in t.key)
@@ -471,9 +473,10 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
                 cond = self.row_sql(t, "o", Ref(p), t.perms[p].loc)
                 if t.where:
                     cond = f"({cond}\n    AND coalesce(({row_cond(t.where, 'o')}), false))"
-                if shown := self.shown_sql(t, p, point=False):
-                    cond = f"(({cond}){shown})"
                 rows = f"SELECT {self.key_text(t, 'o')} FROM {tbl} o\n        WHERE "
+                if shown := self.shown_sql(t, p, point=False):
+                    held.append(f"    WHEN {lit(t.name + '.' + p)} THEN\n      RETURN QUERY {rows}{cond};")
+                    cond = f"(({cond}){shown})"
                 cases.append(
                     f"    WHEN {lit(t.name + '.' + p)} THEN\n"
                     f"      IF p_limit IS NULL AND p_after IS NULL THEN\n"
@@ -485,9 +488,9 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
                     f"        ORDER BY {order} LIMIT p_limit;\n"
                     f"      END IF;"
                 )
-        return "\n".join(cases)
+        return "\n".join(cases), "\n".join(held)
 
-    def api_sql(self, list_cases: str) -> str:
+    def api_sql(self, list_cases: str, list_held: str) -> str:
         """authz.can, authz.list (its branches, list_cases_sql) and authz.perms."""
         perms_of = {t.name: self.public_perms(t) for t in self.types.values()}
         no_perm = (
@@ -577,6 +580,19 @@ BEGIN
 {list_cases or "    WHEN NULL THEN NULL;"}
     ELSE
       {no_perm}
+  END CASE;
+END $f$;
+
+-- Every object the user holds a permission on, whether they may select its row or not: what the access previews
+-- (rowstile diff, the review's access, rowstile snapshot) list, run as the owner. authz.list where it is the same
+CREATE FUNCTION authz_int.list(p_type text, p_perm text) RETURNS SETOF text
+LANGUAGE plpgsql STABLE {DEFINER_FROM_CURRENT} AS $f$
+BEGIN
+  IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN; END IF;
+  CASE p_type || '.' || p_perm
+{list_held or "    WHEN NULL THEN NULL;"}
+    ELSE
+      RETURN QUERY SELECT * FROM authz.list(p_type, p_perm);
   END CASE;
 END $f$;
 
@@ -1504,7 +1520,7 @@ END $gi$;"""
             "SET LOCAL check_function_bodies = on;",
         ]
         masked_views = self.masked_view_sql()
-        list_cases = self.list_cases_sql()
+        list_cases, list_held = self.list_cases_sql()
         perms = [(t, p) for t in self.types.values() for p in self.public_perms(t)]
         catalog = [
             "-- per type: its table, key, how to find a row x by an id ($1, text), and a row's id (columns unqualified)\n"
@@ -1680,7 +1696,7 @@ END $w$;"""
             *[("objects", "masks", x) for x in masked_views[:-2]],
             ("changed", "mask_privileges", masked_views[-2]),
             ("objects", "masks", masked_views[-1]),
-            ("objects", "api", self.api_sql(list_cases)),
+            ("objects", "api", self.api_sql(list_cases, list_held)),
             ("objects", "share_api", share_api),
             ("objects", "explain_rule", self.explain_rule_sql(list(by_table))),
             ("objects", "who_among", self.who_among_sql()),

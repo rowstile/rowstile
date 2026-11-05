@@ -34,7 +34,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   for whom `authz.can` says yes (below). What acts on an object still asks the permission itself: sharing, roles,
   API keys, `authz.view_as` and `authz.break_glass`, which works on a row the user can't see. So do `authz.who`'s
   answers, the first line of `authz.explain`, `rowstile why` and a test's `user X can PERM TYPE ID`. The access
-  preview (`rowstile diff`, the review's access) lists what `authz.list` answers.
+  previews (`rowstile diff`, the review's access, `rowstile dev`, `rowstile snapshot`) still list every permission
+  gained or lost, on rows the user can't select too.
 
 ### Fixed
 
