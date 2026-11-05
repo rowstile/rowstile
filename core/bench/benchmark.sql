@@ -85,7 +85,9 @@ DECLARE u bigint; i int; t0 timestamptz; n bigint;
 BEGIN
   PERFORM setseed(0.7);
   FOREACH u IN ARRAY ARRAY[1, 11, 500, 1000, 1500] LOOP   -- user 1 is an org admin
-    PERFORM set_config('authz.user_id', u::text, true);
+    -- signed in as an app signs in, one user after another in this transaction: signed out first
+    PERFORM authz.sign_out();
+    PERFORM authz.act_as('user', u::text);
     FOR i IN 1..p_reps LOOP
       t0 := clock_timestamp();
       EXECUTE p_sql INTO n USING (1 + floor(random() * 10000))::bigint, (1 + floor(random() * 200000))::bigint;
@@ -115,7 +117,8 @@ DECLARE u bigint; i int; t0 timestamptz; n bigint; x bigint;
 BEGIN
   PERFORM setseed(0.7);
   FOREACH u IN ARRAY ARRAY[1, 11, 500, 1000, 1500] LOOP
-    PERFORM set_config('authz.user_id', u::text, true);
+    PERFORM authz.sign_out();
+    PERFORM authz.act_as('user', u::text);
     FOR i IN 1..200 LOOP
       x := 1 + floor(random() * 200000)::bigint;
       t0 := clock_timestamp();
@@ -196,7 +199,8 @@ END $$;
 CREATE FUNCTION bench.chained(p_depth int) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE t0 timestamptz; n bigint; q text;
 BEGIN
-  PERFORM set_config('authz.user_id', '99999', true);
+  PERFORM authz.sign_out();
+  PERFORM authz.act_as('user', '99999');
   FOREACH q IN ARRAY ARRAY['SELECT authz.can(''folder'', ''3'', ''view'')::int', 'SELECT count(*) FROM app.files WHERE folder_id = 3',
                            'SELECT authz.can(''folder'', ''4'', ''view'')::int'] LOOP
     FOR i IN 1..300 LOOP

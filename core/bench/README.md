@@ -17,9 +17,10 @@ Each run starts a fresh Postgres container from `../Dockerfile` (4 GB shared buf
 off), loads
 the example app at scale (`load.sql`: a folder tree exactly 20 levels deep, each level about 1.5 times
 wider than the one above; 5% of folders also linked into a folder nearer the top, so no folder ends up
-inside itself; 25 folders for each user and for each team from `--large` up, so a user holds the same at
-every size), applies `example/docs.authz` with `rowstile apply`, adds shares (`shares.sql`),
-then runs `pgbench` (`workload/`, driven by `run.sh`):
+inside itself; 25 folders for each user and 250 for each team from `--large` up, so a user holds the same at
+every size), applies `example/docs.authz` with `rowstile apply` as the tables' owner, not a superuser (as
+`tests/make_owner.sh` makes it), adds shares (`shares.sql`), then runs `pgbench` (`workload/`, driven by
+`run.sh`), each read signed in with `authz.act_as`, as an app signs in:
 
 1. reads through RLS alone, 400/s: open a file, open a folder, `authz.can`, as random users, a
    quarter of them org admins (who reach every folder);

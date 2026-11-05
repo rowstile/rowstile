@@ -4,7 +4,8 @@
 #   core/bench/scale.sh --large      # 1M files, 50k folders: the gate's size on the laptop of 2026-10 (out of use)
 #   core/bench/scale.sh --medium     # 5M files, 250k folders (long)
 #   core/bench/scale.sh --full       # 20M files, 1M folders: the scale gate's size; needs 16 GB for Docker
-# (--large, --medium and --full have 25 folders for each user and for each team, so one user holds the same at each)
+# (--large, --medium and --full have 25 folders for each user and 250 for each team, so one user holds the same at
+# each)
 # Environment: KEEP=1 leaves the container running; PG (default 16), SHARED_BUFFERS, FILES FOLDERS LEVELS USERS TEAMS
 # DURATION GATE_DURATION (seconds per step, default 20 and 30), OUT. Results go to
 # core/bench/results/. Needs Docker and bash.
@@ -37,7 +38,10 @@ docker run -d --name "$NAME" --shm-size=1g -e POSTGRES_HOST_AUTH_METHOD=trust -v
   $SETTINGS -c max_connections=300 -c max_wal_size=8GB -c checkpoint_timeout=30min -c jit=off >/dev/null || exit 1
 for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h /var/run/postgresql 2>/dev/null && break; sleep 1; done
 sleep 3
-docker exec -e PGHOST=/var/run/postgresql -e PGUSER=postgres -e FILES="$FILES" -e FOLDERS="$FOLDERS" \
+# run as the tables' owner, not a superuser, as the suites and the documented setup are (tests/make_owner.sh): what
+# a superuser would skip, the benchmark measures
+docker exec -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core "$NAME" bash tests/make_owner.sh || exit 1
+docker exec -e PGHOST=/var/run/postgresql -e PGUSER=authz_owner -e FILES="$FILES" -e FOLDERS="$FOLDERS" \
   -e LEVELS="$LEVELS" -e USERS="$USERS" -e TEAMS="$TEAMS" -e DURATION="$DURATION" -e GATE_DURATION="$GATE_DURATION" \
   -e SPEED_GATES="${SPEED_GATES:-1}" -e READ_RATE="${READ_RATE:-400}" \
   -e OUT="/src/$OUT" -w /src/core "$NAME" bash bench/run.sh

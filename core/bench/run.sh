@@ -37,7 +37,8 @@ say "== Loading and applying (seconds)"
 t=$(now)
 psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -v files="$FILES" -v folders="$FOLDERS" -v levels="$LEVELS" \
      -v users="$USERS" -v teams="$TEAMS" -f bench/load.sql >/dev/null || exit 1
-PSQL -c "VACUUM ANALYZE" >/dev/null
+# the owner may not vacuum the shared catalogs: skipped, without a warning each
+PGOPTIONS="-c client_min_messages=error" PSQL -c "VACUUM ANALYZE" >/dev/null
 say "load the app data                       $(since "$t")"
 t=$(now)
 if ! python3 cli/rowstile_cli.py --db "dbname=$DB" apply example/docs.authz >/dev/null 2>"$LOGS/apply.err"; then
@@ -47,7 +48,7 @@ say "apply docs.authz, with backfill         $(since "$t")"
 t=$(now)
 psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -v files="$FILES" -v folders="$FOLDERS" -v users="$USERS" -v teams="$TEAMS" \
      -f bench/shares.sql >/dev/null || exit 1
-PSQL -c "VACUUM ANALYZE" >/dev/null
+PGOPTIONS="-c client_min_messages=error" PSQL -c "VACUUM ANALYZE" >/dev/null
 say "load shares, vacuum                     $(since "$t")"
 say
 say "== Sizes"
@@ -172,7 +173,8 @@ for who in "3 org admin" "500 member"; do
   set -- $who; u=$1; shift
   for q in "SELECT count(*) FROM authz.list('file', 'view')" "SELECT count(*) FROM authz.list('file', 'view', NULL, 1000)" \
            "SELECT count(*) FROM authz.list('file', 'view', '$((FILES / 2))', 1000)"; do
-    t=$(now); n=$(PSQL -c "SET ROLE app_user" -c "SET authz.user_id = '$u'" -c "$q" | tail -n 1)
+    # signed in as an app signs in (authz.act_as), in the query's transaction
+    t=$(now); n=$(PSQL -c "SET ROLE app_user; SELECT authz.act_as('user', '$u'); $q" | tail -n 1)
     [ -n "$n" ] || wrong=1
     say "$(printf '%-10s %-66s %9s rows %8s s' "$*" "${q#SELECT count(*) FROM }" "$n" "$(since "$t")")"
   done
