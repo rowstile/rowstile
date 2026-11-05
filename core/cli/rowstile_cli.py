@@ -412,6 +412,35 @@ class Config:
             )
         return path
 
+    def repository(self) -> str | None:
+        """The top folder of the git repository rowstile.toml is in: the first folder up from its own that holds a
+        .git (a folder, or a worktree's file). None when there is none."""
+        folder = os.path.realpath(self.dir)
+        while not os.path.lexists(os.path.join(folder, ".git")):
+            if os.path.dirname(folder) == folder:
+                return None
+            folder = os.path.dirname(folder)
+        return folder
+
+    def written(self, name: str, what: str) -> str:
+        """A file or folder rowstile.toml names to be written (the snapshot, the clients, the migrations' folder):
+        in the git repository rowstile.toml is in (a monorepo's ../frontend/src/authz.ts), or in its folder when
+        it is in none, also through links. A pull request's rowstile.toml, run by CI, writes in the checkout only."""
+        path = self.file(name)
+        top = self.repository()
+        if os.path.isabs(name) or not within(top or os.path.realpath(self.dir), os.path.realpath(path)):
+            where = (
+                f"the git repository {CONFIG} is in ({top})"
+                if top
+                else f"the folder {CONFIG} is in, which is in no git repository"
+            )
+            fail(
+                f'{self.path}: {what} = "{name}" is outside {where} (or a link out of it): the files it writes '
+                f"stay there",
+                2,
+            )
+        return path
+
     def below(self, path: str) -> str | None:
         """A path from rowstile.toml's folder, with /, as a .gitattributes there names it. None for one outside
         the folder (another drive, on Windows, or ..): no pattern there matches it."""
@@ -457,7 +486,7 @@ class Config:
         out: dict[str, str] = {}
         for lang, p in self.section("clients").items():
             assert isinstance(p, str), "check_settings refuses a client that isn't a path"
-            out["ts-sdk" if lang == "ts" and self.uses_ts_sdk() else lang] = self.file(p)
+            out["ts-sdk" if lang == "ts" and self.uses_ts_sdk() else lang] = self.written(p, f"[clients] {lang}")
         return out
 
     @property
@@ -1850,7 +1879,11 @@ def migrate_cmd(
     tool = opts.get("--tool") or cfg.tool or "sql"
     if tool not in migrations.TOOLS:
         fail(f"rowstile migrate: unknown tool '{tool}' (use one of {', '.join(migrations.TOOLS)})", 2)
-    folder = cfg.file(opts.get("--dir") or cfg.setting("migrations", "dir") or migrations.DEFAULT_DIRS[tool])
+    folder = (
+        cfg.file(opts["--dir"])
+        if opts.get("--dir")
+        else cfg.written(cfg.setting("migrations", "dir") or migrations.DEFAULT_DIRS[tool], "[migrations] dir")
+    )
     lock = lock_path(cfg, path)
     try:
         with open(lock, encoding="utf-8") as fh:
@@ -1974,7 +2007,7 @@ def snapshot_path(cfg: Config, opts: dict[str, str]) -> str:
         return opts["--out"]
     snapshot = cfg.setting("review", "snapshot")
     if snapshot:
-        return cfg.file(snapshot)
+        return cfg.written(snapshot, "[review] snapshot")
     base = os.path.dirname(cfg.policy) if cfg.policy else "."
     return os.path.join(base, "access.snapshot")
 

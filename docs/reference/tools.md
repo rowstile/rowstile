@@ -122,8 +122,11 @@ any other way, or signs the command in without asking, is refused before anythin
 `require_auth`
 says which ways the server may ask, and `target_session_attrs` which session will do, as in libpq. <!-- checked: tests/unit_test.py "test_require_auth_as_libpq_reads_it"; tests/unit_test.py "test_target_session_attrs_as_libpq_checks_it" -->
 
-The files `rowstile.toml` names to be read (the policy, the tests, the lock) are in its folder or
-below; a setting it doesn't know, or one of the wrong type, is an error. <!-- checked: tests/cli.sh "a policy outside rowstile.toml's folder is not read"; tests/cli.sh "a misspelt setting is named"; tests/cli.sh "a setting in the wrong table is refused" -->
+The files `rowstile.toml` names to be read (the policy, the tests, the lock) are in its folder or below. Those it
+names to be written (the snapshot, the clients, the migrations' folder) are in the git repository it is in (the first
+folder up from its own that holds a `.git`), so a monorepo's `../frontend/src/authz.ts` works, or in its folder
+when it is in none. A path out of them, or a link out of them, is refused and named. <!-- checked: tests/cli.sh "a policy outside rowstile.toml's folder is not read"; tests/cli.sh "and the policy it reads stays in rowstile.toml's own folder"; tests/cli.sh "in a git repository, a client, the migrations and the snapshot are written in a folder beside rowstile.toml's"; tests/cli.sh "but not outside the repository: a [clients] file"; tests/cli.sh "nor a [migrations] dir outside it"; tests/cli.sh "checking the snapshot reads no [review] snapshot outside rowstile.toml's folder, in no git repository"; tests/cli.sh "nor writes one through a link out of it" -->
+A setting it doesn't know, or one of the wrong type, is an error. <!-- checked: tests/cli.sh "a misspelt setting is named"; tests/cli.sh "a setting in the wrong table is refused" -->
 [Getting started](../getting-started.md) goes through all of it; [the cookbook](../cookbook.md) has tested patterns and
 [troubleshooting](../troubleshooting.md) what people run into.
 

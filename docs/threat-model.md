@@ -72,6 +72,10 @@ opened it wrote. An include stays in the policy's folder: no `..` out of it, no 
 leading out (AZ108), and the policy, the tests and the lock file `rowstile.toml` names stay in the folder
 `rowstile.toml` is in, the same way; so a pull request can't make the review read one of the runner's files, or
 its environment, and print it in the job's log (`unit_test.py`, policy_errors.py, cli.sh). <!-- checked: tests/policy_errors.py "a file above the policy's folder"; tests/policy_errors.py "a server file"; tests/unit_test.py "test_reads_nothing_outside_the_policys_folder"; tests/cli.sh "a policy outside rowstile.toml's folder is not read"; tests/cli.sh "nor through a link out of it" -->
+The files it names to be written (the snapshot, the clients, the migrations' folder) stay in the git repository
+`rowstile.toml` is in, or in its folder when it is in none: a pull request's `rowstile.toml` can't make
+`rowstile snapshot --check` read a file outside the checkout and print its lines, nor `rowstile snapshot`,
+`client`, `dev` or `migrate` write one there (cli.sh). <!-- checked: tests/cli.sh "checking the snapshot reads no [review] snapshot outside rowstile.toml's folder, in no git repository"; tests/cli.sh "but not outside the repository: a [clients] file"; tests/cli.sh "nor a [migrations] dir outside it"; tests/cli.sh "nor writes one through a link out of it" -->
 A `.env` beside
 `rowstile.toml` is read the same way, for the variables that say where the database is and no other: a pull
 request's `.env` can't set `PATH` or what `git` runs. <!-- checked: tests/unit_test.py "test_env_files_are_read_for_the_database_only"; tests/cli.sh "a .env that is a link out of the folder isn't read, and the failure says so" -->
