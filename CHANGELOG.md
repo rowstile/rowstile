@@ -87,6 +87,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   a condition's string as text, and completion offers a condition's columns on its later lines too. After
   `shutdown` a request is refused, and `exit` without `shutdown` ends the server with status 1, as the protocol
   says.
+- `rowstile mcp`: `why` refuses an id the command would read as an option (`-h` printed its help; a negative number
+  is still an id), and `test` refuses a `coverage` that isn't true or false (the text `"false"` turned it on). A
+  call stopped after 600 seconds keeps what the command printed before it, so the agent sees where it was.
 - The sync index, a preview: a PowerSync mirror (`mirrored`) is made again when the policy masks a column of its
   table since, so the masked column leaves the mirror and the sync engine's role can't read it; `authz.sync_verify()`
   says false, and `authz.lint()` reports an error, while a mirror holds a masked column.

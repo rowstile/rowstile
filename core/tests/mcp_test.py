@@ -27,6 +27,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "cli"))
 import mcp  # noqa: E402
 import pgwire  # noqa: E402
+import rowstile_cli  # noqa: E402
 
 fails = 0
 # an answer from the server: its shape is what the checks check
@@ -147,6 +148,15 @@ def refused(r: Answer) -> str | None:
         return None
     text = r["content"][0]["text"]
     return text if r.get("structuredContent") == {"ok": False, "exit_code": 2, "output": text} else None
+
+
+def accepts(read: Callable[[Any], str], value: object) -> bool:
+    """Whether a tool's reading of an argument takes the value (refused: a ValueError)."""
+    try:
+        read(value)
+    except ValueError:
+        return False
+    return True
 
 
 def protocol(folder: str) -> None:
@@ -273,6 +283,25 @@ def protocol(folder: str) -> None:
     check("an id that is null: refused, not run as the id 'None'", refused(r) == "why: id: a string, not null", r)
     r = c.tool("why", **{"as": "user:1", "type": "folder", "id": 3, "perm": True})
     check("... nor a permission that is true", refused(r) == "why: perm: a string, not true", r)
+    r = c.tool("why", **{"as": "user:1", "type": "folder", "id": "-h", "perm": "view"})
+    check(
+        "an id the command reads as an option (-h: its help): refused, not answered with the help",
+        refused(r) == "why: id: '-h' starts with '-' and isn't a number: an id, not an option",
+        r,
+    )
+    words = ["-h", "--help", "-x", "--development", "-1e5", "-", "-3", "-1.5", "a-b", "3"]
+    refusing = [w for w in words if not accepts(mcp.ident, w)]
+    check(
+        "... the ids refused are the words the command reads as options: a negative number is an id",
+        refusing == [w for w in words if rowstile_cli.is_option(w)] == ["-h", "--help", "-x", "--development", "-1e5"],
+        refusing,
+    )
+    r = c.tool("test", coverage="false")
+    check(
+        'test\'s coverage as the text "false": refused, not read as true',
+        refused(r) == 'test: coverage: true or false, not "false"',
+        r,
+    )
     # an argument longer than a process may be given (Linux takes 128 kB): the call fails, and the server carries on
     r = c.request("tools/call", {"name": "check", "arguments": {"policy": "p" * 300000}})
     check(
@@ -283,16 +312,27 @@ def protocol(folder: str) -> None:
         r,
     )
     check("it stops when its input closes", c.close() == 0)
-    # a call that runs longer than the server waits (600 s; here a moment): stopped, and a failed call
+    # a call that runs longer than the server waits (600 s; here 5): stopped, and a failed call that keeps what the
+    # command printed (where it was). A stand-in for the command: it says where it is, then waits, until Ctrl-C
+    stand_in = os.path.join(folder, "slow_command.py")
+    with open(stand_in, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "import signal, sys, time\n"
+            "signal.signal(signal.SIGINT, lambda *_: sys.exit(130))\n"
+            "print('step 1 of 3: waiting for a lock', flush=True)\n"
+            "time.sleep(60)\n"
+        )
     request: Answer = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "check", "arguments": {}}}
-    with mock.patch.object(mcp, "TIMEOUT", 0.001):
+    with mock.patch.object(mcp, "TIMEOUT", 5), mock.patch.object(mcp, "COMMAND", stand_in):
         r = mcp.Server().handle(request)
+    os.remove(stand_in)
     result: Answer = r["result"] if r else {}
     check(
-        "a call that takes too long: stopped, and said so",
+        "a call that takes too long: stopped, and said so, after what the command printed",
         result.get("isError") is True
         and result["structuredContent"]["exit_code"] == 2
-        and result["content"][0]["text"] == "rowstile check took more than 0.001 s and was stopped",
+        and result["content"][0]["text"]
+        == "step 1 of 3: waiting for a lock\nrowstile check took more than 5 s and was stopped",
         r,
     )
     stopping()
@@ -646,7 +686,11 @@ def with_db(folder: str, db: str) -> None:
         r,
     )
     r = c2.tool("why", **{"as": "user:3", "type": "folder", "id": "--development", "perm": "edit"})
-    check("... nor why's id", refused(r) == "why: id: '--development' starts with '--': an id, not an option", r)
+    check(
+        "... nor why's id",
+        refused(r) == "why: id: '--development' starts with '-' and isn't a number: an id, not an option",
+        r,
+    )
     c2.close()
     subprocess.run(["dropdb", "--if-exists", other], capture_output=True)
     subprocess.run(

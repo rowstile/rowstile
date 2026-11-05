@@ -106,7 +106,11 @@ TOOLS: dict[str, Tool] = {
         },
         [],
         {"readOnlyHint": True},
-        lambda a: ["test", *(["--coverage"] if a.get("coverage") else []), *strings(a.get("files"))],
+        lambda a: [
+            "test",
+            *(["--coverage"] if boolean("coverage", a.get("coverage")) else []),
+            *strings(a.get("files")),
+        ],
     ),
     "why": Tool(
         "Whether someone holds a permission on an object, and why; if not, why not, and the smallest changes to "
@@ -166,11 +170,20 @@ def plain(name: str, value: Json) -> str:
 
 
 def ident(value: Json) -> str:
-    """An object's id: any text (a negative number too), but not one of the command's options."""
+    """An object's id: any text but what the command reads as an option, as its is_option reads one: a word that
+    starts with - and isn't a negative number (-h is its help). The command takes no such id either."""
     text = string("id", value)
-    if text.startswith("--"):
-        raise ValueError(f"id: {text!r} starts with '--': an id, not an option")
+    if text.startswith("-") and text != "-" and not re.fullmatch(r"-\d+(\.\d+)?", text):
+        raise ValueError(f"id: {text!r} starts with '-' and isn't a number: an id, not an option")
     return text
+
+
+def boolean(name: str, value: Json) -> bool:
+    """A tool's true-or-false argument: true, false, or none given. Any other value is refused, not read as true
+    or false as Python reads it (the text "false" is true there)."""
+    if value is not None and not isinstance(value, bool):
+        raise ValueError(f"{name}: true or false, not {json.dumps(value)[:40]}")
+    return bool(value)
 
 
 def opt(flag: str, value: Json) -> list[str]:
@@ -259,8 +272,9 @@ def run(dsn: str | None, args: list[str], running: Running | None = None) -> tup
         code = p.returncode
     except subprocess.TimeoutExpired:
         stop(p)
-        p.communicate()
-        out, code = f"rowstile {args[0]} took more than {TIMEOUT} s and was stopped".encode(), 2
+        printed, _ = p.communicate()  # what it printed before it stopped: where it was (a step, a lock it waited on)
+        said = f"rowstile {args[0]} took more than {TIMEOUT} s and was stopped".encode()
+        out, code = printed + (b"\n" if printed and not printed.endswith(b"\n") else b"") + said, 2
     if running.cancelled:
         raise Cancelled
     return code, out.decode("utf-8", "replace").replace("\r\n", "\n")
