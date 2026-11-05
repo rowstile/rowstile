@@ -124,9 +124,14 @@ func (w withOptions) Begin(ctx context.Context) (pgx.Tx, error) {
 	return w.db.BeginTx(ctx, w.opts)
 }
 
-// signed holds who each connection's open transaction is signed in as, by the *pgx.Conn under it, from the
-// moment TxAs signs it in until it ends: a sign-in lasts the database transaction, so its savepoints are theirs.
+// signed holds who each connection's open transaction is signed in as (a *signedIn), by the *pgx.Conn under it,
+// from the moment TxAs signs it in until it ends: a sign-in lasts the database transaction, so its savepoints are
+// theirs. Each transaction has an entry of its own, which only it removes: a pool's Commit hands the connection on
+// before TxAs returns, and the next transaction on it may have stored its own by then.
 var signed sync.Map
+
+// signedIn is who one transaction is signed in as: its entry in signed.
+type signedIn struct{ who Principal }
 
 // conn is the connection db begins on when it is one (a pgx.Tx's, a *pgxpool.Conn's, a *pgx.Conn), and nil when
 // db is a pool, which begins on a connection of its own.
@@ -161,9 +166,9 @@ func entered(db Beginner, who Principal) (inside bool, err error) {
 		return false, nil
 	}
 	before, known := signed.Load(c)
-	if outer, _ := before.(Principal); known && outer != who.canon() {
-		return true, errors.New("this transaction is signed in as " + name(outer) + " already, and a sign-in lasts " +
-			"the database transaction: " + name(who) + "'s work can't run inside it. Run it after, or in a " +
+	if outer, _ := before.(*signedIn); known && outer.who != who.canon() {
+		return true, errors.New("this transaction is signed in as " + name(outer.who) + " already, and a sign-in " +
+			"lasts the database transaction: " + name(who) + "'s work can't run inside it. Run it after, or in a " +
 			"transaction of its own (another connection)")
 	}
 	if _, onTx := db.(pgx.Tx); !onTx { // (a *pgxpool.Conn's Begin is its *pgx.Conn's)
@@ -210,8 +215,8 @@ func login(ctx context.Context, tx pgx.Tx, sql, secret string) (context.Context,
 	if err != nil {
 		return ctx, Principal{}, translate(err)
 	}
-	if _, known := signed.Load(tx.Conn()); known {
-		signed.Store(tx.Conn(), who.canon())
+	if entry, known := signed.Load(tx.Conn()); known {
+		entry.(*signedIn).who = who.canon()
 	}
 	return ActingAs(ctx, who), who, nil
 }
@@ -242,8 +247,9 @@ func TxAs(ctx context.Context, db Beginner, who Principal, fn func(ctx context.C
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx)) // after a commit, a no-op that says so
 	if !inside {
-		signed.Store(tx.Conn(), who.canon())
-		defer signed.Delete(tx.Conn())
+		entry := &signedIn{who.canon()}
+		signed.Store(tx.Conn(), entry)
+		defer signed.CompareAndDelete(tx.Conn(), entry) // this transaction's alone: a pool may have handed it on
 		err = signIn(ctx, tx, who)
 	}
 	if err == nil {

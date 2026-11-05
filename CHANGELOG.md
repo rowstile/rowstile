@@ -426,6 +426,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   found` with neither, instead of `the row 7 not found` and `null 7 not found`.
 - The Elixir and TypeScript SDKs take a null cursor (`after: nil`) as the first page. Elixir sent `""`, which the
   database refused (AZ710).
+- The Go SDK: a transaction `Tx` began on a pool no longer forgets the next transaction's sign-in. pgxpool's
+  `Commit` puts the connection back in the pool before it returns, and the next transaction on it could begin
+  before `Tx` forgot the first: its own nested `Tx`, a savepoint, was then refused as work in a transaction `Tx`
+  didn't begin.
 
 ### Upgrading
 
