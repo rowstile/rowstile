@@ -5998,7 +5998,7 @@ END $f$;
 CREATE OR REPLACE FUNCTION authz.break_glass(p_type text, p_id text, p_relation text, p_reason text,
   p_duration interval DEFAULT interval '1 hour') RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE g authz.shares; v_until timestamptz; v_audit bigint; v_held boolean;
+DECLARE g authz.shares; v_until timestamptz; v_audit bigint; v_held boolean; v_rel authz_int.shared_relations;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
@@ -6017,9 +6017,15 @@ BEGIN
      OR NOT authz.can(p_type, p_id, 'break_glass') THEN
     RAISE EXCEPTION 'you cannot break the glass on % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM authz_int.shared_relations WHERE object_type = p_type AND relation = p_relation
-                 AND subject = 'user') THEN
+  SELECT * INTO v_rel FROM authz_int.shared_relations
+  WHERE object_type = p_type AND relation = p_relation AND subject = 'user';
+  IF v_rel.relation IS NULL THEN
     RAISE EXCEPTION 'the policy does not allow sharing %.% with a user', p_type, p_relation USING HINT = 'rowstile help AZ706';
+  END IF;
+  -- the relation's `shared if` holds for whoever breaks the glass, as authz.share asks it of any share
+  IF NOT authz_int.share_if(p_type || '.' || p_relation || '.user', p_id, 'user', authz.uid()::text, '') THEN
+    RAISE EXCEPTION 'the policy does not allow you %.% on % %, even to break the glass (%)', p_type, p_relation, p_type, p_id,
+      coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = v_rel.loc), '?') USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   v_until := now() + p_duration;
   PERFORM set_config('authz_ctx.reason', p_reason, true);
