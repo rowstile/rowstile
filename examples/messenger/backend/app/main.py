@@ -213,7 +213,7 @@ SELECT c.id, c.kind, c.admins_only, m.role, m.last_read_seq,
        CASE WHEN c.kind = 'group' THEN c.title ELSE p.name END AS name, p.id AS peer_id,
        l.seq AS last_seq, l.body AS last_body, l.deleted AS last_deleted, l.created_at AS last_at,
        coalesce(ls.name, lb.name) AS last_sender, l.sender_id AS last_sender_id,
-       greatest(c.last_seq - greatest(m.last_read_seq, m.joined_seq), 0) AS unread
+       greatest(c.last_seq - m.last_read_seq, 0) AS unread
 FROM ms.chats c
 JOIN ms.members m ON m.chat_id = c.id AND m.user_id = %(me)s
 LEFT JOIN LATERAL (SELECT u.id, u.name FROM ms.members o JOIN ms.users u ON u.id = o.user_id
@@ -229,8 +229,9 @@ ORDER BY coalesce(l.created_at, c.created_at) DESC, c.id DESC"""
 def chats(user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
     """Your chats, the latest first: what row-level security lets you read (the join on ms.members only
     picks your own row, for your role and how far you have read). Unread is a difference of numbers: messages are
-    numbered one by one in each chat, and your mark moves past what you post, so no unread message is read to count
-    it (each would be checked against the read rule, which costs a function call a message)."""
+    numbered one by one in each chat, your mark starts where you joined and moves past what you post, so no unread
+    message is read to count it (each would be checked against the read rule, which costs a function call a
+    message)."""
     with db.as_user(user["id"]) as tx:
         return tx.rows(CHAT_LIST, {"me": user["id"]})
 

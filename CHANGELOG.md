@@ -639,8 +639,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `fm_owner`: start it afresh (`docker compose down -v`).
 - The messenger example's rules: a direct chat stays its two people, whoever left. Its creator who had left it, or
   the one who stayed, could put someone else in it, and its creator could start one between two others. A
-  message deleted for everyone loses its text, whoever writes it: the policy refused only a text kept when the
-  text changed. Its schema is one migration, as the file manager's is.
+  message deleted for everyone loses its text, whoever writes it (only the API cleared it). A member marks read
+  no further than the chat's last message, and someone added has read what came before, which they never see:
+  read receipts showed messages not sent yet as read, and old ones as unread once someone joined. Its schema
+  is one migration, as the file manager's is.
 
 ### Upgrading
 
