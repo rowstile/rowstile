@@ -40,8 +40,8 @@
 > sync app.folders
 > sync app.notes
 
-always | 0697f1cf5a5d
-function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
+always | 41834ee4f737
+function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 4936849e93f2 shape=77f3e79f
@@ -62,15 +62,15 @@ function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id integer, p_perm text, p_user text) | 1409a3a04a15 shape=7d31b532
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | f8dab212ac5f shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | b4934125ed34 shape=1223ad2f
-function authz.lint() | 26d1778ca007 shape=54cb1505
+function authz.lint() | cdc2b8b0b009 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | e19a46b0e0c1 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id integer) | cec8e40d450f shape=92b36157
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
 function authz.list_shares(p_type text, p_id integer) | 240ca74609bd shape=665dd3d5
 function authz.list_shares(p_type text, p_id text) | 3eb4ea871fe0 shape=36731fe1
-function authz.login_jwt(p_token text) | 40f269bfa184 shape=57d5745b
-function authz.login_key(p_token text) | 0371744d9925 shape=f3077520
+function authz.login_jwt(p_token text) | c4401be73009 shape=57d5745b
+function authz.login_key(p_token text) | f2e2bdc27f6e shape=f3077520
 function authz.pending_requests() | fb26fccd4e34 shape=872485a8
 function authz.perms(p_type text, p_id integer) | 5c62b8a0215d shape=8f3765fb
 function authz.perms(p_type text, p_id text) | a54809b73549 shape=cd5e1942
@@ -91,6 +91,7 @@ function authz.share(p_type text, p_id integer, p_relation text, p_subject_type 
 function authz.share(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 5d82a913c811 shape=126ff5f2
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | cc5687ceb3a8 shape=a6e2bc4c
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 75b0124543b1 shape=386e2b78
+function authz.sign_out() | bfe55fe173b3 shape=95de814a
 function authz.start_review(p_type text, p_id integer, p_closes_at timestamptz) | 0c4728f8ca1e shape=2de600a1
 function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 54b5115398e4 shape=879e84e5
 function authz.sync_behind() | 23649e3eda3d shape=38ef998f
@@ -110,7 +111,7 @@ function authz.view_as(p_user text, p_reason text) | bf76b2722b72 shape=5d7b6326
 function authz.who(p_type text, p_id integer, p_perm text) | 392e8fa82862 shape=b6bb06d3
 function authz.who(p_type text, p_id text, p_perm text) | bbd0e9f02dd0 shape=1cf83af9
 function authz.who_among(p_type text, p_id integer, p_perm text, p_users text[], p_principal_type text) | 3cbf9dbbd703 shape=21122f56
-function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 1a0a683f586e shape=17b9de43
+function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 3051f8f59667 shape=17b9de43
 function authz_gen."app.files:column owner_id:items"(p_row "app"."files") | 48a39bde05f6 shape=49ee3024 atomic
 function authz_gen."app.files:column owner_id:why"(p_row "app"."files") | 8824bd42f208 shape=03adb842
 function authz_gen."app.files:insert:items"(p_row "app"."files") | 5c3ae03e2b61 shape=4697daea atomic
@@ -234,6 +235,7 @@ function authz_int."user__forget_id"() | ff845dd1857b shape=d0d8b00d
 function authz_int."user__keys_gone"() | 105cdeea339c shape=5bf35a03
 function authz_int."user__keys_gone_all"() | 3d01adfca8ae shape=8da0a478
 function authz_int."user__keys_gone_id"() | 22b32b93c393 shape=0e7cbdbc
+function authz_int.act_as(p_type text, p_id text, p_check boolean) | 953a2032006c shape=338b0233
 function authz_int.actor() | 597a3fabb14f shape=36514ce1
 function authz_int.announce(p_type text, p_ids text[], p_cause text, p_notify boolean) | a3b10eaa806f shape=6c0e52b6
 function authz_int.audit(p_action text, p_object_type text, p_object_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_detail jsonb) | dd7473f6f4fb shape=4b9c4b05
@@ -260,6 +262,7 @@ function authz_int.may_manage(p_type text, p_id text, p_relation text, p_subject
 function authz_int.on_role() | 374a49793145 shape=e9d1adac
 function authz_int.on_role_permissions() | 6223f05b396c shape=0026fdba
 function authz_int.on_share() | 0856cdef73f8 shape=56b3e887
+function authz_int.one_principal(p_type text, p_id text) | 6c84613324f2 shape=c1834ccb
 function authz_int.policy_path() | e79bf262c639 shape=79d267c2
 function authz_int.requests_gone(p_type text, p_ids text[]) | ba4366db286f shape=3524efd2
 function authz_int.role_gone() | beab44fb9bb2 shape=970d6f43
@@ -299,7 +302,7 @@ schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | c621017d9647
 step cascades | 6a1ffa438b08
-step grant_api | ade58faa7afc
+step grant_api | 683ac803d217
 step grant_functions | 860e26814bd8
 step grant_views | 79e8f933ff65
 step mask_privileges | f8051dad4a89

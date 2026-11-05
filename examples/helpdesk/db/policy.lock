@@ -148,8 +148,8 @@
 > invariants: never comment: view and not ticket.view
 > invariants: never user: view and not self and not workspace.member and not workspace.connected
 
-always | 3200df711dd1
-function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
+always | 3520dba9f0a9
+function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 4936849e93f2 shape=77f3e79f
 function authz.break_glass(p_type text, p_id uuid, p_relation text, p_reason text, p_duration interval) | a1a184cb7abc shape=3b6da0b2
@@ -170,15 +170,15 @@ function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 28a793757c25 shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | e98f52f28997 shape=1223ad2f
-function authz.lint() | ce76cb3830bb shape=54cb1505
+function authz.lint() | 40b5f464f3f4 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 998f85a26f4a shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
 function authz.list_links(p_type text, p_id uuid) | 444a8ce8fb74 shape=d1c0c3ba
 function authz.list_shares(p_type text, p_id text) | 3eb4ea871fe0 shape=36731fe1
 function authz.list_shares(p_type text, p_id uuid) | 055e7a19cadd shape=a6d6a900
-function authz.login_jwt(p_token text) | 40f269bfa184 shape=57d5745b
-function authz.login_key(p_token text) | 0371744d9925 shape=f3077520
+function authz.login_jwt(p_token text) | c4401be73009 shape=57d5745b
+function authz.login_key(p_token text) | f2e2bdc27f6e shape=f3077520
 function authz.pending_requests() | fb26fccd4e34 shape=872485a8
 function authz.perms(p_type text, p_id text) | 563020901c60 shape=cd5e1942
 function authz.perms(p_type text, p_id uuid) | d1321d04a077 shape=9fa2c71e
@@ -199,6 +199,7 @@ function authz.share(p_type text, p_id text, p_relation text, p_subject_type tex
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 87f2949cb44e shape=1caa9ec9
 function authz.share(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 64daabdd2acd shape=a7761e79
 function authz.share(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | c24a738d67c8 shape=6c1be595
+function authz.sign_out() | bfe55fe173b3 shape=95de814a
 function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 54b5115398e4 shape=879e84e5
 function authz.start_review(p_type text, p_id uuid, p_closes_at timestamptz) | ec7375d1508c shape=e7e50df0
 function authz.sync_behind() | 23649e3eda3d shape=38ef998f
@@ -217,7 +218,7 @@ function authz.verify() | f23c237a91fb shape=8e0f53a6
 function authz.view_as(p_user text, p_reason text) | e510d7492c4d shape=5d7b6326
 function authz.who(p_type text, p_id text, p_perm text) | db396abf6b42 shape=1cf83af9
 function authz.who(p_type text, p_id uuid, p_perm text) | 68091c833309 shape=721cfa7a
-function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 1a0a683f586e shape=17b9de43
+function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 3051f8f59667 shape=17b9de43
 function authz.who_among(p_type text, p_id uuid, p_perm text, p_users text[], p_principal_type text) | 30cd12790511 shape=a10912c4
 function authz_gen."hd.comments:delete:items"(p_row "hd"."comments") | 1aac26b0d72e shape=a90a8498 atomic
 function authz_gen."hd.comments:delete:why"(p_row "hd"."comments") | 0363368fde03 shape=da3adce1
@@ -589,6 +590,7 @@ function authz_int."workspace__work__who"(p_id uuid) | 3ef8cbab5062 shape=fbea4e
 function authz_int."workspace__work__why"(p_id uuid, p_depth int, p_seen text[]) | 1b487513c7cb shape=76fdc128
 function authz_int."workspace__work_all__who"(p_id uuid) | 8cbfeef3c37f shape=768a1c04
 function authz_int."workspace__work_all__why"(p_id uuid, p_depth int, p_seen text[]) | d39abc641945 shape=ce8bee9a
+function authz_int.act_as(p_type text, p_id text, p_check boolean) | 953a2032006c shape=338b0233
 function authz_int.actor() | 597a3fabb14f shape=36514ce1
 function authz_int.announce(p_type text, p_ids text[], p_cause text, p_notify boolean) | a3b10eaa806f shape=6c0e52b6
 function authz_int.audit(p_action text, p_object_type text, p_object_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_detail jsonb) | dd7473f6f4fb shape=4b9c4b05
@@ -615,6 +617,7 @@ function authz_int.may_manage(p_type text, p_id text, p_relation text, p_subject
 function authz_int.on_role() | 374a49793145 shape=e9d1adac
 function authz_int.on_role_permissions() | 6223f05b396c shape=0026fdba
 function authz_int.on_share() | 0856cdef73f8 shape=56b3e887
+function authz_int.one_principal(p_type text, p_id text) | 6c84613324f2 shape=c1834ccb
 function authz_int.policy_path() | e79bf262c639 shape=79d267c2
 function authz_int.requests_gone(p_type text, p_ids text[]) | ba4366db286f shape=3524efd2
 function authz_int.role_gone() | beab44fb9bb2 shape=970d6f43
@@ -692,7 +695,7 @@ schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | c621017d9647
 step cascades | a8260bb56332
-step grant_api | 6405e738d99c
+step grant_api | 032f588abd80
 step grant_functions | 3637593e777d
 step grant_views | e49b68302498
 step mask_privileges | 26af74835f67
