@@ -468,8 +468,9 @@ def _check_problems(rows: Iterable[tuple[str, str]]) -> list[str]:
 
 def _key_text(key: object) -> str | None:
     """A row's key as Postgres writes it: 7, or (1,2) for a composite key (a field is quoted only where Postgres
-    would: when it is empty or holds a comma, a quote, a parenthesis or a space). What a message shows, and what
-    authz.explain_rule reads back (it casts a composite key's text to the key's row type)."""
+    would: when it is empty or holds a comma, a quote, a backslash, a parenthesis or one of ASCII's six spaces, and
+    for no other character). What a message shows, and what authz.explain_rule reads back (it casts a composite
+    key's text to the key's row type)."""
     if isinstance(key, (tuple, list)):
         if len(key) != 1:
             return "(" + ",".join(_field_text(v) for v in key) + ")"
@@ -481,7 +482,7 @@ def _field_text(value: object) -> str:
     if value is None:
         return ""
     text = str(value)
-    if text == "" or any(ch in text for ch in '",\\()') or any(ch.isspace() for ch in text):
+    if text == "" or any(ch in text for ch in '",\\() \t\n\r\v\f'):
         return '"' + text.replace("\\", "\\\\").replace('"', '""') + '"'
     return text
 
