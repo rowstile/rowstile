@@ -26,7 +26,8 @@ trap cleanup EXIT
 docker rm -f -v "$PG" >/dev/null 2>&1 || true
 docker network rm "$NET" >/dev/null 2>&1 || true
 
-# the recorder, with git (the review reads the base branch's policy from it), and Postgres with the command
+# the recorder, with python3 for the command and git (the review reads the base branch's policy from it), and
+# Postgres with the command
 docker build -q -t rowstile-demo-vhs demo >/dev/null
 docker image inspect rowstile:16 >/dev/null 2>&1 ||
   docker build -q -t rowstile:16 --build-arg PG_MAJOR=16 -f core/Dockerfile . >/dev/null
