@@ -73,7 +73,13 @@ defmodule Rowstile do
   @spec current() :: Principal.t() | nil
   def current, do: Process.get(:rowstile_principal)
 
-  @doc "Runs `fun` acting for `who`, and gives back what it returns; then the process acts for whoever it did before."
+  @doc """
+  Runs `fun` acting for `who`, and gives back what it returns; then the process acts for whoever it did before.
+
+  It says whom the transactions `transact/3` begins sign in as. Inside a `transact`, the statements still run as
+  that transaction's principal, whoever the code acts for: a sign-in lasts the database transaction. A `transact`
+  for `who` inside it is refused, unless `who` is the one it signed in as.
+  """
   @spec acting_as(Principal.t(), (-> result)) :: result when result: term()
   def acting_as(%Principal{} = who, fun) when is_function(fun, 0) do
     before = Process.get(:rowstile_principal)
@@ -109,21 +115,17 @@ defmodule Rowstile do
   A sign-in lasts the whole database transaction. So inside a transaction `transact` signed in already (Ecto runs
   a `Repo.transaction` inside another in the outer one; so does Postgrex, on the connection it gives), `fun` runs
   as it is when `who` is the principal it is signed in as, and is refused when it is someone else: a
-  `RuntimeError`, raised before `fun` runs or anything is sent, the outer transaction left as it was. A
-  transaction of its own (another process, or a Postgrex transaction on another connection) signs in as usual.
+  `RuntimeError`, raised before `fun` runs or anything is sent, the outer transaction left as it was. So is a
+  `transact` inside a transaction `transact` didn't begin (a `Repo.transaction`, a Postgrex transaction's
+  connection), whose sign-in can't be known. A transaction of its own (another process, or a Postgrex transaction
+  on another connection) signs in as usual.
   """
   @spec transact(db(), (-> {:ok, v} | {:error, e}) | (db() -> {:ok, v} | {:error, e}), keyword()) ::
           {:ok, v} | {:error, e | error()}
         when v: term(), e: term()
   def transact(db, fun, opts \\ []) when is_function(fun, 0) or is_function(fun, 1) do
     {who, opts} = Keyword.pop_lazy(opts, :as, fn -> current() || nobody() end)
-    signed = Process.get({:rowstile_signed, db})
-
-    if signed && signed != who do
-      raise "this transaction is signed in as #{name(signed)} already, and a sign-in lasts the database " <>
-              "transaction: #{name(who)}'s work can't run inside it. Run it after, or in a transaction of its own " <>
-              "(another connection)"
-    end
+    :ok = may_enter(db, Process.get({:rowstile_signed, db}), who)
 
     try do
       if repo?(db),
@@ -132,6 +134,25 @@ defmodule Rowstile do
     rescue
       error -> failed(error, __STACKTRACE__)
     end
+  end
+
+  # whether work for who may run on db, which transact signed in as signed (nil: none): raises before anything is sent
+  defp may_enter(db, nil, _who) do
+    if in_transaction?(db) do
+      raise "this connection is in a transaction Rowstile.transact/3 didn't begin: who it is signed in as can't " <>
+              "be known, and a sign-in lasts the database transaction. Begin it with Rowstile.transact/3, or run " <>
+              "this after it"
+    end
+
+    :ok
+  end
+
+  defp may_enter(_db, who, who), do: :ok
+
+  defp may_enter(_db, signed, who) do
+    raise "this transaction is signed in as #{name(signed)} already, and a sign-in lasts the database " <>
+            "transaction: #{name(who)}'s work can't run inside it. Run it after, or in a transaction of its own " <>
+            "(another connection)"
   end
 
   # "user 42", "service 3" or "nobody", as the database's own words name a principal
@@ -195,6 +216,16 @@ defmodule Rowstile do
 
   defp sign_in(tx, %Principal{type: type, id: id}),
     do: query!(tx, "SELECT authz.act_as($1, $2)", [type, id])
+
+  # a transaction open on db that transact may not know of: a repo's (Ecto's sandbox hides its own), or the one a
+  # Postgrex transaction's connection is in (a pool's name or pid is in none)
+  defp in_transaction?(db) do
+    cond do
+      repo?(db) -> db.in_transaction?()
+      is_struct(db, DBConnection) -> DBConnection.status(db) == :transaction
+      true -> false
+    end
+  end
 
   defp rollback(tx, reason) do
     if repo?(tx), do: tx.rollback(reason), else: Postgrex.rollback(tx, reason)

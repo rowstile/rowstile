@@ -84,6 +84,42 @@ defmodule Conformance.SdkTest do
     assert Rowstile.current() == Rowstile.user(3)
   end
 
+  test "inside a transaction transact didn't begin: refused before anything is sent, whoever it is for" do
+    # whose sign-in can't be known (Ecto runs a transaction inside another in the outer one; so does Postgrex)
+    unknown =
+      "this connection is in a transaction Rowstile.transact/3 didn't begin: who it is signed in as can't be " <>
+        "known, and a sign-in lasts the database transaction. Begin it with Rowstile.transact/3, or run this after it"
+
+    ran = self()
+
+    assert {:ok, :refused} =
+             Repo.transaction(fn ->
+               assert_raise RuntimeError, unknown, fn -> as(1, fn -> send(ran, :ran) end) end
+               # the transaction as it was: nobody signed in to it
+               setting =
+                 Repo.query!("SELECT coalesce(current_setting('authz.user_id', true), '')")
+
+               assert setting.rows == [[""]]
+               :refused
+             end)
+
+    Rows.app(fn conn ->
+      assert {:ok, :refused} =
+               Postgrex.transaction(conn, fn tx ->
+                 assert_raise RuntimeError, unknown, fn ->
+                   Rowstile.transact(tx, fn _ -> {:ok, send(ran, :ran)} end, as: Rowstile.user(1))
+                 end
+
+                 :refused
+               end)
+    end)
+
+    refute_received :ran
+
+    # acting for someone else inside a transact: whom the next transact signs in as, not whom this one's run as
+    assert as(1, fn -> Rowstile.acting_as(Rowstile.user(2), &ids/0) end) == {:ok, expected()["1"]}
+  end
+
   test "{:error, reason} rolls back, and an error that isn't rowstile's raises as it would" do
     assert as(1, fn -> Repo.query!("UPDATE app.notes SET body = 'gone' WHERE id = 1") end)
            |> elem(0) == :ok
