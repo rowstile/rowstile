@@ -87,7 +87,7 @@ sync hd.comments : view
 
 The app's route [`app/api/shapes/[table]/route.ts`](app/api/shapes/[table]/route.ts) stands in front of Electric:
 it asks the database who the request is, and hands Electric that person's shape, whatever the browser sent.
-Nobody gets a 401; an admin viewing the app as someone gets a 403 (the index holds what each person may read,
+A request with no one signed in gets a 401; an admin viewing the app as someone gets a 403 (the index holds what each person may read,
 not what a limited session may). When a share ends or a ticket is handed on, Electric sends a move-out rather
 than a delete, which its own client doesn't apply: [`src/live.ts`](src/live.ts) does. Electric's role and its
 publication are in [`db/electric.sql`](db/electric.sql) and the migration `electric_publication`.
