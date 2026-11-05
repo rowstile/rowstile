@@ -25,9 +25,9 @@ from collections.abc import Iterable
 from typing import NotRequired, TypeAlias, TypedDict
 
 from . import Compiler, PolicyError, migrate, parse_policy
+from .compiler import subject_key
 from .connection import Db
 from .evaluate import Difference, Listing, Reference, alike_in, compare, facts, names_read, worlds_to_try
-from .output import subject_key
 from .parse import (
     KEYWORDS,
     And,

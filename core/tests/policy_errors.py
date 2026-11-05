@@ -452,6 +452,13 @@ COMPILE = [
         "AZ207",
     ),
     (
+        "a subject a relation is shared with on two lines, by two permissions",
+        "  reader : grp#member  shared by view\n  can view = owner or reader\n",
+        "doc.reader is shared with grp#member on line 8 too, by another permission or on another condition",
+        10,
+        "AZ212",
+    ),
+    (
         "a column rule on select",
         "  can view = owner\nrules alt.docs\n  select owner_id : view\n",
         "only update rules can name columns",

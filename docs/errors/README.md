@@ -32,6 +32,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ209](AZ209.md): A group made only of itself
 - [AZ210](AZ210.md): Custom roles written where they can't be
 - [AZ211](AZ211.md): Custom roles from a relation that can't name their owner
+- [AZ212](AZ212.md): A subject shared two ways
 
 ## Permissions and inheritance
 
