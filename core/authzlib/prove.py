@@ -58,36 +58,40 @@ def shrink(ref: Reference, inv: Invariant, data: Data) -> Data:
 
 def prove(pol: Policy, worlds: int = WORLDS, seed: int = 0, max_size: int = MAX_SIZE) -> list[Proof]:
     """One result per invariant: whether it held in every world tried, and for a broken one who holds it, on
-    what, in which world."""
+    what, in which world. Each world's data is made once, and asked of every invariant it has not broken yet."""
     ref = Reference(pol)
-    out: list[Proof] = []
-    for inv in pol.invariants:
-        result: Proof = {
+    tried = list(worlds_to_try([pol], worlds, str(seed), max_size, by_size=True))
+    size = max(w.size for w in tried)
+    out: list[Proof] = [
+        {
             "invariant": f"never {inv.type}: {inv.src}",
             "type": inv.type,
             "line": str(inv.loc),
             "holds": True,
-            "worlds": 0,
+            "worlds": len(tried),
+            "size": size,
         }
-        n = 0
-        tried = list(worlds_to_try([pol], worlds, str(seed), max_size, by_size=True))
-        result["size"] = max(w.size for w in tried)
-        for w in tried:
-            n += 1
-            data = w.data(pol)
-            if broken(ref, inv, data):
-                small = shrink(ref, inv, data)
-                found = broken(ref, inv, small)
-                assert found is not None  # shrink keeps the world broken
-                who, obj = found
-                # the rows of the types the counterexample names: the invariant's, the holder's, and those the world
-                # says something of (its links, roles, conditions and columns)
-                used = {inv.type, *([principal_of(who, pol.types)[0]] if who != "nobody" else [])}
-                lines = w.describe(pol, small, used | World.named(pol, small))
-                result.update(holds=False, who=who, object=obj, world=lines)
-                break
-        result["worlds"] = n
-        out.append(result)
+        for inv in pol.invariants
+    ]
+    left = list(range(len(pol.invariants)))
+    for n, w in enumerate(tried, 1):
+        if not left:
+            break
+        data = w.data(pol)
+        for k in list(left):
+            inv = pol.invariants[k]
+            if not broken(ref, inv, data):
+                continue
+            small = shrink(ref, inv, data)
+            found = broken(ref, inv, small)
+            assert found is not None  # shrink keeps the world broken
+            who, obj = found
+            # the rows of the types the counterexample names: the invariant's, the holder's, and those the world
+            # says something of (its links, roles, conditions and columns)
+            used = {inv.type, *([principal_of(who, pol.types)[0]] if who != "nobody" else [])}
+            lines = w.describe(pol, small, used | World.named(pol, small))
+            out[k].update(holds=False, who=who, object=obj, world=lines, worlds=n)
+            left.remove(k)
     return out
 
 

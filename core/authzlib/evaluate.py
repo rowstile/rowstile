@@ -237,19 +237,7 @@ class Reference:
 
     def conditions(self) -> list[CondKey]:
         """Every {sql} condition, by type, in the policy, its rules and invariants."""
-        found: set[CondKey] = set()
-
-        def walk(t: Type, node: Expr) -> None:
-            found.update((t.name, leaf.sql) for leaf, _ in leaves(node) if isinstance(leaf, Cond))
-
-        for t in self.types.values():
-            for p in t.perms.values():
-                walk(t, p.expr)
-        for rule in self.rules:
-            walk(self.type_of_table(rule.table), rule.expr)
-        for inv in self.pol.invariants:
-            walk(self.types[inv.type], inv.expr)
-        return sorted(found)
+        return conditions_of(self.pol)
 
     def type_of_table(self, table: str) -> Type:
         return self.of_table[table]
@@ -417,6 +405,50 @@ class Reference:
                 return set.union(*[self.eval_expr(state, t, x, defining) for x in node.items])
 
 
+def remembered(pols: Sequence[Policy], what: tuple[object, ...], make: Callable[[], V]) -> V:
+    """What make gives for these policies (these very objects, in order), worked out once for the last few asked
+    of: every world of a comparison asks the same of the policies it shares. A policy is read, never changed, here."""
+    for k, (kept, key, value) in enumerate(REMEMBERED):
+        if key == what and len(kept) == len(pols) and all(a is b for a, b in zip(kept, pols, strict=True)):
+            REMEMBERED.insert(0, REMEMBERED.pop(k))
+            return cast(V, value)  # what make gave for these
+    value = make()
+    REMEMBERED.insert(0, (tuple(pols), what, value))
+    del REMEMBERED[64:]
+    return value
+
+
+REMEMBERED: list[tuple[tuple[Policy, ...], tuple[object, ...], object]] = []  # remembered's answers, newest first
+
+
+def conditions_of(pol: Policy) -> list[CondKey]:
+    """Every {sql} condition, by type, in the policy, its rules and invariants."""
+
+    def make() -> list[CondKey]:
+        found: set[CondKey] = set()
+
+        def walk(t: Type, node: Expr) -> None:
+            found.update((t.name, leaf.sql) for leaf, _ in leaves(node) if isinstance(leaf, Cond))
+
+        governing: dict[str, Type] = {}  # a rule's table, its type's (AZ401: one type governs it)
+        for t in pol.types.values():
+            governing.setdefault(t.table, t)
+            for p in t.perms.values():
+                walk(t, p.expr)
+        for rule in pol.rules:
+            walk(governing[rule.table], rule.expr)
+        for inv in pol.invariants:
+            walk(pol.types[inv.type], inv.expr)
+        return sorted(found)
+
+    return remembered([pol], ("conditions",), make)
+
+
+def read_conditions(pol: Policy) -> list[CondKey]:
+    """The policy's conditions (conditions_of), and each type's where."""
+    return [*conditions_of(pol), *((t.name, t.where) for t in pol.types.values() if t.where)]
+
+
 # --- small worlds ----------------------------------------------------------------------------------
 def source_key(t: Type, rname: str, src: Source, st: str, sr: str | None) -> tuple[object, ...]:
     """What a relation's source reads, whatever the relation is called: two policies that read the same
@@ -444,13 +476,17 @@ class Difference(TypedDict):
 def alike_in(pols: Iterable[Policy]) -> frozenset[str]:
     """The columns the policies' simple conditions compare with texts the column may hold as one value
     (conditions.alike_columns: 'a' and 'A' under a case-insensitive collation)."""
-    conds: list[str] = []
-    for p in pols:
-        conds += [c for _, c in Reference(p).conditions()]
-        for t in p.types.values():
-            conds += [t.where] if t.where else []
-            conds += [s.where for r in t.relations.values() for s in r.sources if s.kind == "table" and s.where]
-    return alike_columns(node for c in dict.fromkeys(conds) if (node := simple(c)) is not None)
+    pols = list(pols)
+
+    def make() -> frozenset[str]:
+        conds: list[str] = []
+        for p in pols:
+            conds += [c for _, c in read_conditions(p)]
+            for t in p.types.values():
+                conds += [s.where for r in t.relations.values() for s in r.sources if s.kind == "table" and s.where]
+        return alike_columns(node for c in dict.fromkeys(conds) if (node := simple(c)) is not None)
+
+    return remembered(pols, ("alike",), make)
 
 
 def facts(sql: str, alike: frozenset[str]) -> Node | None:
@@ -499,9 +535,11 @@ def named_ids(pols: Sequence[Policy]) -> dict[str, list[str]]:
     for such a condition to hold on some row and not on another. Only ids of the key's type: a whole number for a
     bigint key (no id lies between 7 and 8), any number for a numeric one, a text for a text one. Worked out once
     for the policies of the last few comparisons (each world asks)."""
-    for kept, known in NAMED:
-        if len(kept) == len(pols) and all(a is b for a, b in zip(kept, pols, strict=True)):
-            return known
+    return remembered(pols, ("named ids",), lambda: ids_named(pols))
+
+
+def ids_named(pols: Sequence[Policy]) -> dict[str, list[str]]:
+    """named_ids, worked out."""
     alike = alike_in(pols)
     hows: dict[str, list[tuple[str, Scalar]]] = {}
     for p in pols:
@@ -512,8 +550,7 @@ def named_ids(pols: Sequence[Policy]) -> dict[str, list[str]]:
             for src in r.sources
             if (col := linked_column(src)) is not None
         }
-        conds = [*Reference(p).conditions(), *((t.name, t.where) for t in p.types.values() if t.where)]
-        for tname, cond in conds:
+        for tname, cond in read_conditions(p):
             node = facts(cond, alike)
             for col, how in columns_of(node).items() if node is not None else ():
                 st = linked.get((tname, col))
@@ -536,12 +573,7 @@ def named_ids(pols: Sequence[Policy]) -> dict[str, list[str]]:
                 ids.append(str(int(v)) if key in WHOLE_KEYS else str(v))
         if ids:
             out[st] = list(dict.fromkeys(ids))
-    NAMED.insert(0, (list(pols), out))
-    del NAMED[4:]
     return out
-
-
-NAMED: list[tuple[list[Policy], dict[str, list[str]]]] = []  # named_ids' last answers, with their policies
 
 
 def between(used: list[tuple[str, Scalar]], values: list[Scalar]) -> list[Scalar]:
@@ -609,15 +641,13 @@ class World:
         self.pols = list(pols)
         self.density, self.chained = density, chained
         self._followed: dict[int, tuple[Policy, set[tuple[str, str]]]] = {}
-        self._alike: dict[int, tuple[Policy, frozenset[str]]] = {}
+        self._domains: dict[int, tuple[Policy, dict[tuple[str, str], list[Scalar]]]] = {}
         self._named: dict[str, list[str]] | None = None
 
     def facts(self, pol: Policy, sql: str) -> Node | None:
         """A condition as the world reads it from its rows' columns, or None when it draws the rows it holds for
         (evaluate.facts, over the world's policies and pol)."""
-        if id(pol) not in self._alike or self._alike[id(pol)][0] is not pol:
-            self._alike[id(pol)] = (pol, alike_in([*self.pols, pol]))
-        return facts(sql, self._alike[id(pol)][1])
+        return facts(sql, alike_in([*self.pols, pol]))
 
     def fill(self) -> float:
         """How many rows a column names something on."""
@@ -685,16 +715,24 @@ class World:
     def domains(self, pol: Policy) -> dict[tuple[str, str], list[Scalar]]:
         """{(type, column): the values it takes}: those the simple conditions of the world's policies compare it
         with, one none of them names, true and false for a column used alone, user ids for one compared with
-        authz.uid(), and NULL."""
-        hows: dict[tuple[str, str], list[tuple[str, Scalar]]] = {}
-        for p in [*self.pols, pol]:
-            conds = list(Reference(p).conditions()) + [(t.name, t.where) for t in p.types.values() if t.where]
-            for tname, cond in conds:
-                node = self.facts(pol, cond)
-                if node is not None:
-                    for col, how in columns_of(node).items():
-                        hows.setdefault((tname, col), []).extend(how)
-        return {key: self.values_of(used) for key, used in sorted(hows.items())}
+        authz.uid(), and NULL. The same in every world but for the user ids: how the conditions read each column is
+        worked out once for the policies."""
+        if id(pol) not in self._domains or self._domains[id(pol)][0] is not pol:
+            pols = [*self.pols, pol]
+
+            def make() -> list[tuple[tuple[str, str], list[tuple[str, Scalar]]]]:
+                hows: dict[tuple[str, str], list[tuple[str, Scalar]]] = {}
+                for p in pols:
+                    for tname, cond in read_conditions(p):
+                        node = self.facts(pol, cond)
+                        if node is not None:
+                            for col, how in columns_of(node).items():
+                                hows.setdefault((tname, col), []).extend(how)
+                return sorted(hows.items())
+
+            hows = remembered(pols, ("hows",), make)
+            self._domains[id(pol)] = (pol, {key: self.values_of(used) for key, used in hows})
+        return self._domains[id(pol)][1]
 
     def values_of(self, used: list[tuple[str, Scalar]]) -> list[Scalar]:
         """The values a column takes, from how the simple conditions read it (columns_of's hows)."""
@@ -759,11 +797,7 @@ class World:
         if not self.conds:
             return
         domains, linked = self.domains(pol), self.linked(pol)
-        conds = [
-            cond
-            for p in [*self.pols, pol]
-            for cond in [*Reference(p).conditions(), *((t.name, t.where) for t in p.types.values() if t.where)]
-        ]
+        conds = [cond for p in [*self.pols, pol] for cond in read_conditions(p)]
         wanted: dict[str, list[tuple[Node, bool]]] = {}
         for tname, cond in dict.fromkeys(conds):
             node = self.facts(pol, cond)
@@ -865,8 +899,7 @@ class World:
                                 (o, x, rng.choice(w)) for o in ids for x in s if rng.random() < rate
                             ],
                         )
-        ref = Reference(pol)
-        for tname, cond in ref.conditions():
+        for tname, cond in conditions_of(pol):
             # signed_in, anyone and nobody mean the same in every world (Reference.eval_expr): nothing to draw;
             # a simple condition reads the row's columns
             if cond in KEYWORDS.values():
@@ -1377,11 +1410,10 @@ class Listing:
                 self.types.setdefault(t.name, t)
         self.listed, self.whole, self.cut, self.steps, self.complete = 0, -1, False, 0, False
         self._renamings: dict[tuple[tuple[str, int], ...], list[dict[str, dict[str, str]]]] = {}
-        self._conditions: dict[int, tuple[Policy, list[CondKey]]] = {}
         found = cone(self.pols)
         if found is None:
             every = {(t.name, r) for t in self.types.values() for r in t.relations}
-            conds = {c for p in self.pols for c in Reference(p).conditions()}
+            conds = {c for p in self.pols for c in conditions_of(p)}
             found = Cone(set(self.types), conds, every)
         self.cone = found
         # a simple condition on a column a relation reads reads its links (Reference.row_values): they vary too
@@ -1528,11 +1560,6 @@ class Listing:
             else ""
         )
         return f"{self.listed:,} listed: every one of up to {MOST_ROWS} rows of each type{most}{cut}"
-
-    def conditions(self, pol: Policy) -> list[CondKey]:
-        if id(pol) not in self._conditions or self._conditions[id(pol)][0] is not pol:
-            self._conditions[id(pol)] = (pol, Reference(pol).conditions())
-        return self._conditions[id(pol)][1]
 
     def worlds(self) -> Iterator[Listed]:
         """The listed worlds, those with fewer links first, and of those, fewer rows first; up to STEPS steps of
@@ -1720,7 +1747,7 @@ class Listed(World):
                 out.valid[t.name] = [
                     i for n, i in at.items() if not t.where or squeeze_sql(t.where) in self.classes[(t.name, n)].holds
                 ]
-        for tname, cond in self.listing.conditions(pol):
+        for tname, cond in conditions_of(pol):
             if cond in KEYWORDS.values():
                 out.cond[(tname, cond)] = []
             elif facts(cond, self.listing.alike) is None:
