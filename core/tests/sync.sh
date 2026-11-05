@@ -535,6 +535,27 @@ go; wait
 same "... and the index holds what authz.list gives"
 PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" -c "DELETE FROM authz.shares WHERE subject_id = '3'"
 same "... and put back"
+# three writers: a move of Design docs under Globex holds its work; a share on Globex and one on Design docs wait for
+# it. When it commits, each one's next look (what reads its change now) reaches what the other holds: a lock row
+# taken then, below one held, is taken only if nobody holds it, else the work lets go of them all and takes them
+# again in order, so neither waits for the other
+race
+PGAPPNAME=authz_sync_a psql -X -q -d "$DB" > "$T/a" 2>&1 <<SQL &
+BEGIN;
+UPDATE app.folders SET parent_id = 20 WHERE id = 4;
+SET CONSTRAINTS ALL IMMEDIATE;
+$HOLD;
+COMMIT;
+SQL
+held authz_sync_a
+PGAPPNAME=authz_sync_b psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "$(share folder 20 3)" > "$T/b" 2>&1 &
+PGAPPNAME=authz_sync_c psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "$(share folder 4 6)" > "$T/c" 2>&1 &
+blocked authz_sync_b && blocked authz_sync_c && go
+wait
+[ ! -s "$T/b" ] && [ ! -s "$T/c" ] && ok "three writers whose later looks meet: both shares commit, neither ends in a deadlock" ||
+  bad "three writers whose later looks meet" "$(cat "$T/b" "$T/c")"
+same "... and the index holds what authz.list gives"
+PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" -c "DELETE FROM authz.shares WHERE subject_id IN ('3', '6')"
 
 echo "-- keyed by folder"
 BY=$(echo "$SYNCED" | sed 's/^sync app.files : view$/sync app.files : view by folder/; s/^sync app.folders$/sync app.folders by folder/')

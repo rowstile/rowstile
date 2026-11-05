@@ -1102,33 +1102,58 @@ END $f$;"""
     -- READ COMMITTED: the lock rows of what the work writes (what changed, and what reads it), and, shared, of what
     -- it reads (the folders above, what they link to), in one order. A writer whose work meets this one's waits for
     -- it, then sees what it committed; once they are held, what reads the changes is looked for again, and the lock
-    -- rows of anything new are taken too, until there is none
-    v_mode := array_fill(0, ARRAY[{STRIPES}]);
+    -- rows of anything new are taken too, until there is none. A later pass may need a lock row below one it holds
+    -- (or one it holds shared, now to write): taken out of order, two writers could wait on each other, so it takes
+    -- those only if nobody holds them (NOWAIT); when one is held, it lets go of every lock row it took (the block's
+    -- subtransaction rolled back) and takes them all again, in order
     LOOP
-      v_round := authz_int.sync_spread(v_tx, 0);
-      IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id = '*') THEN
-        v_w := ARRAY(SELECT generate_series(0, {STRIPES - 1}));
-        v_r := '{{}}';
-      ELSE
-        v_w := ARRAY(SELECT DISTINCT pg_catalog.hashtext(x.type || ':' || x.id) & {STRIPES - 1}
-                     FROM authz_int.sync_todo x WHERE x.txid = v_tx);
-        v_r := ARRAY(SELECT DISTINCT pg_catalog.hashtext(d.k) & {STRIPES - 1} FROM (
-                        {self.read_sql()}) d(k) WHERE d.k IS NOT NULL);
-      END IF;
-      v_n := 0;
-      FOR v_s, v_x IN SELECT z.s, bool_or(z.x) FROM (SELECT unnest(v_w) AS s, true AS x UNION ALL SELECT unnest(v_r), false) z
-                      GROUP BY z.s ORDER BY z.s LOOP
-        CONTINUE WHEN v_mode[v_s + 1] = 2 OR (NOT v_x AND v_mode[v_s + 1] = 1);
-        IF v_x THEN
-          UPDATE authz_int.sync_stripes SET n = n WHERE stripe = v_s;
-          v_mode[v_s + 1] := 2;
-        ELSE
-          PERFORM 1 FROM authz_int.sync_stripes WHERE stripe = v_s FOR SHARE;
-          v_mode[v_s + 1] := 1;
+      BEGIN
+        v_mode := array_fill(0, ARRAY[{STRIPES}]);
+        v_hi := -1;
+        LOOP
+          v_round := authz_int.sync_spread(v_tx, 0);
+          IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id = '*') THEN
+            v_w := ARRAY(SELECT generate_series(0, {STRIPES - 1}));
+            v_r := '{{}}';
+          ELSE
+            v_w := ARRAY(SELECT DISTINCT pg_catalog.hashtext(x.type || ':' || x.id) & {STRIPES - 1}
+                         FROM authz_int.sync_todo x WHERE x.txid = v_tx);
+            v_r := ARRAY(SELECT DISTINCT pg_catalog.hashtext(d.k) & {STRIPES - 1} FROM (
+                            {self.read_sql()}) d(k) WHERE d.k IS NOT NULL);
+          END IF;
+          v_n := 0;
+          FOR v_s, v_x IN SELECT z.s, bool_or(z.x) FROM (SELECT unnest(v_w) AS s, true AS x UNION ALL SELECT unnest(v_r), false) z
+                          GROUP BY z.s ORDER BY z.s LOOP
+            CONTINUE WHEN v_mode[v_s + 1] = 2 OR (NOT v_x AND v_mode[v_s + 1] = 1);
+            v_nowait := v_s <= v_hi;
+            IF v_nowait THEN
+              IF v_x THEN
+                PERFORM 1 FROM authz_int.sync_stripes WHERE stripe = v_s FOR UPDATE NOWAIT;
+              ELSE
+                PERFORM 1 FROM authz_int.sync_stripes WHERE stripe = v_s FOR SHARE NOWAIT;
+              END IF;
+              v_nowait := false;
+            END IF;
+            IF v_x THEN
+              UPDATE authz_int.sync_stripes SET n = n WHERE stripe = v_s;
+              v_mode[v_s + 1] := 2;
+            ELSE
+              PERFORM 1 FROM authz_int.sync_stripes WHERE stripe = v_s FOR SHARE;
+              v_mode[v_s + 1] := 1;
+            END IF;
+            v_hi := greatest(v_hi, v_s);
+            v_n := v_n + 1;
+          END LOOP;
+          EXIT WHEN v_n = 0;
+        END LOOP;
+        EXIT;
+      EXCEPTION WHEN lock_not_available THEN
+        -- (a wait the session's lock_timeout ended is the caller's error)
+        IF NOT v_nowait THEN
+          RAISE;
         END IF;
-        v_n := v_n + 1;
-      END LOOP;
-      EXIT WHEN v_n = 0;
+        v_nowait := false;
+      END;
     END LOOP;
   END IF;"""
 
@@ -1244,7 +1269,7 @@ LANGUAGE plpgsql {DEF_CURRENT} SET jit = off SET enable_mergejoin = off AS $f$
 DECLARE
   v_tx bigint := txid_current();
   v_round int;
-  v_mode int[]; v_w int[]; v_r int[]; v_s int; v_x boolean;
+  v_mode int[]; v_w int[]; v_r int[]; v_s int; v_x boolean; v_hi int; v_nowait boolean := false;
   v_ids text[]; v_part text[]; v_from int; v_now text[];
   v_keys text[] := '{{}}';     -- the keys a principal gained or lost
   v_came text[] := '{{}}';     -- the principals who are somebody now, and held no key (type:id)

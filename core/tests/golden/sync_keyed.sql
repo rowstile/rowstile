@@ -7127,7 +7127,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET jit = off SET
 DECLARE
   v_tx bigint := txid_current();
   v_round int;
-  v_mode int[]; v_w int[]; v_r int[]; v_s int; v_x boolean;
+  v_mode int[]; v_w int[]; v_r int[]; v_s int; v_x boolean; v_hi int; v_nowait boolean := false;
   v_ids text[]; v_part text[]; v_from int; v_now text[];
   v_keys text[] := '{}';     -- the keys a principal gained or lost
   v_came text[] := '{}';     -- the principals who are somebody now, and held no key (type:id)
