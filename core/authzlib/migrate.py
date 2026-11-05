@@ -18,7 +18,8 @@ next migration holds only what changed:
   made, some every time
 
 A new version of rowstile is a migration only when it makes something different: the lock holds a hash of
-the steps every migration runs, beside everything else, and not the version it was written by.
+the steps every migration runs, beside everything else. The version it was written by is in its first line, for
+the downgrade guard (a newer one's lock is refused), and a new version alone writes no migration.
 
 The first migration, with no lock, is the whole compiled policy, which also applies over a database
 that already has a policy. Each migration checks that the database is where the lock said (the lock's

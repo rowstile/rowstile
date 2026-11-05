@@ -47,6 +47,7 @@ from authzlib import (  # noqa: E402
     database,
     draft,
     evaluate,
+    migrate,
     parse,
     parse_policy,
     statements,
@@ -100,6 +101,14 @@ def errors_prelude() -> str:
 
 def compiled(name: str, transaction: bool = True) -> str:
     return Compiler(parse_policy(read(POLICIES[name]), POLICIES[name])).compile(POLICIES[name], transaction)
+
+
+def one_migration(policy: str, lock_text: str, name: str = "policy") -> migrate.Migration:
+    """The migration from the lock file's text ('': the first) to this policy, in one part (no tree built beside
+    first) and with no downgrade guard: migrate.migration's own answer, which the command's (database.migrations)
+    builds on."""
+    sql, comp, _ = database.migratable(policy, {})
+    return migrate.migration(sql, comp, database.lock_file(lock_text), name)
 
 
 # the docs app's policy with sync lines (a preview: the sync index), as tests/sync.sh applies it
@@ -551,7 +560,7 @@ class Golden(unittest.TestCase):
             mock.patch.object(migrate, "BUILD", "0.0.0-dev+build"),
             mock.patch.object(migrate, "__version__", "0.0.0-dev"),
         ):
-            sql = database.migration(new, {}, migrate.lock_of(database.migratable(text, {})[1])).sql
+            sql = one_migration(new, migrate.lock_of(database.migratable(text, {})[1])).sql
         self.assertIn("0.0.0-dev+build", sql)
         self.check("docs.migration.sql", sql.replace("0.0.0-dev+build", "BUILD").replace("0.0.0-dev", "VERSION"))
 
@@ -3631,10 +3640,10 @@ class Migrations(unittest.TestCase):
         return self.migrate.lock_of(database.migratable(text, {})[1])
 
     def test_the_same_policy_gives_the_same_bytes(self) -> None:
-        a, b = database.migration(self.text, {}, ""), database.migration(self.text, {}, "")
+        a, b = one_migration(self.text, ""), one_migration(self.text, "")
         self.assertEqual((a.sql, a.lock), (b.sql, b.lock))
         self.assertEqual(self.migrate.parse_lock(a.lock).text, a.lock)
-        self.assertTrue(database.migration(self.text, {}, a.lock).empty)
+        self.assertTrue(one_migration(self.text, a.lock).empty)
 
     def test_a_trees_index_is_dropped_by_its_schema(self) -> None:
         # by its bare name, DROP INDEX looks on the search path: another schema's index of that name would go
@@ -3647,14 +3656,14 @@ class Migrations(unittest.TestCase):
             "  linked_into : folder      = app.folder_links(folder_id -> parent_id)  -- also shown inside these\n",
             "",
         )
-        m = database.migration(new, {}, self.lock(self.text))
+        m = one_migration(new, self.lock(self.text))
         self.assertIn('DROP INDEX IF EXISTS authz_int."folder__linked_into_parent__tree_ancestor_idx";', m.sql)
         self.assertNotIn('DROP INDEX IF EXISTS "folder__linked_into_parent__tree_ancestor_idx";', m.sql)
         # a lock written before keyed them so: read as the same index, it needs no migration (no tree rebuilt)
         lock = self.lock(self.text)
         older = re.sub(r'(?m)^index authz_int\.("[^"]+")', r"index \1", lock)
         self.assertEqual(older.count('\nindex "'), 2, older)
-        self.assertTrue(database.migration(self.text, {}, older).empty)
+        self.assertTrue(one_migration(self.text, older).empty)
         self.assertEqual(self.migrate.parse_lock(older).objects, self.migrate.parse_lock(lock).objects)
 
     def test_a_text_in_a_dollar_quote(self) -> None:
@@ -3666,7 +3675,7 @@ class Migrations(unittest.TestCase):
             self.assertEqual(quoted.index(tag, len(tag)), len(tag) + len(text), quoted)
 
     def test_the_first_is_the_whole_policy(self) -> None:
-        m = database.migration(self.text, {}, "")
+        m = one_migration(self.text, "")
         self.assertIn(compiled("docs", transaction=False).split("\n", 1)[1], m.sql)
         self.assertNotIn("$authz_guard$", m.sql)
 
@@ -3676,7 +3685,7 @@ class Migrations(unittest.TestCase):
             "  can share = owner or folder.share\n",
             "  can share = owner or folder.share\n  can comment = folder.view\n",
         )
-        m = database.migration(new, {}, self.lock(self.text))
+        m = one_migration(new, self.lock(self.text))
         self.assertIn('CREATE VIEW authz_int."file__comment"', m.sql)
         self.assertIn("CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text, p_perm text)", m.sql)
         self.assertNotIn('CREATE TABLE authz_int."folder__parent__tree"', m.sql)
@@ -3691,14 +3700,14 @@ class Migrations(unittest.TestCase):
         self.assertIn("> rules app.files", meaning)
         self.assertEqual([x for x in meaning if x.startswith("> test")], [])
         # a type line that changes is what the migration says changed
-        m = database.migration(
-            replaced(self.text, "type org = app.orgs\n", "type org = app.orgs (id int)\n"), {}, self.lock(self.text)
+        m = one_migration(
+            replaced(self.text, "type org = app.orgs\n", "type org = app.orgs (id int)\n"), self.lock(self.text)
         )
         self.assertEqual(m.summary, ["- type org = app.orgs", "+ type org = app.orgs (id int)"])
 
     def test_lines_that_only_move_need_no_migration(self) -> None:
         moved = replaced(self.text, "app role app_user\n", "app role app_user\n\n-- a note\n")
-        self.assertTrue(database.migration(moved, {}, self.lock(self.text)).empty)
+        self.assertTrue(one_migration(moved, self.lock(self.text)).empty)
         sql, comp, _ = database.migratable(moved, {})
         pushed = self.migrate.migration(sql, comp, self.migrate.parse_lock(self.lock(self.text)), lines=True)
         self.assertIn("DELETE FROM authz_gen.policy_lines", pushed.sql)
@@ -3720,12 +3729,12 @@ class Migrations(unittest.TestCase):
         lock = self.lock(self.text)
         older = re.sub(r"^# rowstile \S+:", "# rowstile 0.0.1:", lock, count=1, flags=re.M)
         self.assertNotEqual(older, lock)
-        self.assertTrue(database.migration(self.text, {}, older).empty)
+        self.assertTrue(one_migration(self.text, older).empty)
 
     def test_a_changed_step_every_migration_runs_is_a_migration(self) -> None:
         lock = self.lock(self.text)
         self.assertRegex(lock, r"(?m)^always \| [0-9a-f]{12}$")
-        m = database.migration(self.text, {}, re.sub(r"(?m)^always \| \w+$", "always | 000000000000", lock))
+        m = one_migration(self.text, re.sub(r"(?m)^always \| \w+$", "always | 000000000000", lock))
         self.assertIn("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;", m.sql)
         self.assertEqual(m.summary, ["the same policy; what rowstile makes of it changed"])
         self.assertIn(f"always | {self.migrate.always_hash(database.migratable(self.text, {})[1])}", m.lock)
@@ -3746,7 +3755,7 @@ class Migrations(unittest.TestCase):
         lock = self.lock(self.text)
         older = re.sub(r"(?m)^step grant_api \| \w+$", "step grant_api | 000000000000", lock)
         self.assertNotEqual(older, lock)
-        m = database.migration(self.text, {}, older)
+        m = one_migration(self.text, older)
         self.assertRegex(m.sql, r"GRANT EXECUTE ON FUNCTION\n  authz\.uid\(\),")
         self.assertEqual(m.lock, lock)
 
@@ -3756,7 +3765,7 @@ class Migrations(unittest.TestCase):
         line = r'(?m)^(function authz_int\."folder__parent__tree_check_loops"\(p_ids bigint\[\]\) \| )\w+'
         older = re.sub(line, r"\g<1>000000000000", lock)
         self.assertNotEqual(older, lock)
-        m = database.migration(self.text, {}, older)
+        m = one_migration(self.text, older)
         self.assertIn('CREATE OR REPLACE FUNCTION authz_int."folder__parent__tree_check_loops"(p_ids bigint[])', m.sql)
         self.assertEqual(m.rebuilt, [])
         # (the step every migration runs names each kept tree's rebuild, which runs only where its tables changed)
@@ -3769,7 +3778,7 @@ class Migrations(unittest.TestCase):
         # same: the migration runs them, and writes the line
         lock = re.sub(r"(?m)^always \| \w+\n", "", self.lock(self.text))
         self.assertIsNone(self.migrate.parse_lock(lock).always)
-        m = database.migration(self.text, {}, lock)
+        m = one_migration(self.text, lock)
         self.assertIn("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;", m.sql)
         self.assertEqual(m.summary, ["the same policy; what rowstile makes of it changed"])
         self.assertRegex(m.lock, r"(?m)^always \| [0-9a-f]{12}$")
@@ -3777,7 +3786,7 @@ class Migrations(unittest.TestCase):
         older = re.sub(r"^# rowstile \S+:", "# rowstile 0.0.1:", self.lock(self.text), count=1, flags=re.M)
         older = re.sub(r"(?m)^always \| \w+$", "always | 000000000000", older)
         self.assertEqual(
-            database.migration(self.text, {}, older).summary,
+            one_migration(self.text, older).summary,
             [f"rowstile 0.0.1 -> {authzlib.__version__}: what the new version makes differently"],
         )
 

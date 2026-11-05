@@ -38,7 +38,7 @@ def trigger_if_table(table: str, trigger_sql: str, what: str) -> str:
 
 def trigger_if_partitioned(table: str, trigger_sql: str) -> str:
     """Create a trigger only where the table is partitioned (what it is for only happens there). The comments name
-    the trigger for the migrations (statements.made) and say where it is (database.unchanged)."""
+    the trigger for the migrations (statements.made) and say where it is (database.intact)."""
     m = made(trigger_sql)
     assert m is not None, "a CREATE TRIGGER makes a trigger"
     kind, key = m

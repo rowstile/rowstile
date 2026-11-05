@@ -28,7 +28,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
       compiled into one plpgsql function `pg_temp.authz_policy_tests()` returning a row per check
     - `refusals.py` — refused writes that say why, `authz.explain_rule`, `authz.who_among`
     - `draft.py` — a first policy from the catalog (`rowstile init`)
-    - `base.py` — persistent tables (`authz.shares`, `authz.audit`, ...), migrations, `GENERATED_FUNCTIONS`
+    - `base.py` — persistent tables (`authz.shares`, `authz.audit`, ...; a new column last, with an
+      `ADD COLUMN IF NOT EXISTS` beside it), `authz.ctx`, `GENERATED_FUNCTIONS`
     - `sqlutil.py` — quoting helpers (`q`, `qt`, `lit`, ...), `this.`, and `reads_more` (whether a condition
       reads more than its row: then it runs with the policy's rights)
     - `conditions.py` — simple conditions (`{not archived}`, `{owner_id = authz.uid()}`) read as facts about

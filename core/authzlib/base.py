@@ -1,4 +1,6 @@
-"""SQL kept across re-applies: the tables people's data lives in, and migrations."""
+"""SQL kept across re-applies: the tables people's data lives in, in schema authz (CREATE TABLE IF NOT EXISTS; a
+new column goes last, with an ADD COLUMN IF NOT EXISTS beside it for the databases a release before made),
+authz.ctx and authz.link_hashes; and the lists of the functions each apply makes again."""
 
 BASE_SQL = r"""-- Base objects (kept across re-applies)
 CREATE SCHEMA IF NOT EXISTS authz;

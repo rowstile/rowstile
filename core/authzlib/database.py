@@ -423,16 +423,6 @@ def lock_file(lock_text: str | None) -> migrate.Lock:
         ) from None
 
 
-def migration(
-    policy: str, files: Mapping[str, object] | str | None, lock_text: str | None, name: str = "policy"
-) -> migrate.Migration:
-    """The migration from the lock file's text (None or '': the first) to this policy (migrate.Migration)."""
-    from . import migrate
-
-    sql, comp, _ = migratable(policy, files)
-    return migrate.migration(sql, comp, lock_file(lock_text), name)
-
-
 def migrations(
     policy: str,
     files: Mapping[str, object] | str | None,
@@ -534,7 +524,9 @@ def apply(
     downgrade: bool = False,
     rebuild: bool = False,
 ) -> str:
-    """'applied', or 'unchanged' (only_if_changed, and this policy is in force with everything it made).
+    """'applied', or 'unchanged' (only_if_changed, this build applied this policy last, and what intact() checks of
+    it is still there: its schemas, row-level security on with its policies, its triggers, its grants; not each
+    function or view it made: --force makes one dropped by hand again).
     The whole compiled policy: everything it makes is made again (trees that didn't change keep their rows,
     unless rebuild: then each is computed again from the app's tables, which is what brings back a tree that
     writes made with the triggers off left behind).
