@@ -45,7 +45,7 @@ The settings, from the environment:
 | Setting | Default | |
 |---|---|---|
 | `FM_DATABASE_URL` | `postgresql://fm_app:fm_app@localhost:5432/filemanager` | the app's connection, as `fm_app`: the app refuses to start on one that skips row-level security |
-| `FM_ADMIN_URL` | none | the tables' owner (or a superuser), for `db/migrate.py`, the maintenance jobs and `rowstile.toml` |
+| `FM_ADMIN_URL` | none | the tables' owner, for `db/migrate.py`, the maintenance jobs and `rowstile.toml`. `db/migrate.py` makes `fm_app` and sets its password each time, so the owner needs CREATEROLE too (and the ADMIN option on `fm_app` if another role made it), or a superuser |
 | `FM_APP_PASSWORD` | none | `fm_app`'s password, which `db/migrate.py` sets (it makes the role if it is missing) |
 | `FM_S3_ENDPOINT` | `http://localhost:9000` | where the backend reaches the storage |
 | `FM_S3_PUBLIC_ENDPOINT` | `FM_S3_ENDPOINT` | where browsers reach it: signed links point there |

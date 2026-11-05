@@ -4,7 +4,8 @@
     python db/migrate.py --client        # ...and rewrite backend/app/authz_client.py from db/policy.authz
 
 Environment: FM_ADMIN_URL (the owner of the app's tables, or a superuser), FM_APP_PASSWORD (the
-app role's password; the role is created if missing). The migrations run in one transaction.
+app role's password; the role is created if missing). Making the role and setting its password, each time, take
+CREATEROLE (and the ADMIN option on fm_app if another role made it). The migrations run in one transaction.
 
 The policy ships as migrations too: after a change to db/policy.authz, `rowstile migrate`
 writes the next one into db/migrations (and db/policy.lock). The app uses only rowstile's public
