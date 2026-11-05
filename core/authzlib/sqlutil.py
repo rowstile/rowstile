@@ -29,11 +29,11 @@ IF_PARTITIONED = "@if partitioned"
 # inherits: written there directly, rows would leave inheritance, shares, API keys and the audit behind. So each
 # table that inherits is given the row triggers rowstile made on the tables above it, and each partition and
 # table that inherits their statement triggers (but those for TRUNCATE alone that empty out the whole table's
-# share of something, as the audit's does: emptying one partition is not emptying the table. Those marked right for
-# a TRUNCATE below, below_too, are given too: they forget what names the rows that are gone, or rebuild a tree; and
-# a sync mirror's, whose function, `<type>__mirror`, empties of the mirror what was stored there). This lists the
-# ones missing, each with the statement that makes it; applying runs them (CHILD_TRIGGERS), lint reports them (a
-# table made since).
+# share of something: emptying one partition is not emptying the table. Those marked right for a TRUNCATE below,
+# below_too, are given too: they forget what names the rows that are gone, rebuild a tree, or say in the audit and
+# the feed what was emptied, once; and a sync mirror's, whose function, `<type>__mirror`, empties of the mirror what
+# was stored there). This lists the ones missing, each with the statement that makes it; applying runs them
+# (CHILD_TRIGGERS), lint reports them (a table made since).
 CHILD_TRIGGERS_FN = f"""-- The triggers above that a table under their table lacks, and the statement that makes each
 CREATE FUNCTION authz_int.child_triggers() RETURNS TABLE (child regclass, name name, stmt text)
 LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$

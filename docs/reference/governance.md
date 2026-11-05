@@ -6,6 +6,7 @@
   relation tables and columns are recorded too (as relate/unrelate), including
   TRUNCATE, but not what is written in replica mode, where no ordinary trigger runs ([How it
   works](guarantees.md)). <!-- checked: tests/governance.sh "memberships kept in your tables are recorded too"; tests/governance.sh "emptying a link table is recorded" -->
+  A TRUNCATE is one line, naming the table it was run on, a partition or a table that inherits too. <!-- checked: tests/children.sh "the audit has one line, naming it"; tests/children.sh "its partitions too: one line, naming it, and one entry in the feed"; tests/children.sh "then the table that inherits: a line for each" -->
   A share or a custom role's permission changed by hand (an `UPDATE` of `authz.shares` or
   `authz.role_permissions`) is recorded with what it was: a share's line has the old one in `detail` (`was`), and a
   permission changed is one removed and one added. <!-- checked: tests/governance.sh "a share changed by hand is recorded with what it was: its relation, whose it was, its times"; tests/governance.sh "and recorded: the permission it gave removed, the one it gives added" -->
@@ -116,7 +117,7 @@ makes reads through the rules slow. Each finding has a severity. These are error
   OR, so it lets through what the rules don't. (A restrictive one is a note.) <!-- checked: tests/governance.sh "lint finds it: an error, with the policy's name, why it widens the rules and how to drop it"; tests/governance.sh "a restrictive one is a note" -->
 - TRUNCATE on a type's table or a membership table, which skips row-level security. <!-- checked: tests/governance.sh "error app.files"; tests/governance.sh "error app.team_members" -->
 - A partition of a table with rules (or a table inheriting from one) that the app role may use directly (a
-  privilege on one of its columns is enough), or TRUNCATE. <!-- checked: tests/children.sh "lint says the app role may use it directly"; tests/children.sh "with the privilege on one column alone"; tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips row-level security and the audit" -->
+  privilege on one of its columns is enough), or TRUNCATE. <!-- checked: tests/children.sh "lint says the app role may use it directly"; tests/children.sh "with the privilege on one column alone"; tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips row-level security" -->
 - A partition or a table inheriting from a type's table made since the last apply: it lacks the table's row and
   statement triggers until the next one. <!-- checked: tests/adversarial.sh "lint reports a table made after apply that inherits from a governed one"; tests/children.sh "lint names each, and the triggers it lacks"; tests/children.sh "lint names a partition made since of a table without rules, and the statement triggers it lacks" -->
 - A view over a governed table that runs with its owner's rights (without `security_invoker`), which the app role

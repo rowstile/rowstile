@@ -6,7 +6,18 @@ from __future__ import annotations
 from .compiler import Core
 from .parse import KEYWORDS, Arrow, ArrowOn, ColumnSource, Cond, Link, Relation, TableSource, Type, leaves
 from .parse import cols as columns_of
-from .sqlutil import IF_PARTITIONED, calls_app_code, lit, names_in, on_row, principal_text, q, qt, this_alone
+from .sqlutil import (
+    IF_PARTITIONED,
+    below_too,
+    calls_app_code,
+    lit,
+    names_in,
+    on_row,
+    principal_text,
+    q,
+    qt,
+    this_alone,
+)
 from .statements import made
 
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
@@ -18,10 +29,12 @@ DEF_CURRENT = "SECURITY DEFINER SET search_path FROM CURRENT"
 DEPENDENTS_MAX = 1000
 
 
-def trigger_if_table(table: str, trigger_sql: str, what: str) -> str:
+def trigger_if_table(table: str, trigger_sql: str, what: str, below: str = "") -> str:
     """Create a trigger only when the relation is a table (a view cannot have these triggers). The comment
-    names the trigger for the migrations (statements.made)."""
+    names the trigger for the migrations (statements.made). below: the comment that marks it for the tables under
+    the table too (below_too), made with it."""
     body = trigger_sql.replace("'", "''")
+    mark = f"\n    EXECUTE '{below.replace(chr(39), chr(39) * 2)}';" if below else ""
     m = made(trigger_sql)
     assert m is not None, "a CREATE TRIGGER makes a trigger"
     kind, key = m
@@ -29,7 +42,7 @@ def trigger_if_table(table: str, trigger_sql: str, what: str) -> str:
         f"-- @object {kind} {key}\n"
         f"DO $tr$ BEGIN\n"
         f"  IF (SELECT relkind FROM pg_class WHERE oid = {lit(qt(table))}::regclass) IN ('r', 'p') THEN\n"
-        f"    EXECUTE '{body}';\n"
+        f"    EXECUTE '{body}';{mark}\n"
         f"  ELSE\n"
         f"    RAISE NOTICE '% is not a table: changes to it are not audited or fed ({what})', {lit(qt(table))};\n"
         f"  END IF;\nEND $tr$;"
@@ -73,6 +86,28 @@ BEGIN
   IF p_notify AND (SELECT s.value FROM authz.settings s WHERE s.key = 'notify_changes') = 'on' THEN
     PERFORM pg_notify('authz_changes', v_pos::text);
   END IF;
+END $f$;
+-- A TRUNCATE empties the tables it names and, without ONLY, the tables under them, and Postgres runs the TRUNCATE
+-- triggers of each (those of the audit and the feed too: CHILD_TRIGGERS). They say it once, of the table it was run
+-- on: before it, each table is noted unless one above it is (p_key: the trigger function's, of the table and of those
+-- under it); after it, a table noted says it, and is noted no more. (A table, not a setting: a session can't set it)
+CREATE UNLOGGED TABLE authz_int.truncating (txid bigint NOT NULL, relid oid NOT NULL, key text NOT NULL,
+  PRIMARY KEY (txid, relid, key));
+CREATE FUNCTION authz_int.truncate_once(p_relid oid, p_key text, p_before boolean) RETURNS boolean
+LANGUAGE plpgsql {DEF} AS $f$
+BEGIN
+  IF NOT p_before THEN
+    DELETE FROM authz_int.truncating t WHERE t.txid = txid_current() AND t.relid = p_relid AND t.key = p_key;
+    RETURN FOUND;
+  END IF;
+  IF NOT EXISTS (WITH RECURSIVE up(oid) AS (
+                   SELECT i.inhparent FROM pg_inherits i WHERE i.inhrelid = p_relid
+                   UNION SELECT i.inhparent FROM pg_inherits i JOIN up ON i.inhrelid = up.oid)
+                 SELECT 1 FROM authz_int.truncating t JOIN up ON t.relid = up.oid
+                 WHERE t.txid = txid_current() AND t.key = p_key) THEN
+    INSERT INTO authz_int.truncating VALUES (txid_current(), p_relid, p_key) ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN false;
 END $f$;
 -- objects changed: they, and what reads them (authz_int.dependents)
 CREATE FUNCTION authz_int.changed(p_type text, p_ids text[], p_cause text) RETURNS void
@@ -571,6 +606,12 @@ END $f$;"""
         # read them, or the row's coming and going alone may give or take access)
         for t in self.types.values():
             cols.setdefault(t.name, [])
+        # a TRUNCATE: said once, of the table it was run on (authz_int.truncate_once), which its BEFORE trigger notes
+        once = lambda key: (
+            f"    IF NOT authz_int.truncate_once(TG_RELID, {lit(key)}, TG_WHEN = 'BEFORE') THEN\n"
+            "      RETURN NULL;\n    END IF;\n"
+        )
+        emptied = "pg_catalog.format('%I.%I', TG_TABLE_SCHEMA, TG_TABLE_NAME)"
         for i, (table, uses) in enumerate(sorted(tables.items(), key=lambda x: x[0])):
             rows = []
             for t, r, src in uses:
@@ -612,9 +653,9 @@ END $f$;"""
                 "upd": ins(new_q, old_q) + "\n" + ins(old_q, new_q),
             }
             object_types = sorted({t.name for t, r, src in uses})
-            bodies["trunc"] = "\n".join(
+            bodies["trunc"] = once(f"rel_audit_{i + 1}_trunc") + "\n".join(
                 f"    PERFORM authz_int.audit('truncate', {lit(ot)}, NULL, NULL, NULL, NULL, NULL, "
-                f"jsonb_build_object('table', {lit(table)}));\n"
+                f"jsonb_build_object('table', {emptied}));\n"
                 f"    PERFORM authz_int.changed({lit(ot)}, ARRAY['*'], 'relationship');"
                 for ot in object_types
             )
@@ -633,14 +674,17 @@ BEGIN
 {bodies[op]}
   RETURN NULL;
 END $f$;""")
-                parts.append(
-                    trigger_if_table(
-                        table,
-                        f"CREATE TRIGGER {q('authz_rel_audit_' + str(i + 1) + '_' + op)} AFTER {event} ON {qt(table)} "
-                        f"{ref}FOR EACH STATEMENT EXECUTE FUNCTION {fn}()",
-                        "audit",
+                for when, sfx in (("AFTER", ""), ("BEFORE", "_first")) if op == "trunc" else (("AFTER", ""),):
+                    trig = q("authz_rel_audit_" + str(i + 1) + "_" + op + sfx)
+                    parts.append(
+                        trigger_if_table(
+                            table,
+                            f"CREATE TRIGGER {trig} {when} {event} ON {qt(table)} "
+                            f"{ref}FOR EACH STATEMENT EXECUTE FUNCTION {fn}()",
+                            "audit",
+                            below_too(trig, qt(table)) if op == "trunc" else "",
+                        )
                     )
-                )
             out.append("\n".join(parts))
         for tname, uses in cols.items():
             t = self.T(tname)
@@ -692,9 +736,10 @@ END $f$;""")
                     else ""
                 ),
                 "del": f"    PERFORM authz_int.changed({lit(tname)}, ARRAY(SELECT {kt('o')} FROM old_rows o), 'delete');",
-                "trunc": (
+                "trunc": once(tname + "__col_audit_trunc")
+                + (
                     f"    PERFORM authz_int.audit('truncate', {lit(tname)}, NULL, NULL, NULL, NULL, NULL, "
-                    f"jsonb_build_object('table', {lit(t.table)}));\n"
+                    f"jsonb_build_object('table', {emptied}));\n"
                     if pairs
                     else ""
                 )
@@ -718,14 +763,17 @@ BEGIN
 {bodies[op]}
   RETURN NULL;
 END $f$;""")
-                parts.append(
-                    trigger_if_table(
-                        t.table,
-                        f"CREATE TRIGGER {q('authz_' + tname + '_col_audit_' + op)} AFTER {event} ON {qt(t.table)} "
-                        f"{ref}FOR EACH STATEMENT EXECUTE FUNCTION {fn}()",
-                        "audit",
+                for when, sfx in (("AFTER", ""), ("BEFORE", "_first")) if op == "trunc" else (("AFTER", ""),):
+                    trig = q("authz_" + tname + "_col_audit_" + op + sfx)
+                    parts.append(
+                        trigger_if_table(
+                            t.table,
+                            f"CREATE TRIGGER {trig} {when} {event} ON {qt(t.table)} "
+                            f"{ref}FOR EACH STATEMENT EXECUTE FUNCTION {fn}()",
+                            "audit",
+                            below_too(trig, qt(t.table)) if op == "trunc" else "",
+                        )
                     )
-                )
             if not pairs:
                 out.append("\n".join(parts))
                 continue

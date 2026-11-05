@@ -336,6 +336,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   write of a share puts in) instead of the time of its last run: a clock set back no longer hides the shares that
   end or begin after it until the clock is past that time again. A run waits for a writer adding a share to one of
   the objects it announces, and reads the shares as it left them.
+- A `TRUNCATE` run directly on a partition of a watched table, or on a table that inherits from one, is in the audit
+  trail, one line naming that table, and the change feed announces every object of its type. A `TRUNCATE` of the
+  table above is still one line, naming it. Before, neither heard of the one below.
 
 ### Upgrading
 
