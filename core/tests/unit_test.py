@@ -17123,7 +17123,7 @@ class Benchmarks(unittest.TestCase):
         self.assertEqual(numbers["3.reads.open_file"], 3.28)
         self.assertEqual((numbers["1.all"], numbers["4.big_move_s"]), (3.23, 0.62))
         self.assertNotIn("3.all", numbers)
-        self.assertEqual(rare, {"3.writes.link"}, "5 links: too few to judge")
+        self.assertEqual(rare, {"3.writes.link": 5}, "5 links: too few to judge")
 
     def test_slower_writes_in_the_gate_are_a_regression(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -17144,6 +17144,35 @@ class Benchmarks(unittest.TestCase):
                 self.assertIn("3.writes.all 14.0\n", fh.read())
             self.assertIn("regression: 3.writes.all: 40.00 against 14.00", out.getvalue())
             self.assertNotIn("3.reads.all: ", out.getvalue())
+
+    def test_a_script_that_ran_far_fewer_times_than_in_the_baseline_is_wrong(self) -> None:
+        """A script the baseline judged (it ran 50 times or more) that ran fewer than half that many times now has
+        stopped part way, and isn't left out as too few; one that ran a few times less is still left out."""
+        with tempfile.TemporaryDirectory() as d:
+            base = os.path.join(d, "baseline.txt")
+            with open(base, "w", encoding="utf-8") as fh:
+                fh.write(self.result(14.0))
+            argv = sys.argv
+            said: list[tuple[int, str]] = []
+            try:
+                sys.argv = ["regress.py", base, base, "--record"]
+                with mock.patch("sys.stdout", new=io.StringIO()):
+                    self.regress.main()
+                for txns in (40, 20):
+                    now = os.path.join(d, f"now{txns}.txt")
+                    with open(now, "w", encoding="utf-8") as fh:
+                        fh.write(self.result(14.0).replace("open_file            900", f"open_file       {txns:>8}"))
+                    sys.argv = ["regress.py", now, base]
+                    with mock.patch("sys.stdout", new=io.StringIO()) as out:
+                        said.append((self.regress.main(), out.getvalue()))
+            finally:
+                sys.argv = argv
+        (code40, out40), (code20, out20) = said
+        self.assertEqual(code40, 0, out40)
+        self.assertIn("3.reads.open_file", out40)
+        self.assertIn("too few", out40)
+        self.assertEqual(code20, 1, out20)
+        self.assertIn("regression: 3.reads.open_file: ran 20 times, under half of the 50 a script is judged at", out20)
 
     def test_timed_out_and_aborted_clients_are_counted_apart(self) -> None:
         with open(os.path.join(self.BENCH, "run.sh"), encoding="utf-8") as fh:
@@ -17187,6 +17216,67 @@ class Benchmarks(unittest.TestCase):
         sock = os.path.join(d, "no-server", ".s.PGSQL.5432")
         self.assertIn(f"apply docs.authz failed:\ncan't connect to the socket {sock}: no such file", result)
         self.assertIn("apply docs.authz failed:\ncan't connect", done.stdout)
+
+    def stubbed_run(self, *faults: str) -> tuple[int, str]:
+        """run.sh over stand-ins for the server, the command and pgbench, which say all went well but for the faults
+        named: READS_ABORT (a read client of step 1 stopped on an error), W50_ABORT (a write client of step 2's 50),
+        MOVES_ABORT (a write client beside the big move), MOVE_FAILS (the big move's UPDATE refused). Its exit
+        code, and the result it wrote."""
+        with tempfile.TemporaryDirectory() as d:
+            stubs = os.path.join(d, "bin")
+            os.mkdir(stubs)
+            tools = {
+                "createdb": "exit 0\n",
+                "dropdb": "exit 0\n",
+                "psql": 'case "$*" in\n'
+                '  *"UPDATE app.folders SET parent_id"*) [ -z "$MOVE_FAILS" ] || { echo "ERROR:  no" >&2; exit 3; };;\n'
+                '  *"authz.verify()"*) echo t;;\n'
+                '  *"authz.list("*) echo 7;;\n'
+                "  *) echo 1;;\n"
+                "esac\n",
+                "pgbench": 'echo "tps = 20.0 (without initial connection time)"\n'
+                'echo "number of failed transactions: 0 (0.000%)"\n'
+                'stop() { echo "pgbench: error: client 0 script 0 aborted in command 3 query 0: ERROR:  no" >&2; }\n'
+                'case "$*" in\n'
+                '  *"--log-prefix=$LOGS/reads"*) [ -z "$READS_ABORT" ] || stop;;\n'
+                '  *"--log-prefix=$LOGS/w50"*) [ -z "$W50_ABORT" ] || stop;;\n'
+                '  *"--log-prefix=$LOGS/bw"*) [ -z "$MOVES_ABORT" ] || stop;;\n'
+                "esac\n",
+                # the command's apply succeeds; anything else is Python's
+                "python3": f'[ "$1" = cli/rowstile_cli.py ] && exit 0\nexec {sys.executable} "$@"\n',
+            }
+            for tool, body in tools.items():
+                with open(os.path.join(stubs, tool), "w", encoding="utf-8") as fh:
+                    fh.write("#!/bin/sh\n" + body)
+                os.chmod(os.path.join(stubs, tool), 0o755)
+            out = os.path.join(d, "result.txt")
+            # the stand-in for pgbench tells the steps apart by the logs each writes
+            settings = {"FILES": "2000", "FOLDERS": "100", "LEVELS": "5", "USERS": "20", "TEAMS": "4", "DURATION": "1"}
+            env = dict(os.environ, **settings, GATE_DURATION="1", READ_RATE="10", SPEED_GATES="0", OUT=out)
+            env.update(LOGS=os.path.join(d, "l"), PATH=stubs + os.pathsep + os.environ["PATH"])
+            for k in ("READS_ABORT", "W50_ABORT", "MOVES_ABORT", "MOVE_FAILS"):
+                env.pop(k, None)
+            env.update(dict.fromkeys(faults, "1"))
+            done = self.run_sh(env)
+            with open(out, encoding="utf-8") as fh:
+                return done.returncode, fh.read()
+
+    def test_a_run_whose_reads_or_writes_stopped_or_whose_big_move_failed_went_wrong(self) -> None:
+        code, result = self.stubbed_run()
+        self.assertEqual(code, 0, result)
+        self.assertIn("the big move: folder 1 with 1 folders below it, into folder 1: ", result)
+        code, result = self.stubbed_run("READS_ABORT")
+        self.assertEqual(code, 1, result)
+        self.assertIn("20.0 transactions/s done, 0 failed, 1 clients aborted, 0 timed out\n", result)
+        code, result = self.stubbed_run("W50_ABORT")
+        self.assertEqual(code, 1, result)
+        code, result = self.stubbed_run("MOVES_ABORT")
+        self.assertEqual(code, 1, result)
+        self.assertIn("writes meanwhile: 20.0/s done, 0 failed, 1 clients aborted, 0 timed out\n", result)
+        code, result = self.stubbed_run("MOVE_FAILS")
+        self.assertEqual(code, 1, result)
+        self.assertIn("the big move failed: folder 1 into folder 1:\nERROR:  no\n", result)
+        self.assertNotIn("the big move: ", result, "no time for a move that didn't happen: regress.py would judge it")
 
     def regress_sh(self, d: str, runs: list[tuple[int, float]]) -> tuple[subprocess.CompletedProcess[str], int]:
         """regress.sh in a copy of the folder, over a scale.sh that writes a result (its gate writes' p95) and exits as

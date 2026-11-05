@@ -9,8 +9,10 @@ reads' table, each with its own "all" row, keyed 3.writes.* and 3.reads.*), and 
 A number counts as slower when it is more than FACTOR times its baseline and more than its floor above it (FLOOR_MS
 milliseconds; FLOOR_S seconds for the big move, which takes about half a second: a floor of seconds would let it
 get four times slower), so noise on small numbers doesn't fail the check; scripts with fewer than MIN_TXNS
-transactions are left out. Only speed is judged here: whether the run was right (no failed or aborted writes,
-authz.verify() true after the writes, the listings answered) is run.sh's exit code, and regress.sh stops on it.
+transactions are left out, but one the baseline judged that ran fewer than half that many times: it stopped part
+way. Otherwise only speed is judged here: whether the run was right (no read or write failed, aborted or timed out,
+the big move made, authz.verify() true after the writes, the listings answered) is run.sh's exit code, and
+regress.sh stops on it.
 The gate's speed limits (reads and writes p95) are the scale gate's, for its size on a machine of its own
 (scale.sh --large, --full); this small run on a shared CI machine is judged against its own baseline.
 Step 2 (throughput as clients grow) is left out: at 50 clients the machine is saturated and its
@@ -24,9 +26,9 @@ FACTOR, FLOOR_MS, FLOOR_S = 2.0, 2.0, 0.5
 MIN_TXNS = 50
 
 
-def numbers(path: str) -> tuple[dict[str, float], set[str]]:
+def numbers(path: str) -> tuple[dict[str, float], dict[str, int]]:
     out: dict[str, float] = {}
-    rare: set[str] = set()  # scripts that ran, too few times to judge
+    rare: dict[str, int] = {}  # scripts that ran, too few times to judge: how many times
     section: str | None = None
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -47,7 +49,7 @@ def numbers(path: str) -> tuple[dict[str, float], set[str]]:
             # scripts that ran rarely (links: 1% of writes) have too few samples for a stable p95
             if section is not None and section[0] in "13" and len(f) >= 7 and f[1].isdigit():
                 if int(f[1]) < MIN_TXNS:
-                    rare.add(f"{section}.{f[0]}")
+                    rare[f"{section}.{f[0]}"] = int(f[1])
                     continue
                 out[f"{section}.{f[0]}"] = float(f[4])
     return out, rare
@@ -72,6 +74,12 @@ def main() -> int:
     slower: list[str] = []
     print(f"{'measure':28}{'baseline':>10}{'now':>10}")
     for k in sorted(base):
+        if k in rare and rare[k] < MIN_TXNS // 2:
+            # the baseline's ran MIN_TXNS times or more: one that ran under half that has stopped part way (its
+            # clients aborted), not been unlucky
+            print(f"{k:28}{base[k]:10.2f}{'stopped':>10}")
+            slower.append(f"{k}: ran {rare[k]} times, under half of the {MIN_TXNS} a script is judged at")
+            continue
         if k in rare:  # the run's rate (READ_RATE) leaves few of a rare script: not judged this time
             print(f"{k:28}{base[k]:10.2f}{'too few':>10}")
             continue
