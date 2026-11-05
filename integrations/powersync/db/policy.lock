@@ -95,7 +95,7 @@ function authz.start_review(p_type text, p_id integer, p_closes_at timestamptz) 
 function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 54b5115398e4 shape=879e84e5
 function authz.sync_behind() | 23649e3eda3d shape=38ef998f
 function authz.sync_members(p_type text, p_id text, p_relation text, p_members text[], OUT added int, OUT removed int) | 68d04c6d927d shape=c0ea90e1
-function authz.sync_tick() | 291323c4e7cc shape=725c5eaf
+function authz.sync_tick() | 9912151f0174 shape=725c5eaf
 function authz.sync_verify() | a48b4fe3a8d6 shape=c1725dfa
 function authz.sync_work() | 89ce52581ab7 shape=fad1cdef
 function authz.trim_audit(p_keep interval) | 506854f7888f shape=59da80c2
@@ -286,8 +286,8 @@ function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b
 function authz_int.sync_commit() | 2a3840a9a87b shape=88d2f2c3
 function authz_int.sync_dirty(p_type text, p_ids text[]) | 2e4d509b9a8f shape=420df95d
 function authz_int.sync_mirrors_match() | 00911e9463d7 shape=904bb248
-function authz_int.sync_process() | 44f60c8b8171 shape=bbf006cf
-function authz_int.sync_refresh(p_hash text, p_force boolean) | 8237e359b83f shape=5328af1d
+function authz_int.sync_process() | 1220074f8a65 shape=bbf006cf
+function authz_int.sync_refresh(p_hash text, p_force boolean) | f913cccf5bb0 shape=5328af1d
 function authz_int.sync_spread(p_tx bigint, p_round int) | f77e0e109c9e shape=53f27788
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
 function authz_int.visible(p_type text, p_id text) | 7be0e9c34d3e shape=e14964bd
@@ -312,8 +312,8 @@ step grant_views | 79e8f933ff65
 step mask_privileges | f8051dad4a89
 step share_indexes | db4592740040
 step sweep | 1dfed05490f4
-step sync_base | 1f722c06695a
-step sync_refresh | e91842e6fd17
+step sync_base | f8d351096240
+step sync_refresh | 9bd1112ed643
 step tables | 9360c5b984f3
 table authz_gen.policy_lines | 21fafe4e9464 shape=dcfedc96
 table authz_int."folder__parent__tree" | 0761ea300228 shape=0761ea30 tree=folder__parent__tree
