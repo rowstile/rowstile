@@ -17,7 +17,7 @@ T=$(mktemp -d)
 # whatever way the suite ends: the sessions it left running, its databases, its files
 cleanup() {
   stop_sessions
-  for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8" "${DB}_9"; do dropdb --force --if-exists "$db" 2>/dev/null; done
+  for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8" "${DB}_9" "${DB}_10"; do dropdb --force --if-exists "$db" 2>/dev/null; done
   rm -rf "$T"
 }
 trap cleanup EXIT
@@ -51,6 +51,13 @@ out=$(migrate_db "$DB" "$P/db/migrations") && [ "$(PSQL -c "SELECT authz.verify(
   ok "it applies on a database with nothing of rowstile's" || bad "first applies" "$out"
 [ "$(PSQL -c "SELECT lock IS NOT NULL AND policy LIKE '%type folder = app.folders%' FROM authz.policy_versions ORDER BY id DESC LIMIT 1")" = t ] &&
   ok "... and records the policy and the lock's hash" || bad "recorded"
+# the migration records the policy's text in a dollar quote: a text that ends in its tag doesn't close it early
+mkdir -p "$T/end/db" && cp "$P/rowstile.toml" "$T/end/"
+{ cat "$P/db/policy.authz"; printf -- '-- the end: $authz_policy'; } > "$T/end/db/policy.authz"
+fresh "${DB}_10"
+out=$( (cd "$T/end" && python3 "$OLDPWD/cli/rowstile_cli.py" migrate 2>&1) ) && out=$(migrate_db "${DB}_10" "$T/end/db/migrations") &&
+  [ "$(psql -X -At -d "${DB}_10" -c "SELECT right(policy, 25) FROM authz.policy_versions ORDER BY id DESC LIMIT 1")" = '-- the end: $authz_policy' ] &&
+  ok "... and one whose policy ends in the tag of the quote its text is recorded in" || bad "a policy ending in the quote's tag" "$out"
 out=$(CLI migrate 2>&1); case "$out" in "nothing to migrate"*) ok "again: nothing to migrate";; *) bad "migrate again" "$out";; esac
 out=$(CLI migrate --check 2>&1); rc=$?; [ $rc -eq 0 ] && ok "--check: exit 0 when the lock is up to date" || bad "--check up to date" "$out"
 # a lock another version wrote: upgrading rowstile is no migration while it makes the same
