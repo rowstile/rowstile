@@ -14,6 +14,7 @@
     "@prisma/client": "7.10.0",
     "@rowstile/client": "*",
     "@rowstile/next": "*",
+    "@rowstile/pg": "*",
     "@rowstile/prisma": "*",
     "@rowstile/react": "*",
     "next": "^16.4.3",

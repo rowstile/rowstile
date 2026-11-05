@@ -11,3 +11,10 @@ export const POST = route(async (req: Request, { params }: Params) => {
   await db.$authz.share("ticket", (await params).id, "cc", "user", user);
   return noContent();
 });
+
+// and taking them off it: an unshare, which only someone who may share it may make
+export const DELETE = route(async (req: Request, { params }: Params) => {
+  const { user } = await body<{ user: string }>(req);
+  await db.$authz.unshare("ticket", (await params).id, "cc", "user", user);
+  return noContent();
+});

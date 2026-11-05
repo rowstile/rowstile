@@ -3,6 +3,7 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { authz, signedIn } from "@rowstile/prisma";
+import { authz as pgAuthz } from "@rowstile/pg";
 import "@rowstile/next";                              // signed-in reads never land in a cache
 import { session } from "./session.ts";
 import { PrismaClient } from "./generated/prisma/client.ts";
@@ -15,6 +16,8 @@ export async function requestUser(): Promise<string | null> {
 
 const url = process.env.HD_APP_URL;
 export const pool = new pg.Pool({ connectionString: url, max: Number(process.env.PG_POOL_MAX ?? 5) });
+// node-postgres beside Prisma, on the same pool, for Electric's shape routes (app/api/shapes)
+export const sql = pgAuthz(pool);
 export const db = new PrismaClient({ adapter: signedIn(new PrismaPg(pool), { user: requestUser }) }).$extends(authz());
 export type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
 
