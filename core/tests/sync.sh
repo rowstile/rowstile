@@ -324,14 +324,21 @@ same "... and the index holds what authz.list gives, applied again"
 # a change to what the index is worked out by: worked out again, the rows that stay where they were
 EDITS=$(echo "$SYNCED" | sed 's/^           or (folder.view and not {confidential})$/           or folder.view/')
 [ "$EDITS" != "$SYNCED" ] || bad "the policy change did not apply"
+# (file 13 confidential first: those who read it only through its folder don't, until the permission no longer asks)
+PSQL -c "UPDATE app.files SET confidential = true WHERE id = 13"
+readers_of_13() { PSQL -c "SELECT string_agg(u.id::text, ',' ORDER BY u.id) FROM app.users u WHERE '13' = ANY (public.sync_reads(u.id::text, 'file'))"; }
+was=$(readers_of_13)
 apply "$EDITS"
 check "a synced permission changed: the rows that stay are kept, the others written" \
   "SELECT count(*) > 0 FROM public.kept k JOIN authz_sync.file__readers r ON r.id::text = k.id AND r.key = k.key AND r.xmin::text = k.x WHERE k.t = 'file'"
-check "... and the confidential files' folder readers are in now" "SELECT public.sync_reads('2', 'file') @> '{13}' OR true"
-PSQL -c "UPDATE app.files SET confidential = true WHERE id = 13"
+now=$(readers_of_13)
+[ "$now" != "$was" ] && [ "$(PSQL -c "SELECT '{$was}'::int[] <@ '{$now}'::int[] AND public.sync_same()")" = t ] &&
+  ok "... and the confidential file's folder readers are in now: file 13 is read by more than its owner" ||
+  bad "the confidential file's folder readers" "$was -> $now"
+PSQL -c "UPDATE app.files SET confidential = false WHERE id = 13"
 check "... and the index follows the new permission" \
   "SELECT bool_and(public.sync_reads(u.id::text, 'file') = public.listed(u.id::text, 'file', 'view')) FROM app.users u"
-PSQL -c "UPDATE app.files SET confidential = false WHERE id = 13" -c "DROP TABLE public.kept"
+PSQL -c "DROP TABLE public.kept"
 apply "$SYNCED"
 printf '%s\n' "$SYNCED" > "$T/p.authz"
 said=$(CLI apply "$T/p.authz" 2>&1)
@@ -885,6 +892,21 @@ freads() {
             WHERE r.id = $3 AND k.principal_type = 'user' AND k.principal_id = '$1')"
 }
 change "the other forms, applied" "SELECT 1"
+# (an and / not between parts that depend on who asks: the readers are worked out from the keys, so every commit's
+# work takes the one lock row of the keys: a write on a memo waits for one on a note, though their work meets nowhere)
+RACE_DB=$FORMS race
+PGAPPNAME=authz_sync_a psql -X -q -d "$FORMS" > "$T/a" 2>&1 <<SQL &
+BEGIN;
+INSERT INTO f.note_blocks VALUES (1, 5);
+SET CONSTRAINTS ALL IMMEDIATE;
+$HOLD;
+COMMIT;
+SQL
+RACE_DB=$FORMS held authz_sync_a
+PGAPPNAME=authz_sync_b psql -X -q -d "$FORMS" -c "INSERT INTO f.memo_blocks VALUES (1, 4)" > "$T/b" 2>&1 &
+RACE_DB=$FORMS blocked authz_sync_b && ok "the other forms: a write on a memo waits for one on a note at work, though their work meets nowhere"
+RACE_DB=$FORMS go; wait
+change "... both committed, then put back" "DELETE FROM f.note_blocks WHERE note_id = 1 AND user_id = 5; DELETE FROM f.memo_blocks WHERE memo_id = 1 AND user_id = 4"
 check_f() { local got; got=$(FPSQL -c "$2" 2>&1); [ "$got" = t ] && ok "$1" || bad "$1" "$got"; }
 check_f "a group that isn't monotone gives no key: what is given to it copies its members in" \
   "SELECT NOT EXISTS (SELECT 1 FROM authz_sync.groups) AND NOT EXISTS (SELECT 1 FROM authz_sync.keys WHERE key LIKE 'crew#%')"
@@ -1317,7 +1339,7 @@ out=$(in_proj dev --once --no-studio 2>&1)
 toml "database = \"host=127.0.0.1 port=1 dbname=$DB\"
 "
 out=$(in_proj client 2>&1); rc=$?
-[ $rc -eq 2 ] && case "$out" in *"can't connect"*|*"could not connect"*|*"connect"*) true;; *) false;; esac &&
+[ $rc -eq 2 ] && case "$out" in *"can't connect to 127.0.0.1 port 1: connection refused"*) true;; *) false;; esac &&
   ok "... a database it can't reach: exit 2, saying so" || bad "client powersync, a database it can't reach" "$rc $out"
 toml ""
 out=$(env -u DATABASE_URL bash -c "cd $P && python3 $PWD/cli/rowstile_cli.py client" 2>&1); rc=$?

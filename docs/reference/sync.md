@@ -160,15 +160,15 @@ again when applied: its tables are kept. <!-- checked: tests/sync.sh "an index t
   what the folders below inherit), a membership change the member's keys.
 - Two writers whose work meets queue, and the others don't wait for each other. At commit, before it reads
   anything, the work takes lock rows: of the objects it works out (what changed, and what reads it), and, shared, of
-  those it reads (the folders above, what they link to); a lock row stands for every object and key whose name
-  hashes to it, out of 4,096. A writer whose work writes what another's writes or reads waits for it to commit,
+  those it reads (the folders above, what they link to); a lock row stands for every object whose type and id
+  hash to it, out of 4,096. A writer whose work writes what another's writes or reads waits for it to commit,
   then sees what it committed. <!-- checked: tests/sync.sh "a share on a Globex file doesn't wait for a share on Design docs to commit: their work meets nowhere"; tests/sync.sh "... one on a file in Design docs waits: its work writes what the other's does"; tests/sync.sh "a share on the folder another one moves into waits for the move: the move's work reads it"; tests/sync.sh "... then its work sees the move: carol reads the file in the moved folder" -->
   Its work then looks again for what reads the change, and takes the lock rows of anything new; one below a lock
   row it holds is taken only if nobody holds it, else the work lets go of every lock row and takes them again in
   order, so writers never wait on each other in a circle: in READ COMMITTED, none ends with a deadlock (40P01). <!-- checked: tests/sync.sh "three writers whose later looks meet: both shares commit, neither ends in a deadlock" -->
   The keys are kept under one lock row, taken last, by the work that changes them: a membership change. <!-- checked: tests/interleave.py "the sync index doesn't match a rebuild" -->
   A policy whose synced permissions join parts that depend on who asks with `and` or `not` (a deny) works its
-  readers out from the keys: there every commit's work queues on that one lock row. <!-- checked: tests/sync.sh "the other forms, applied" -->
+  readers out from the keys: there every commit's work queues on that one lock row. <!-- checked: tests/sync.sh "the other forms: a write on a memo waits for one on a note at work, though their work meets nowhere" -->
 - In REPEATABLE READ or SERIALIZABLE, a writer takes every lock row, and one whose snapshot is older than another's
   index write gets a serialization error (40001), to retry. <!-- checked: tests/sync.sh "REPEATABLE READ: a writer with a snapshot older than another's index write gets a serialization error" -->
 - Shares that start or end later change who reads their objects with no write. `authz.sync_tick()` works out
