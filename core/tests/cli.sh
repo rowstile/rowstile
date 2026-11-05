@@ -202,6 +202,12 @@ run studio --port 70000; [ $rc -eq 2 ] && [ "$out" = "--port needs a port, a who
   ok "a port above 65535 is refused" || bad "studio --port 70000" "$rc ${out: -200}"
 run dev --once --studio-port 99999 "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "--studio-port needs a port, a whole number from 1 to 65535, not '99999'" ] &&
   ok "... and one for Studio beside dev" || bad "dev --studio-port 99999" "$rc ${out: -200}"
+run prove --worlds ²; [ "$rc $out" = "2 --worlds needs a whole number above 0, not '²'" ] &&
+  ok "a number in other digits (²) is a usage mistake too, exit 2" || bad "prove --worlds ²" "$rc ${out: -200}"
+# only rowstile sql's last word is left out of the options (its statement): not on a line where sql is a value
+run migrate "$T/main.authz" --tool sql --check --bogus
+[ "$rc $out" = "2 rowstile migrate: --bogus is not an option it has (rowstile migrate --help)" ] &&
+  ok "an unknown option last, on a line with sql as a value (--tool sql), is refused" || bad "migrate --tool sql ... --bogus" "$rc $out"
 run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, ts-sdk, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
 run client powersync "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client powersync reads each mirror's columns from the database: give it one (--db, or database in rowstile.toml), where the policy is applied" ] && ok "client powersync from a file: exit 2, it reads the database" || bad "client powersync from a file" "$rc $out"
 run client py; fromdb=$out
