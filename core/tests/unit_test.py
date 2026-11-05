@@ -14161,6 +14161,13 @@ END outer;"""
             )
             m = self.p.measured([d])
         self.assertEqual(self.p.never_run(self.p.totals(m, self.kind)), {"authz": (3, 3), "authz_gen": (0, 0)})
+        # not counted: what only functions no suite called hold, of a kind a suite calls elsewhere (a test policy's
+        # own lines in a database that never asks them); counted: a kind no suite calls, a function called
+        t = self.p.Totals(called={"authz.can"})
+        for n, (kind, called) in enumerate([("authz.can", False), ("authz.can", True), ("authz.lint", False)]):
+            t.statements[(kind, str(n))] = self.p.Seen("authz", kind, "RETURN", f"line {n}", made=1, called=called)
+        t.branches[("authz.can", "b")] = self.p.Seen("authz", "authz.can", "ELSE", "b", made=1, called=False)
+        self.assertEqual(self.p.never_run(t), {"authz": (2, 0), "authz_gen": (0, 0)})
 
     def test_a_raise_never_run_comes_first(self) -> None:
         profile = [[*r[:5], 0 if r[0] == 5 else r[5], 0] for r in self.PROFILE]

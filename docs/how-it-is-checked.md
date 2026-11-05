@@ -273,6 +273,8 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   A change fails if it leaves more of the runtime's own PL/pgSQL (`authz`) or of the rules' (`authz_gen`) never
   run than [`tests/plpgsql_floor.txt`](../core/tests/plpgsql_floor.txt) says, and one that leaves fewer writes the
   file anew, so the count only goes down. <!-- checked: tests/unit_test.py "test_the_floor" -->
+  A line only functions no suite called hold, of a kind a suite calls in other databases, isn't counted there:
+  it is a policy's own line (`WHEN 'tree' THEN ...`) along a path other policies' functions run. <!-- checked: tests/unit_test.py "test_the_floor" -->
   The policies' own functions (`authz_int`) are reported, not held: the random checks write other policies on each
   run, and their counts move with them.
 

@@ -657,12 +657,19 @@ FLOORED = ("authz", "authz_gen")
 FLOOR = os.path.join(HERE, "plpgsql_floor.txt")
 
 
+def floored(x: Seen, t: Totals) -> bool:
+    """Whether the floor counts a statement (or branch) no suite ran: not one held only by functions no suite
+    called, of a kind some suite calls elsewhere (a policy's own line, `WHEN 'tree' THEN ...`, in a database whose
+    suite never asks that function: the same path other policies' functions run). A kind no suite calls counts."""
+    return not x.ran and (x.called or x.kind not in t.called)
+
+
 def never_run(t: Totals) -> dict[str, tuple[int, int]]:
-    """For each schema the floor holds: its statements, then its branches, that no suite ran."""
+    """For each schema the floor holds: its statements, then its branches, that no suite ran (floored)."""
     return {
         schema: (
-            sum(1 for x in t.statements.values() if x.schema == schema and not x.ran),
-            sum(1 for x in t.branches.values() if x.schema == schema and not x.ran),
+            sum(1 for x in t.statements.values() if x.schema == schema and floored(x, t)),
+            sum(1 for x in t.branches.values() if x.schema == schema and floored(x, t)),
         )
         for schema in FLOORED
     }

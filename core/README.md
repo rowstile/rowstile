@@ -123,6 +123,8 @@ measured (`.ci/coverage-16/`) and says:
 - with `--floor tests/plpgsql_floor.txt`: exit 1 unless the PL/pgSQL never run in `authz` and `authz_gen`
   (statements, then branches) is what the file says. More is a change whose PL/pgSQL no suite runs; fewer, a file
   to write anew with the counts the report prints. `authz_int` is left out: the random part's policies move it.
+  Not counted either: a line only functions no suite called hold, of a kind a suite calls elsewhere (a test
+  policy's own line, in a database that never asks that function).
 
 CI measures on 16 alone: 17 and 18 ran the same lines, branches and functions (compared on 2026-10-10). Code that
 only another version runs would need theirs measured again (`--statements` in `.github/workflows/suites.yml`).
