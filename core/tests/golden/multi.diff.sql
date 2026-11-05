@@ -24,8 +24,14 @@ BEGIN
     PERFORM set_config('authz.principal_type', who.ptype, true);
     PERFORM set_config('authz.user_id', v_id, true);
     PERFORM authz_int.sign();
+    -- the permission itself, on rows they can't select too (authz.list answers for those they may): a write rule or
+    -- an action may use it. A policy applied before authz_int.list was made has authz.list answer so
     FOR p IN SELECT type, perm FROM authz_int.perms LOOP
-      INSERT INTO pg_temp.authz_diff_before SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz.list(p.type, p.perm) x;
+      IF to_regprocedure('authz_int.list(text, text)') IS NULL THEN
+        INSERT INTO pg_temp.authz_diff_before SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz.list(p.type, p.perm) x;
+      ELSE
+        INSERT INTO pg_temp.authz_diff_before SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz_int.list(p.type, p.perm) x;
+      END IF;
     END LOOP;
     -- (each type's select policy by its table's oid, never by a name read back as a table: the planner may try that
     -- on every table there is, and for one of pg_toast's it is refused to an owner who is no superuser)
@@ -4261,6 +4267,24 @@ BEGIN
   END CASE;
 END $f$;
 
+-- Every object the user holds a permission on, whether they may select its row or not: what the access previews
+-- (rowstile diff, the review's access, rowstile snapshot) list, run as the owner. authz.list where it is the same
+CREATE FUNCTION authz_int.list(p_type text, p_perm text) RETURNS SETOF text
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN; END IF;
+  CASE p_type || '.' || p_perm
+    WHEN 'doc.glance' THEN
+      RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
+        WHERE (((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))));
+    ELSE
+      RETURN QUERY SELECT * FROM authz.list(p_type, p_perm);
+  END CASE;
+END $f$;
+
 -- Every permission the user holds on one object: SELECT authz.perms('file', 11)
 CREATE OR REPLACE FUNCTION authz.perms(p_type text, p_id text) RETURNS text[]
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
@@ -7537,8 +7561,14 @@ BEGIN
     PERFORM set_config('authz.principal_type', who.ptype, true);
     PERFORM set_config('authz.user_id', v_id, true);
     PERFORM authz_int.sign();
+    -- the permission itself, on rows they can't select too (authz.list answers for those they may): a write rule or
+    -- an action may use it. A policy applied before authz_int.list was made has authz.list answer so
     FOR p IN SELECT type, perm FROM authz_int.perms LOOP
-      INSERT INTO pg_temp.authz_diff_after SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz.list(p.type, p.perm) x;
+      IF to_regprocedure('authz_int.list(text, text)') IS NULL THEN
+        INSERT INTO pg_temp.authz_diff_after SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz.list(p.type, p.perm) x;
+      ELSE
+        INSERT INTO pg_temp.authz_diff_after SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz_int.list(p.type, p.perm) x;
+      END IF;
     END LOOP;
     -- (each type's select policy by its table's oid, never by a name read back as a table: the planner may try that
     -- on every table there is, and for one of pg_toast's it is refused to an owner who is no superuser)

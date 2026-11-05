@@ -4201,6 +4201,24 @@ BEGIN
   END CASE;
 END $f$;
 
+-- Every object the user holds a permission on, whether they may select its row or not: what the access previews
+-- (rowstile diff, the review's access, rowstile snapshot) list, run as the owner. authz.list where it is the same
+CREATE FUNCTION authz_int.list(p_type text, p_perm text) RETURNS SETOF text
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN; END IF;
+  CASE p_type || '.' || p_perm
+    WHEN 'doc.glance' THEN
+      RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
+        WHERE (((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))));
+    ELSE
+      RETURN QUERY SELECT * FROM authz.list(p_type, p_perm);
+  END CASE;
+END $f$;
+
 -- Every permission the user holds on one object: SELECT authz.perms('file', 11)
 CREATE OR REPLACE FUNCTION authz.perms(p_type text, p_id text) RETURNS text[]
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
