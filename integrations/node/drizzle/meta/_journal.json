@@ -43,6 +43,13 @@
       "when": 1793485075185,
       "tag": "0005_authz_session_limited",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793846899994,
+      "tag": "0006_authz_break_glass_shared_if",
+      "breakpoints": true
     }
   ]
 }
