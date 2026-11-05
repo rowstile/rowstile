@@ -298,12 +298,13 @@ final class ChecksTest extends TestCase
             'DB_URL' => $this->appUrl(), 'QUEUE_CONNECTION' => 'database', 'LOG_CHANNEL' => 'stderr',
         ]);
         self::assertSame(0, $code, $said);
+        // a principal in the log is its text, as every SDK writes it (Stringable)
         preg_match_all('/\.INFO: (digest|export) (\{.*\})/', $said, $m, PREG_SET_ORDER);
         self::assertSame([
-            ['digest', '{"projects":2,"as":{"Rowstile\\\\Principal":{"type":"service","id":"1"}}}'],
-            ['export', '{"notes":[1,3,4],"for":{"Rowstile\\\\Principal":{"type":"user","id":"3"}}}'],
-            ['digest', '{"projects":2,"as":{"Rowstile\\\\Principal":{"type":"service","id":"1"}}}'],
-            ['export', '{"notes":[2,3],"for":{"Rowstile\\\\Principal":{"type":"user","id":"2"}}}'],
+            ['digest', '{"projects":2,"as":{"Rowstile\\\\Principal":"service:1"}}'],
+            ['export', '{"notes":[1,3,4],"for":{"Rowstile\\\\Principal":"3"}}'],
+            ['digest', '{"projects":2,"as":{"Rowstile\\\\Principal":"service:1"}}'],
+            ['export', '{"notes":[2,3],"for":{"Rowstile\\\\Principal":"2"}}'],
         ], array_map(static fn (array $x): array => [$x[1], $x[2]], $m), $said);
     }
 
