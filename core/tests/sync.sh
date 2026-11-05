@@ -16,11 +16,13 @@ ROLE=authz_sync_engine   # the sync role (difftest's too): made if it isn't ther
 OTHER=${DB}_role         # a role of this suite's, for what applying refuses
 FORMS=${DB}_forms        # the other forms' world
 KEYED=${DB}_keyed        # ... keyed by inheritance
+LINKED=${DB}_linked      # ... and through link tables a TRUNCATE empties (KPSQL and kchange then read it)
 cleanup() {
   stop_sessions
   dropdb --force --if-exists "$DB" 2>/dev/null
   dropdb --force --if-exists "$FORMS" 2>/dev/null
-  dropdb --force --if-exists "$KEYED" 2>/dev/null
+  dropdb --force --if-exists "${DB}_keyed" 2>/dev/null
+  dropdb --force --if-exists "$LINKED" 2>/dev/null
   psql -X -q -d postgres -c "DROP ROLE IF EXISTS $OTHER" -c "DROP ROLE IF EXISTS ${OTHER}_away" 2>/dev/null
   [ -z "${PGSUPERUSER:-}" ] || psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS ${OTHER}_owner" 2>/dev/null
   rm -rf "$T"
@@ -987,8 +989,10 @@ dropdb --force "$KEYED"
 echo "-- keyed by inheritance, through a link table a TRUNCATE empties"
 # a box inherits from the folders it sits in, a folder from the boxes it sits in, by link tables; only the boxes are
 # synced, keyed, and nothing but the tree joins the two types. A TRUNCATE of the folders' links names the folders alone: what
-# the boxes inherit changed too (the tree, rebuilt, says so)
-createdb "$KEYED" || exit 1
+# the boxes inherit changed too (the tree, rebuilt, says so). A database of its own: the one before may outlive its
+# dropdb for a moment, a session the owner may not end (an autovacuum worker) still in it
+KEYED=$LINKED
+dropdb --if-exists "$KEYED" 2>/dev/null; createdb "$KEYED" || exit 1
 KPSQL >/dev/null <<'SQL' || exit 1
 CREATE SCHEMA k2;
 CREATE TABLE k2.users (id bigint PRIMARY KEY);
