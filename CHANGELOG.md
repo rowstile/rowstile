@@ -42,6 +42,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile init` with `--db` and another `DATABASE_URL` writes `database = "env:ROWSTILE_OWNER_DSN"` in
   `rowstile.toml`, the name the stack pages give the tables' owner's connection, instead of
   `ROWSTILE_DATABASE_URL`. Its next steps name the variable `rowstile.toml` reads, not always `DATABASE_URL`.
+- `authz.review_decide` refuses a decision after the review's deadline, the `closes_at` of `authz.start_review`
+  (two weeks after it starts unless the call says otherwise; NULL: none), and says when it was (AZ718).
+  `authz.close_review` still applies the decisions made in time. Before, the deadline was kept and never read.
 
 ### Removed
 
@@ -344,6 +347,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   transaction signed in before it and still open when it commits gets AZ702 on its next statement: retry it.
 - A reader of the change feed reads everything again once after the upgrade, then follows from
   `authz.changes_position()` (no longer `max(pos)`, which may stand past an entry still to come).
+- A review started more than two weeks ago with the default deadline takes no more decisions: close it, or start
+  it again.
 
 ## 0.1.0-beta.3 (2026-11-05)
 

@@ -792,6 +792,20 @@ check "closing it gives its reason to that transaction only: a share after it ha
    RESET ROLE; SELECT coalesce(reason, 'none') FROM authz.audit WHERE action = 'share' ORDER BY id DESC LIMIT 1"
 as 5 -c "SELECT authz.unshare('folder', 3, 'viewer', 'user', 2)" -c "SELECT authz.unshare('folder', 1, 'viewer', 'user', 4)" >/dev/null
 expect_code "a closed review cannot be changed" "42501: you cannot decide in review $REV" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV, 1, false)"
+# a review's deadline (closes_at, by default two weeks after it starts): decisions after it are refused; closing it
+# still applies those made in time
+LATE=$(as 5 -c "SELECT authz.start_review('folder', '5', now() + interval '1 second')")
+as 5 -c "SELECT authz.review_decide($LATE, (SELECT min(item) FROM authz.review_items($LATE)), true)" >/dev/null
+sleep 1.2
+expect_code "a decision after the review's deadline is refused, naming it" "42501: review $LATE closed for decisions at" \
+  -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($LATE, (SELECT min(item) FROM authz.review_items($LATE)), false)"
+said=$(PSQL -c "SET ROLE app_user" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($LATE, 1, false)" 2>&1 | grep '^HINT:  ')
+[ "$said" = "HINT:  rowstile help AZ718" ] && echo "ok    ... with its own code (AZ718)" ||
+  { echo "FAIL  the code of a review past its deadline: $said"; fails=$((fails + 1)); }
+check "... its items are still there to read, with the decision made in time, and it still closes" "true|0" \
+  "SET authz.user_id = 5; SELECT (SELECT keep FROM authz.review_items($LATE) ORDER BY item LIMIT 1) || '|' || authz.close_review($LATE)"
+expect_code "a review started with no deadline takes decisions" ok -c "SET authz.user_id = 5" -c "BEGIN" \
+  -c "SELECT authz.review_decide(authz.start_review('folder', '5', NULL), 1, true)" -c "ROLLBACK"
 admin "the audit trail has the requests, their answers and the reviews" "approve_request|close_review|deny_request|request_access|start_review" \
   "SELECT string_agg(DISTINCT action, '|' ORDER BY action) FROM authz.audit
    WHERE action IN ('request_access', 'approve_request', 'deny_request', 'start_review', 'close_review')"

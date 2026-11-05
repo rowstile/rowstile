@@ -391,10 +391,12 @@ FEATURES: list[Feature] = [
         "api.reviews",
         1,
         "Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review`",
-        ("api.start_review", "api.review_items", "api.review_decide", "api.close_review"),
+        ("api.start_review", "api.review_items", "api.review_decide", "api.close_review", "err.AZ718"),
         Doc(GOV, "Access reviews"),
         (
             T("governance.sh", "closing the review revokes what was marked"),
+            T("governance.sh", "a decision after the review's deadline is refused, naming it"),
+            T("governance.sh", "with its own code (AZ718)"),
             T("governance.sh", "dave (not decided) kept it"),
             T("governance.sh", "authz.review_items("),
             T("governance.sh", "authz.review_decide("),

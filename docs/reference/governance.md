@@ -77,6 +77,9 @@
   Another relation, or whoever manages that share, gives the access then.
 - **Access reviews**: a snapshot of an object's shares; each is kept or revoked by
   someone who could unshare it; closing applies the decisions. <!-- checked: tests/governance.sh "closing the review revokes what was marked"; tests/governance.sh "dave (not decided) kept it"; tests/governance.sh "nor revoke it in a review" -->
+  A review takes decisions until its deadline, `start_review`'s third argument (two weeks after it starts unless
+  the call says otherwise; NULL: none): `review_decide` after it is refused, saying when it was (AZ718). <!-- checked: tests/governance.sh "a decision after the review's deadline is refused, naming it"; tests/governance.sh "with its own code (AZ718)"; tests/governance.sh "a review started with no deadline takes decisions" -->
+  Nothing closes a review by itself: `close_review` still applies the decisions made in time. <!-- checked: tests/governance.sh "its items are still there to read, with the decision made in time, and it still closes" -->
   Reviews are for users: a service signed in is refused each call, saying so (AZ715). <!-- checked: tests/principals.sh "authz.start_review is for users: a service is told so"; tests/principals.sh "authz.review_items is for users: a service is told so"; tests/principals.sh "authz.review_decide is for users: a service is told so"; tests/principals.sh "authz.close_review is for users: a service is told so" -->
 - **Invariants** run with the policy's tests and on demand. <!-- checked: tests/governance.sh "the policy tests fail on it"; tests/governance.sh "a Globex user owning an Acme folder breaks it" -->
 - **Previewing a change**: `rowstile diff new.authz [--users 1,2]`
