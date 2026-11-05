@@ -13,7 +13,7 @@ cuts half way 28
 cuts half way, every statement 31
 cuts half way, other policies 1
 devx 154
-docs 40
+docs 52
 governance 294
 hand answers 370
 identity 92

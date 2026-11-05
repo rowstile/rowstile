@@ -13047,8 +13047,8 @@ class Demo(unittest.TestCase):
 class ComparePages(unittest.TestCase):
     """docs/compare/: a page per alternative. What it says of rowstile is tested here (a whole policy compiles
     and is laid out as `rowstile fmt` writes it; a part of one, and the app's code, are lines of a conformance
-    app); what it says of another project carries the day its docs were read, and each page says when the other
-    is the better choice."""
+    app) and in tests/docs_test.sh (its SQL runs, and answers what the page says); what it says of another
+    project carries the day its docs were read, and each page says when the other is the better choice."""
 
     REPO = os.path.dirname(ROOT)
     SKIP = StackPages.SKIP

@@ -1,7 +1,8 @@
 #!/bin/bash
 # docs_test.sh: docs/getting-started.md runs as written and does what the guide says (its Python too, against the
-# client it writes: tests/guide_app.py), the blog post's experiment.sql runs as its header says, and the code of the
-# landing pages (README.md, site/index.md) runs and does what its comments say.
+# client it writes: tests/guide_app.py), each blog post's experiment.sql runs as its header says, the comparison
+# pages' SQL (docs/compare/) runs and answers what they say, and the code of the landing pages (README.md,
+# site/index.md) runs and does what its comments say.
 #   PGHOST=... PGUSER=authz_owner PGSUPERUSER=postgres tests/docs_test.sh
 # Walks the guide's blocks in order, in a fresh database and an empty folder: ```sql blocks run in psql,
 # ```authz <file> blocks are written to that file, ```sh blocks run (with rowstile on the PATH, and
@@ -130,18 +131,103 @@ else
   echo "skip  the guide as the superuser it is written for: PGSUPERUSER names none"
 fi
 
-# the blog post's experiment runs as its header says, small, as a role that isn't a superuser: with the setting
+# each blog post's experiment runs as its header says, small, as a role that isn't a superuser: with the setting
 # a stock server has (the suites' owner has createrole_self_grant, which would hide a missing grant)
 BLOG=authz_docs_blog
-dropdb --if-exists "$BLOG" 2>/dev/null; createdb "$BLOG" || exit 1
-out=$(cd ../docs/blog/recursive-row-level-security &&
-      PGOPTIONS="-c createrole_self_grant=" psql -X -d "$BLOG" -v folders=200 -f experiment.sql 2>&1)
-rc=$?
-check "the blog post's experiment.sql runs to its end as a role that isn't a superuser" "$rc" "0"
-[ $rc -ne 0 ] && echo "$out" | grep ERROR | head -n 3
-check "it times each query three times through each of the four policies" "$(echo "$out" | grep -c 'Execution Time')" "36"
-dropdb "$BLOG"
-psql -X -q -d postgres -c "DROP ROLE IF EXISTS demo_app" >/dev/null
+experiment() {   # the post's folder, its size, how many timings it prints
+  dropdb --if-exists "$BLOG" 2>/dev/null; createdb "$BLOG" || exit 1
+  out=$(cd "../docs/blog/$1" && PGOPTIONS="-c createrole_self_grant=" psql -X -d "$BLOG" -v "$2" -f experiment.sql 2>&1)
+  rc=$?
+  check "$1: the blog post's experiment.sql runs to its end as a role that isn't a superuser" "$rc" "0"
+  [ $rc -ne 0 ] && echo "$out" | grep ERROR | head -n 3
+  check "$1: it times each query three times through each policy" "$(echo "$out" | grep -c 'Execution Time')" "$3"
+  dropdb "$BLOG"
+  psql -X -q -d postgres -c "DROP ROLE IF EXISTS demo_app" >/dev/null
+}
+experiment recursive-row-level-security folders=200 36
+experiment row-level-security-on-one-cpu files=2000 63
+
+# the comparison pages' SQL and what they say it answers, in a database of a few rows: a page's blocks are written
+# to files (1.sql, 2.sql, ... 1.authz, ... and 1.txt, ... for the plain ones), and run as the page shows them
+CMP=authz_docs_compare
+blocks() {   # the page, the folder its blocks are written to
+  python3 - "../docs/compare/$1" "$2" <<'PY'
+import os, re, sys
+page, out = sys.argv[1:]
+n: dict[str, int] = {}
+for kind, body in re.findall(r"^```(\w*)\n(.*?)^```", open(page, encoding="utf-8").read(), re.S | re.M):
+    kind = kind or "txt"
+    n[kind] = n.get(kind, 0) + 1
+    with open(os.path.join(out, f"{n[kind]}.{kind}"), "w", encoding="utf-8") as fh:
+        fh.write(body)
+PY
+}
+fresh() {   # the database, with the SQL $1 run in it as the owner, and the app role made
+  dropdb --if-exists "$CMP" 2>/dev/null; createdb "$CMP" || exit 1
+  PGOPTIONS="-c client_min_messages=warning" psql -X -q -v ON_ERROR_STOP=1 -d "$CMP" -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user')
+    THEN CREATE ROLE app_user NOLOGIN; END IF; END \$\$" -c "GRANT app_user TO CURRENT_USER" -c "$1" >/dev/null
+}
+as_app() {   # what the SQL gives as the app role, in a transaction rolled back
+  PGOPTIONS="-c client_min_messages=warning" psql -X -At -d "$CMP" -c "BEGIN" -c "SET LOCAL ROLE app_user" -c "$1" \
+    -c "ROLLBACK" 2>&1 | grep -v -E '^(BEGIN|SET|ROLLBACK)$'
+}
+B=$(mktemp -d)
+# row-level security by hand: user 1 owns folder 1, with folders 2 and 3 below it; user 2 owns 2, 3 and 4
+blocks hand-written-rls.md "$B"
+fresh "CREATE SCHEMA app; CREATE TABLE app.users (id bigint PRIMARY KEY);
+  CREATE TABLE app.folders (id bigint PRIMARY KEY, parent_id bigint REFERENCES app.folders, owner_id bigint);
+  INSERT INTO app.users VALUES (1), (2); INSERT INTO app.folders VALUES (1, NULL, 1), (2, 1, 2), (3, 2, 2), (4, NULL, 2);
+  GRANT USAGE ON SCHEMA app TO app_user; GRANT SELECT ON app.folders TO app_user;"
+ids() { as_app "SET LOCAL app.user_id = '$1'; SELECT string_agg(id::text, ' ' ORDER BY id) FROM app.folders"; }
+psql -X -q -v ON_ERROR_STOP=1 -d "$CMP" -f "$B/1.sql" >/dev/null
+check "hand-written-rls.md: the flat rule shows user 2 the folders they own" "$(ids 2)" "2 3 4"
+psql -X -q -v ON_ERROR_STOP=1 -d "$CMP" -f "$B/2.sql" >/dev/null
+check "hand-written-rls.md: Postgres refuses the first query through the policy that walks up the tree, as the page says" \
+  "$(ids 1)" "$(cat "$B/1.txt")"
+psql -X -q -d "$CMP" -c "DROP POLICY folders_tree ON app.folders"
+psql -X -q -v ON_ERROR_STOP=1 -d "$CMP" -f "$B/3.sql" >/dev/null
+check "hand-written-rls.md: ... and the SECURITY DEFINER function works: user 1 sees their folder and those below" \
+  "$(ids 1)" "1 2 3"
+rm -f "$B"/*
+# ZenStack's posts: user 1 wrote a draft (post 1) and a published post (post 2); user 3 reads post 2
+blocks zenstack.md "$B"
+fresh "CREATE SCHEMA app; CREATE TABLE app.users (id bigint PRIMARY KEY);
+  CREATE TABLE app.posts (id bigint PRIMARY KEY, title text, published boolean NOT NULL DEFAULT false,
+                          author_id bigint REFERENCES app.users);
+  INSERT INTO app.users VALUES (1), (2), (3); INSERT INTO app.posts VALUES (1, 'a draft', false, 1), (2, 'out', true, 1);
+  GRANT USAGE ON SCHEMA app TO app_user; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO app_user;"
+policy=$(grep -l '^app role' "$B"/*.authz | head -n 1)
+out=$(python3 cli/rowstile_cli.py --db "dbname=$CMP" apply "$policy" 2>&1)
+case "$out" in *": applied") echo "ok    zenstack.md: its policy applies";; *) echo "FAIL  zenstack.md: its policy: $out"; fails=$((fails + 1));; esac
+said=$(cat "$(grep -l '^no   update' "$B"/*.txt)")
+as3() { as_app "SELECT authz.act_as('user', '3'); $1" | tail -n +2; }   # signed in as user 3 (its line left out)
+check "zenstack.md: authz.explain_rule answers user 3, who reads post 2 and may not change it, as the page shows" \
+  "$(as3 "SELECT unnest(authz.explain_rule('app.posts', 'update', '2'))")" \
+  "$said"
+check "zenstack.md: ... and nothing for user 1's draft, which user 3 can't read" \
+  "$(as3 "SELECT authz.explain_rule('app.posts', 'update', '1') IS NULL")" "t"
+# OpenFGA's and SpiceDB's documents: the page's list, the third page of fifty, runs as the app role (empty here)
+for page in openfga.md spicedb.md; do
+  rm -f "$B"/*
+  blocks "$page" "$B"
+  fresh "CREATE SCHEMA app; CREATE TABLE app.users (id bigint PRIMARY KEY); CREATE TABLE app.teams (id bigint PRIMARY KEY);
+    CREATE TABLE app.team_members (team_id bigint REFERENCES app.teams, user_id bigint REFERENCES app.users);
+    CREATE TABLE app.folders (id bigint PRIMARY KEY);
+    CREATE TABLE app.folder_editors (folder_id bigint REFERENCES app.folders, user_id bigint REFERENCES app.users);
+    CREATE TABLE app.folder_teams (folder_id bigint REFERENCES app.folders, team_id bigint REFERENCES app.teams);
+    CREATE TABLE app.documents (id bigint PRIMARY KEY, title text, folder_id bigint REFERENCES app.folders);
+    CREATE TABLE app.document_editors (document_id bigint REFERENCES app.documents, user_id bigint REFERENCES app.users);
+    CREATE TABLE app.document_teams (document_id bigint REFERENCES app.documents, team_id bigint REFERENCES app.teams);
+    INSERT INTO app.users VALUES (1); INSERT INTO app.folders VALUES (1); INSERT INTO app.folder_editors VALUES (1, 1);
+    INSERT INTO app.documents SELECT i, 'doc ' || i, 1 FROM generate_series(1, 120) i;
+    GRANT USAGE ON SCHEMA app TO app_user; GRANT SELECT, UPDATE ON ALL TABLES IN SCHEMA app TO app_user;"
+  out=$(python3 cli/rowstile_cli.py --db "dbname=$CMP" apply "$(grep -l '^app role' "$B"/*.authz | head -n 1)" 2>&1)
+  case "$out" in *": applied") echo "ok    $page: its policy applies";; *) echo "FAIL  $page: its policy: $out"; fails=$((fails + 1));; esac
+  check "$page: its SQL runs as the app role: user 1 edits the folder of the 120 documents, so the third page has 20" \
+    "$(as_app "SELECT authz.act_as('user', '1'); $(cat "$B/1.sql")" | tail -n +2 | wc -l)" "20"
+done
+rm -r "$B"
+dropdb "$CMP"
 
 # the landing pages, README.md and site/index.md: the policy each shows applies to the tables it reads
 # (tests/fixtures/landing.sql: user 42 owns folder 8 and folder 12 inside it, and edits folder 10), and its SQL runs

@@ -5,8 +5,9 @@
 --
 --   createdb rls_parallel && psql -X -d rls_parallel -v files=2000000 -f experiment.sql
 --
--- It makes a schema `demo` and a role `demo_app`, and drops neither. PostgreSQL 16 or later, default settings
--- but for JIT, which is off. Each query runs three times; read the middle "Execution Time" of each.
+-- It makes a schema `demo` and a role `demo_app`, and drops neither. PostgreSQL 16 or later, as a superuser or as
+-- any role with CREATEROLE that may create a schema in the database (createdb makes you its owner); default
+-- settings but for JIT, which is off. Each query runs three times; read the middle "Execution Time" of each.
 
 \set ON_ERROR_STOP on
 \if :{?files} \else \set files 2000000 \endif
@@ -16,6 +17,8 @@ SET client_min_messages = warning;
 DROP SCHEMA IF EXISTS demo CASCADE;
 DROP ROLE IF EXISTS demo_app;
 CREATE ROLE demo_app;
+-- so that SET ROLE demo_app works for a role that isn't a superuser too
+GRANT demo_app TO CURRENT_USER;
 CREATE SCHEMA demo;
 GRANT USAGE ON SCHEMA demo TO demo_app;
 
