@@ -6,7 +6,7 @@
   <parent>
     <groupId>dev.rowstile</groupId>
     <artifactId>rowstile-parent</artifactId>
-    <version>0.1.0-beta.3</version>
+    <version>0.1.0-dev</version>
   </parent>
 
   <artifactId>rowstile-kotlin</artifactId>
