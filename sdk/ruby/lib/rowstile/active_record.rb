@@ -105,10 +105,11 @@ module Rowstile
       # the app's transaction (in a test's, the one the app began in it) is one principal's
       apps = open_transactions > (@rowstile_tests ? 1 : 0)
       signed = @rowstile_for if apps
-      raise SignIn.signed_in_already(signed, who) unless signed.nil? || signed == who
+      # (code that acts for no one, in a transaction nobody's: nobody's work)
+      raise SignIn.signed_in_already(signed, who) unless signed.nil? || signed == (who || NOBODY)
 
       self.materialize_transactions # (the method: the argument has its name)
-      @rowstile_for = who if apps
+      @rowstile_for = who || signed if apps
       who ||= NOBODY # (the code acts for no one in a test's transaction a sign-in is in: nobody, from here on)
       unless @rowstile_signed == who
         # (a test's transaction acts for one, then another: the database holds a transaction to one principal, AZ716,

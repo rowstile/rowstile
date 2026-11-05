@@ -222,6 +222,8 @@ class SdkTest < ActionDispatch::IntegrationTest
         end
       end
       assert_includes Rowstile.refusal(merge).message, "MERGE matched a row"
+      # what tells it in any language: the function that raised it
+      assert_equal "ExecWithCheckOptions", merge.cause.result.error_field(PG::PG_DIAG_SOURCE_FUNCTION)
       # and a 42501 that is no policy's: a table the app role was never granted
       denied = assert_raises(ActiveRecord::StatementInvalid) { ids("SELECT * FROM public.schema_migrations") }
       assert_nil Rowstile.refusal(denied)
@@ -271,6 +273,50 @@ class SdkTest < ActionDispatch::IntegrationTest
     assert_equal 1, [Rowstile::Principal.of(1), Rowstile::Principal.of("1")].uniq.size
     assert_not_equal Rowstile::Principal.of(1), "1"
     assert_equal [nil, nil], Rowstile.act_as_args(["service", nil]) # a type and no id: nobody
+    # nobody has one spelling: no id (nil or ""), whatever the type
+    nobodies = [Rowstile::Principal.of(["service", nil]), Rowstile::Principal.of(""), Rowstile::Principal.of(["bot", ""]),
+                Rowstile::Principal.parse("service:"), Rowstile::Principal.new(type: "service", id: nil)]
+    assert_equal [[Rowstile::NOBODY, "nobody"]] * 5, nobodies.map { |p| [p, p.to_s] }
+  end
+
+  # a transaction begun for nobody, by any spelling: code that acts for no one, or for nobody, runs on in it
+  test "nobody has one spelling" do
+    seen = Rowstile.acting_as(["service", nil]) do
+      Note.transaction { [ids, Rowstile.acting_as(nil) { ids }, Rowstile.acting_as("") { ids }] }
+    end
+    seen += Note.transaction { [Rowstile.acting_as(nil) { ids }, ids] }
+    assert_equal [EXPECTED[nil]] * 5, seen
+  end
+
+  # A fake of the driver's error, as a server sends it: its fields by PG's numbers
+  class Fields
+    def initialize(fields) = @fields = fields
+    def error_field(field) = @fields[field]
+  end
+
+  def raised(fields) = PG::Error.new(fields[PG::PG_DIAG_MESSAGE_PRIMARY], result: Fields.new(fields))
+
+  # a code is read from the HINT alone: Postgres's own words quote the request's input; a 28000 without AZ701
+  # (Postgres's own: a login refused when connecting) is not the not-signed-in error; Postgres's own refusal is told
+  # by the function that raised it, in any language, and its words at their start alone
+  test "what is read of an error, and from where" do
+    cast = assert_raises(ActiveRecord::StatementInvalid) { ids("SELECT 'rowstile help AZ714'::bigint") }
+    assert_equal ["22P02", nil, nil, nil], [Rowstile.sqlstate(cast), Rowstile.error_code(cast),
+                                            Rowstile.call_problem(cast), Rowstile.problem_of(cast)]
+    login = assert_raises(ActiveRecord::StatementInvalid) do
+      ids("DO $$BEGIN RAISE 'no pg_hba.conf entry' USING ERRCODE = '28000'; END$$")
+    end
+    assert_equal ["28000", false], [Rowstile.sqlstate(login), Rowstile.not_signed_in?(login)]
+    words = "neue Zeile verletzt Policy für Sicherheit auf Zeilenebene für Tabelle »notes«"
+    german = ->(routine) { raised(PG::PG_DIAG_SQLSTATE => "42501", PG::PG_DIAG_MESSAGE_PRIMARY => words,
+                                  PG::PG_DIAG_SOURCE_FUNCTION => routine) }
+    translated = Rowstile.refusal(german.call("ExecWithCheckOptions"))
+    assert_equal [words, nil, nil, "AZ709"], [translated.message, translated.table, translated.command, translated.code]
+    assert_nil Rowstile.refusal(german.call("aclcheck_error")) # a grant missing
+    share = Rowstile.refusal(raised(PG::PG_DIAG_SQLSTATE => "42501", PG::PG_DIAG_MESSAGE_HINT => "rowstile help AZ705",
+                                    PG::PG_DIAG_MESSAGE_PRIMARY => 'you cannot share file new row violates row-level ' \
+                                                                   'security policy for table "app.secrets"'))
+    assert_equal ["AZ705", nil, nil], [share.code, share.table, share.command]
   end
 
   # the gem without Rails: no Railtie, the rest as it is

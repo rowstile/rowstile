@@ -18,13 +18,15 @@ require_relative "rowstile/version"
 # skips row-level security. Rowstile::Job signs Active Job jobs in; Rowstile::Testing helps Minitest.
 module Rowstile
   # Who a transaction acts for: a user (type "user"), another principal type the policy declares (a service, a
-  # bot), or nobody (id nil: only what `anyone` may see).
+  # bot), or nobody (id nil: only what `anyone` may see). Nobody has one spelling: a principal made without an id
+  # (nil or ""), whatever its type, is NOBODY, as the database signs it in.
   class Principal
     attr_reader :type, :id
 
     def initialize(type:, id:)
-      @type = type
-      @id = id
+      nobody = id.to_s.empty?
+      @type = nobody ? "user" : type
+      @id = nobody ? nil : id
       freeze
     end
 
@@ -173,12 +175,15 @@ module Rowstile
 
   UNSEEN = "this user may not see the row as written (the select rule). An insert that reads it back " \
            "(RETURNING), an upsert, and an update with a WHERE need to see it."
-  GENERIC = /(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/
-  private_constant :UNSEEN, :GENERIC
+  GENERIC = /\A(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/
+  # the function in Postgres that raises those refusals (the error's source function): what tells one in another
+  # language
+  ROW_CHECK = "ExecWithCheckOptions"
+  private_constant :UNSEEN, :GENERIC, :ROW_CHECK
 
   # What the database said, from the error or the driver's error inside it (Active Record keeps PG's as the cause).
   class Said
-    attr_reader :sqlstate, :message, :detail, :hint, :schema, :table, :constraint
+    attr_reader :sqlstate, :message, :detail, :hint, :schema, :table, :constraint, :routine
 
     def initialize(result)
       @sqlstate = result.error_field(PG::PG_DIAG_SQLSTATE)
@@ -188,6 +193,7 @@ module Rowstile
       @schema = result.error_field(PG::PG_DIAG_SCHEMA_NAME)
       @table = result.error_field(PG::PG_DIAG_TABLE_NAME)
       @constraint = result.error_field(PG::PG_DIAG_CONSTRAINT_NAME)
+      @routine = result.error_field(PG::PG_DIAG_SOURCE_FUNCTION)
     end
 
     def self.of(error)
@@ -203,7 +209,8 @@ module Rowstile
       end
     end
 
-    # rowstile's code, from the HINT, where the runtime puts it (rowstile help AZ709)
+    # rowstile's code, from the HINT, where the runtime puts it (rowstile help AZ709), and never the message, which
+    # may hold the request's own input (Postgres's own words quote a value it couldn't read)
     def code
       hint.to_s[/rowstile help (AZ\d{3})/, 1]
     end
@@ -223,11 +230,12 @@ module Rowstile
     end
 
     # Whether error is strict sign-in's (rowstile help AZ701): a query that needs to know who is asking ran in a
-    # transaction nobody signed in to. A login refused (AZ703) and settings changed by hand (AZ702) share its
-    # SQLSTATE, 28000, but are no such thing.
+    # transaction nobody signed in to. Its SQLSTATE, 28000, is shared by a login refused (AZ703), settings changed
+    # by hand (AZ702) and Postgres's own refusals to connect (a role that isn't there, pg_hba.conf), which carry no
+    # code: none of them is.
     def not_signed_in?(error)
       said = Said.of(error)
-      !said.nil? && said.sqlstate == "28000" && [nil, "AZ701"].include?(said.code)
+      !said.nil? && said.sqlstate == "28000" && said.code == "AZ701"
     end
 
     # A Refused for an error that is the database refusing a write (SQLSTATE 42501, raised by rowstile's policies
@@ -239,6 +247,8 @@ module Rowstile
 
       generic = GENERIC.match(said.message)
       code = said.code
+      # Postgres's own refusal in another language (the server's lc_messages): which table and rule, its words alone say
+      return Refused.new(said.message) if code.nil? && generic.nil? && said.routine == ROW_CHECK
       return nil if (code.nil? && generic.nil?) || CALL_PROBLEMS.key?(code) # sign in first (AZ714) is a 401
       return generic_refusal(said.message, generic) if generic
 
