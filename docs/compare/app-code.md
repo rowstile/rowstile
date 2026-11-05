@@ -5,7 +5,9 @@ Casbin and Pundit give those checks a place and a vocabulary. For a few roles it
 simplest thing that works. This page says where it gets hard, and what changes when the database enforces
 the rules instead.
 
-The short version for every alternative is on [rowstile and the alternatives](../comparison.md).
+What this page says of CASL and Pundit is from their own documentation, read on 2026-11-05 and linked. If a line
+is wrong or out of date, an issue is welcome. The short version for every alternative is on
+[rowstile and the alternatives](../comparison.md).
 
 ## Where it gets hard
 
@@ -13,10 +15,15 @@ The short version for every alternative is on [rowstile and the alternatives](..
 somebody adds next year, the background job, the admin script and the second service on the same database
 each need it again. The one that forgets shows everything, and nothing fails to say so.
 
-**A list is the rule written twice.** `can(user, "view", document)` answers for one document. "The documents
-this user may see, by name, page 3" can't call it for every row, so the rule is written a second time as a
-`WHERE`, and the two must be kept the same by hand. When access is shared or inherited (a folder's editors,
-a team inside a team) that `WHERE` is the hard part of the whole feature.
+**A list needs the rule as a query.** `can(user, "view", document)` answers for one document. "The documents
+this user may see, by name, page 3" can't call it for every row: the rule must also be a `WHERE`. Some libraries
+write it from the same rules: CASL's `accessibleBy` helper gets "all records from the database our user has
+access to", as a Prisma `where` ([`@casl/prisma`](https://github.com/stalniy/casl/blob/main/packages/casl-prisma/README.md))
+or a MongoDB query ([`@casl/mongoose`](https://github.com/stalniy/casl/blob/main/packages/casl-mongoose/README.md)).
+With Pundit, "you are expected to define a class called a policy scope" ([Pundit's
+README](https://github.com/varvet/pundit/blob/main/README.md#scopes)): the rule written a second time, beside the
+check, and the two kept the same by hand, as in plain code. When access is shared or inherited (a folder's
+editors, a team inside a team) that query is the hard part of the whole feature.
 
 **The rule is spread out.** Who may edit a document is the sum of the checks in every handler that touches
 one. Reading it means reading them all, and a review of a change to one of them can't say who gains access.

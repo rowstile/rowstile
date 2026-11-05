@@ -13053,14 +13053,14 @@ class ComparePages(unittest.TestCase):
     REPO = os.path.dirname(ROOT)
     SKIP = StackPages.SKIP
     lines = StackPages.lines
-    OTHERS = ("openfga.md", "spicedb.md", "zenstack.md")  # pages that quote another project's documentation
+    OTHERS = ("app-code.md", "openfga.md", "spicedb.md", "zenstack.md")  # pages that quote another project's docs
 
     def test_what_the_pages_show_of_rowstile(self) -> None:
         from authzlib import fmt
 
         folder = os.path.join(self.REPO, "docs", "compare")
         pages = sorted(f for f in os.listdir(folder) if f.endswith(".md"))
-        self.assertEqual(pages, ["app-code.md", "hand-written-rls.md", *self.OTHERS])
+        self.assertEqual(pages, sorted(["hand-written-rls.md", *self.OTHERS]))
         have = self.lines("integrations/fastapi") | self.lines("integrations/nextjs")
         with open(os.path.join(self.REPO, "docs", "comparison.md"), encoding="utf-8") as fh:
             overview = fh.read()
@@ -13098,8 +13098,8 @@ class ComparePages(unittest.TestCase):
             found = compare_readings.readings(page, text)
             self.assertEqual(len(found), 1, f"{page}: the day the documentation it quotes was read, once")
             days[page] = found[0].day
-        for page in ("app-code.md", "hand-written-rls.md"):
-            self.assertEqual(compare_readings.readings(page, read(f"../docs/compare/{page}")), [], page)
+        page = "hand-written-rls.md"
+        self.assertEqual(compare_readings.readings(page, read(f"../docs/compare/{page}")), [], page)
         # on the day the first is due, nothing is; the day after, it is, and the run fails, an annotation on its line
         first = min(compare_readings.due(day) for day in days.values())
         said, problems = compare_readings.check(texts, first)
