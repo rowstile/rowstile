@@ -13878,13 +13878,16 @@ class DocPages(unittest.TestCase):
         ).group(1)
         self.assertIn("\npool_mode = transaction\n", script)
         self.assertRegex(script, r"\nmax_prepared_statements = [1-9]")
-        for stack in ("fastapi", "nextjs"):
-            starts = re.findall(r"pooler_start .*", self.page("integrations", stack, "test.sh"))
-            self.assertEqual(starts, ['pooler_start "$NAME" "$APP_PORT" conf_app:app || exit 1'], stack)
+        suites = sorted(glob.glob(os.path.join(self.REPO, "integrations", "*", "test.sh")))
+        self.assertGreater(len(suites), 2)
+        for suite in suites:  # each suite, by POOLER=pgbouncer, as the nightly runs them all
+            starts = re.findall(r"pooler_start .*", self.page(os.path.relpath(suite, self.REPO)))
+            self.assertEqual(starts, ['pooler_start "$NAME" "$APP_PORT" conf_app:app || exit 1'], suite)
         section = search(r"\n## Behind a pooler\n(.*?)\n## ", self.page("docs", "operations.md"), re.S).group(1)
         said = " ".join(section.split())
         self.assertIn(
-            "Every night both SDKs' conformance suites run with the app's connection through PgBouncer "
+            "Every night every conformance suite (each SDK's, and the sync engines') runs with the app's connection "
+            "through PgBouncer "
             f"{version} in transaction mode, keeping prepared statements ([`integrations/pooler.sh`](../integrations/pooler.sh)); "
             "the owner and "
             "the change feed connect directly.",
