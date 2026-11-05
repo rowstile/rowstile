@@ -2,8 +2,9 @@
 // built from a tag's own commit, and doesn't wait for a release: a site tag (site-v1, site-v2, ...) on a commit of
 // main deploys it, and so does a release's tag (vX.Y.Z) on main. A blog tag (blog-v1, blog-v2, ...) publishes the
 // articles and the comparison pages alone: the site of the newest site or release tag on main, with docs/blog/ and
-// docs/compare/ as they are at the blog tag. A tag pushed on a commit older than another of its kind deploys
-// nothing, so the site never goes back by itself; run by hand, a tag deploys whatever comes after it.
+// docs/compare/ as they are at the blog tag (it may add a comparison page, not remove one the site's own pages
+// name: that takes a site tag). A tag pushed on a commit older than another of its kind deploys nothing, so the site
+// never goes back by itself; run by hand, a tag deploys whatever comes after it.
 //   node site/source.mjs <tag> [--by-hand]          deploy=true|false, why=..., code=<the tag the site is built
 //                                                    from>, content=<the blog tag whose two folders replace its own>
 //   node site/source.mjs --take <tag> [--by-hand]   the same, and checks out what it is built from when it deploys,
@@ -111,6 +112,18 @@ export function read(repo, given, byHand) {
 export function take(repo, given, byHand) {
   const decided = read(repo, given, byHand);
   if (!decided.deploy) return decided;
+  if (decided.content) {
+    // the site's own pages name each comparison page it has (docs/comparison.md links it, site/pages.mjs describes
+    // it): a blog tag may add one, or remove one a blog tag added, but not remove one of those
+    const compared = (/** @type {string} */ tag) => git(repo, "ls-tree", "--name-only", `${ref(tag)}^{commit}`, "docs/compare/")
+      .out.split("\n").filter((f) => /^docs\/compare\/[a-z0-9-]+\.md$/.test(f));
+    const kept = new Set(compared(decided.content));
+    const gone = compared(decided.code).filter((f) => !kept.has(f));
+    if (gone.length) {
+      throw new Error(`${decided.content} removes ${gone.join(", ")}, which ${decided.code}'s own pages name (docs/comparison.md ` +
+        "links each comparison page, site/pages.mjs describes it): removing or renaming a comparison page takes a site tag");
+    }
+  }
   const changed = git(repo, "status", "--porcelain").out;
   if (changed) throw new Error(`this clone has changes of its own, which taking ${given} would lose:\n${changed}`);
   const out = git(repo, "checkout", "--quiet", "--detach", `${ref(decided.code)}^{commit}`);
