@@ -777,11 +777,15 @@ listed=$(psql -X -q -At -d "$CDB" -c "SET ROLE app_user" -c "SET authz.user_id =
 quiet -d "$CDB" -c "CREATE FUNCTION app.\"Member\"(p bigint) RETURNS boolean LANGUAGE sql STABLE
   AS 'SELECT exists (SELECT 1 FROM app.memberships m WHERE m.project_id = p)'" \
   -c "GRANT EXECUTE ON FUNCTION app.\"Member\"(bigint) TO app_user" \
-  -c "CREATE OPERATOR public.=!= (FUNCTION = app.\"Member\", RIGHTARG = bigint)" >/dev/null || exit 1
-for call in 'app."Member"(this.id)' '"app"."Member"(this.id)' 'app . "Member" /* c */ (this.id)' '=!= this.id'; do
+  -c "CREATE OPERATOR public.=!= (FUNCTION = app.\"Member\", RIGHTARG = bigint)" \
+  -c "CREATE FUNCTION public.filter(p bigint) RETURNS boolean LANGUAGE sql STABLE AS 'SELECT app.\"Member\"(p)'" \
+  -c "CREATE FUNCTION public.within(p bigint) RETURNS boolean LANGUAGE sql STABLE AS 'SELECT app.\"Member\"(p)'" \
+  -c "GRANT EXECUTE ON FUNCTION public.filter(bigint), public.within(bigint) TO app_user" >/dev/null || exit 1
+for call in 'app."Member"(this.id)' '"app"."Member"(this.id)' 'app . "Member" /* c */ (this.id)' '=!= this.id' \
+    "$CDB.app.\"Member\"(this.id)" 'filter(this.id)' 'within(this.id)'; do
   sed "s|{exists .*}|{$call}|" "$T/members.authz" > "$T/members_fn.authz"
   out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/members_fn.authz" 2>&1)
-  [ "$out" = "$T/members_fn.authz: applied" ] && [ "$(seen)" = "10,12" ] && ok "... and a function it calls by a quoted name or as an operator: {$call}" ||
+  [ "$out" = "$T/members_fn.authz: applied" ] && [ "$(seen)" = "10,12" ] && ok "... and a function it calls however its name is written (quoted, after its database's, like SQL's words) or as an operator: {$call}" ||
     bad "a quoted function's rights" "{$call}: select $(seen): $out"
 done
 # ... and where a view reads the permission: another type's rule through an arrow, a masked view. A view reads its
@@ -790,7 +794,7 @@ done
 quiet -d "$CDB" -c "CREATE TABLE app.tasks (id bigint PRIMARY KEY, project_id bigint, note text)" \
   -c "INSERT INTO app.tasks VALUES (100, 10, 'a'), (110, 11, 'b'), (120, 12, 'c')" \
   -c "GRANT SELECT ON app.tasks TO app_user" >/dev/null || exit 1
-for call in 'app."Member"(this.id)' '=!= this.id'; do
+for call in 'app."Member"(this.id)' '=!= this.id' "$CDB.app.\"Member\"(this.id)" 'filter(this.id)'; do
   printf '%s\n' "app role app_user" "type user = app.users" "type project = app.projects" \
     "  can open = signed_in and not {$call}" "type task = app.tasks" "  project : project = project_id" \
     "  can open = project.open" "type membership = app.memberships" "rules app.tasks view app.tasks_seen" \
