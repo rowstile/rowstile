@@ -9330,10 +9330,37 @@ class Confidence(unittest.TestCase):
         self.assertIsNone(evaluate.compare(a, b, listing=listing))
         self.assertEqual((listing.whole, listing.complete), (1, False))
         self.assertEqual(listing.said(), "3,000 listed: every one of up to 3 rows of each type with at most 1 link")
-        # fewer drawn worlds, fewer listed: but never before every world with one link at most (2,048 here)
+        # fewer drawn worlds, fewer listed: but never before every world with one link at most (2,048 here), while
+        # those are no more than LISTED_AT_MOST for each drawn world (2,400)
         listing = evaluate.Listing((a, b))
-        self.assertIsNone(evaluate.compare(a, b, worlds=10, listing=listing))
+        self.assertIsNone(evaluate.compare(a, b, worlds=40, listing=listing))
         self.assertEqual(listing.said(), "2,049 listed: every one of up to 3 rows of each type with at most 1 link")
+
+    def test_the_listing_stops_however_many_classes_its_rows_have(self) -> None:
+        # five flags on users and five on folders: 32 classes of each, so the worlds of one link (an owner) are
+        # 32 x 32. The listing stops at LISTED_AT_MOST for each drawn world, and says how far it got
+        from authzlib import evaluate
+
+        n = 5
+        head = (
+            self.HEAD.replace("app.users\n", "app.users\n  can u = " + " or ".join(f"{{b{i}}}" for i in range(n)))
+            + "\ntype folder = app.folders\n  owner : user = owner_id\n  can view = "
+        )
+        conds = " or ".join(f"{{c{i}}}" for i in range(n))
+        a = parse_policy(head + f"owner.u and ({conds})\n", "a.authz")
+        b = parse_policy(head + f"({conds}) and owner.u\n", "b.authz")
+        listing = evaluate.Listing((a, b))
+        self.assertEqual({t: len(c) for t, c in listing.classes.items()}, {"user": 2**n, "folder": 2**n})
+        # (with no link: each class of the user, who asks, with each of the folder's in turn, 1,024 worlds)
+        for worlds, said in (
+            (10, "600 listed: of up to 3 rows of each type, some with no link"),
+            (20, "1,200 listed: every one of up to 3 rows of each type with no link, and some with one"),
+            (40, "2,049 listed: every one of up to 3 rows of each type with at most 1 link"),
+        ):
+            listing = evaluate.Listing((a, b))
+            self.assertIsNone(evaluate.compare(a, b, worlds=worlds, listing=listing))
+            self.assertEqual(listing.said(), said)
+            self.assertLessEqual(listing.listed, evaluate.LISTED_AT_MOST * worlds)
 
     def test_the_types_a_change_doesnt_read_cost_the_listing_nothing(self) -> None:
         # only the rows of a type some link may name vary: here user and doc. Each count of rows of all 14 types
