@@ -68,6 +68,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The sync index, a preview: a `TRUNCATE` of one partition of a mirrored table, or of a table that inherits from
   it, takes the rows stored there out of the PowerSync mirror, and the index works out the type's readers again.
   Before, the mirror kept them, and PowerSync kept syncing rows the app had deleted.
+- The sync index, a preview: in READ COMMITTED, writers whose work meets no longer end in a deadlock (40P01) at
+  commit. Three writers could: two waiting for a third, then each reaching what the other held once it committed.
+  A lock row the work needs below one it holds is now taken only if nobody holds it; else the work lets go of them
+  all and takes them again in order.
 - A condition that calls a function by its three-part name (`mydb.app.f(id)`), or a function named `filter`,
   `within`, `over` or `is`, is read as calling the app's code, as one written `app.f(id)` is: it runs with the
   policy's rights wherever it is checked, the change feed watches every column of its row, and the sync index
