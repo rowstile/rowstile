@@ -3377,6 +3377,13 @@ class Statements(unittest.TestCase):
         self.assertEqual([c for c, _ in got], ["-- a comment; not a statement", "", "", "/* a; block */"])
         self.assertEqual(len(got), 4)
         self.assertTrue(got[2][1].endswith("SELECT 3;\nEND"))
+        # BEGIN, CASE and END count only outside parentheses, as psql counts them: begin is a word a column may
+        # have as its name, and a CASE in parentheses ends there too
+        body = (
+            "CREATE FUNCTION h(r t) RETURNS boolean LANGUAGE sql BEGIN ATOMIC\n"
+            "  SELECT coalesce((r.begin IS NOT NULL), false) AND (CASE WHEN r.x THEN true END);\nEND"
+        )
+        self.assertEqual(split(f"{body};\nSELECT 1;\nSELECT 2"), [("", body), ("", "SELECT 1"), ("", "SELECT 2")])
 
     def test_a_quote_left_open_runs_to_the_end(self) -> None:
         # as psql reads it: the rest is one statement, and Postgres says what is wrong with it (a named test's SQL

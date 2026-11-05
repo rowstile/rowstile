@@ -24,6 +24,7 @@ def split(sql: str) -> list[tuple[str, str]]:
     start: int | None = None
     comments: list[str] = []
     atomic, depth = False, 0  # inside a BEGIN ATOMIC body, and how many BEGIN/CASE are open in it
+    parens = 0  # how many parentheses are open: psql counts BEGIN, CASE and END only outside them
     first: str | None = None  # the statement's first word, and the last one (to spot CREATE ... BEGIN ATOMIC)
     prev: str | None = None
     word = (-1, -1)  # where the last word starts and ends
@@ -97,7 +98,7 @@ def split(sql: str) -> list[tuple[str, str]]:
             w = m.group(0).upper()
             if first is None:
                 first = w
-            if atomic:
+            if atomic and parens == 0:
                 if w in ("BEGIN", "CASE"):
                     depth += 1
                 elif w == "END":
@@ -111,9 +112,13 @@ def split(sql: str) -> list[tuple[str, str]]:
         if c == ";" and not (atomic and depth > 0):
             assert start is not None
             out.append(("\n".join(comments), sql[start:i].rstrip()))
-            start, comments, atomic, depth, first, prev = None, [], False, 0, None, None
+            start, comments, atomic, depth, parens, first, prev = None, [], False, 0, 0, None, None
             i += 1
             continue
+        if c == "(":
+            parens += 1
+        elif c == ")" and parens > 0:
+            parens -= 1
         i += 1
     if start is not None and sql[start:].strip():
         out.append(("\n".join(comments), sql[start:].rstrip()))
