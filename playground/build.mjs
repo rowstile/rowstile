@@ -1,7 +1,7 @@
 // Builds the playground into playground/dist/: the page, its scripts, and bundle.json (the compiler's files and
 // the examples, read from the repository so they are the tested ones). Serve dist/ from any static host.
 //   node playground/build.mjs
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -77,7 +77,8 @@ export function bundle() {
   return { compiler, examples };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// run, not imported: Node gives the module its real path, and argv[1] the one typed (a symbolic link's)
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const dist = join(HERE, "dist");
   mkdirSync(dist, { recursive: true });
   for (const f of ["index.html", "core.mjs", "playground.mjs", "compiler.worker.mjs"]) copyFileSync(join(HERE, f), join(dist, f));

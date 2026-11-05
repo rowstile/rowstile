@@ -5,7 +5,7 @@
 import { loadPyodide } from "pyodide";
 import { PGlite } from "@electric-sql/pglite";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -182,6 +182,11 @@ for (const ex of examples) {
   const here = must(c.compile(ex.policy, ""));
   check(`${ex.name}: ${here.sql.length} characters, the command's`, here.sql === command, [here.sql.length, command.length]);
 }
+// the build, run by a path through a symbolic link: it builds (Node gives the module its real path, not the one typed)
+console.log("-- the build");
+symlinkSync(fileURLToPath(new URL(".", import.meta.url)), join(dir, "link"), "dir");
+const built = execFileSync(process.execPath, [join(dir, "link", "build.mjs")], { encoding: "utf8" });
+check("build.mjs run through a symbolic link writes dist/", built.startsWith("wrote "), built);
 rmSync(dir, { recursive: true, force: true });
 
 console.log(`playground: ${fails ? `${fails} failed` : "all passed"}`);
