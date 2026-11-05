@@ -35,7 +35,7 @@
 > rules app.folders: select : edit
 > rules app.folders: update : edit
 
-always | f64ccc045e6f
+always | 1493a69a04db
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
@@ -291,7 +291,7 @@ table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 04da39678f90 shape=c57707aa
-table authz_int.trees | 1e617fde973e shape=02db6ec7
+table authz_int.trees | 3845c57591da shape=02db6ec7
 table authz_int.types | 941796b264b7 shape=b6d5b497
 tree folder__parent__tree | 379723681149eed9131ca86ec982a202
 trigger "authz_folder__parent__tree_del" ON "app"."folders" | b31f2fcea3d2 tree=folder__parent__tree

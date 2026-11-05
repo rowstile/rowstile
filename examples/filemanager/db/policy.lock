@@ -72,7 +72,7 @@
 > rules fm.group_members: delete : manage or person
 > rules fm.group_members: cascade from fm.users
 
-always | 53af347a9ea1
+always | e3ee557efcf3
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
@@ -488,7 +488,7 @@ table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 5eb4ea7913ff shape=c57707aa
-table authz_int.trees | 18c74b7c1aa1 shape=02db6ec7
+table authz_int.trees | 60662e5bfab3 shape=02db6ec7
 table authz_int.types | 393e14ce70e0 shape=b6d5b497
 tree folder__parent__tree | 809377dff08b5810cda19f2331f83098
 tree group__parent__tree | 75153c84c430049b4abfbf935aa77750
