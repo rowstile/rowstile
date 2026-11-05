@@ -10,9 +10,10 @@ PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
 T=$(mktemp -d)
-# applies the policy text $1 with the rowstile command
+# applies the policy text $1 with the rowstile command: a plain apply, which keeps the trees it may keep as they
+# are (with --force after it: and computes every one of them again, in place, which would hide a stale one)
 apply() { printf '%s\n' "$1" > "$T/p.authz"
-          out=$(python3 cli/rowstile_cli.py --db "dbname=$DB" apply "$T/p.authz" --force 2>&1) || { bad "apply" "$out"; exit 1; }; }
+          out=$(python3 cli/rowstile_cli.py --db "dbname=$DB" apply "$T/p.authz" "${@:2}" 2>&1) || { bad "apply" "$out"; exit 1; }; }
 # the inheritance tables, by oid: the same oid after an apply means the table (and its rows) was kept
 # (found by their columns: a name too long for Postgres is shortened with a hash, and loses its __tree)
 trees() { PSQL -c "SELECT string_agg(c.relname || '=' || c.oid, ' ' ORDER BY c.relname) FROM pg_class c
@@ -36,6 +37,7 @@ verify && ok "...and they match a rebuild" || bad "verify after keeping"
 
 # rows written between applies: the kept tables were kept current by their triggers
 PSQL -c "UPDATE app.folders SET parent_id = NULL WHERE id = (SELECT max(id) FROM app.folders WHERE parent_id IS NOT NULL)" >/dev/null
+verify && ok "a move between applies: the triggers keep the tables current" || bad "verify after a move"
 apply "$DOCS"
 [ "$(trees)" = "$BEFORE" ] && verify && ok "a move between applies is in the kept tables" || bad "after a move" "$(trees)"
 
@@ -68,7 +70,7 @@ apply "$DOCS"
 # an index on share ids for a type the policy no longer has (made for a type gone since): applying drops it, so a
 # share of another type of that name, with ids of another kind, isn't refused by its cast
 PSQL -c "CREATE INDEX shares_obj_ghost_bigint ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'ghost'" >/dev/null
-apply "$DOCS"
+apply "$DOCS" --force
 [ "$(PSQL -c "SELECT to_regclass('authz.shares_obj_ghost_bigint') IS NULL, to_regclass('authz.shares_obj_folder_bigint') IS NOT NULL")" = "t|t" ] &&
   ok "applying drops an index on share ids no type of the policy has, and keeps the policy's own" || bad "share indexes after apply"
 
