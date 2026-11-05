@@ -169,7 +169,7 @@ function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 5
 function authz.start_review(p_type text, p_id uuid, p_closes_at timestamptz) | ec7375d1508c shape=e7e50df0
 function authz.sync_members(p_type text, p_id text, p_relation text, p_members text[], OUT added int, OUT removed int) | 456096384f2c shape=c0ea90e1
 function authz.trim_audit(p_keep interval) | 506854f7888f shape=59da80c2
-function authz.trim_changes(p_keep interval) | b05f3766e01d shape=5f059d1e
+function authz.trim_changes(p_keep interval) | 8812962935bc shape=5f059d1e
 function authz.uid() | fdfdb40f750a shape=e4787fc1
 function authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text) | 9fe75a510714 shape=55f81bb0
 function authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | 9c287ae61155 shape=0bec2b1b

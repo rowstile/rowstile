@@ -148,6 +148,13 @@
       "when": 1793912064394,
       "tag": "0020_authz_answers_on_hidden_rows",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793913572386,
+      "tag": "0021_authz_trim_txid_and_guard",
+      "breakpoints": true
     }
   ]
 }
