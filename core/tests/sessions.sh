@@ -389,6 +389,10 @@ PGOPTIONS="-c client_min_messages=error" PSQL -c "DROP ROLE IF EXISTS authz_sess
 expect "... and one that is a member of the owner without its rights, who may SET ROLE to it" \
   "$APP owns app.files, or is a member of its owner: an owner skips row-level security, and may turn it off" \
   -c "SELECT string_agg(problem, '; ') FROM authz.connection_check() WHERE severity = 'error'"
+# ... and once it switched to the app role: RESET ROLE, then SET ROLE to the owner, leaves the rules
+expect "... and after SET ROLE app_user, that it logs in as a member of a table's owner" \
+  "this connection logs in as $APP, which owns app.files or is a member of its owner, and switched to app_user: RESET ROLE leaves row-level security. Log in as the app role" \
+  -c "SET ROLE app_user" -c "SELECT string_agg(problem, '; ') FROM authz.connection_check() WHERE severity = 'error'"
 PSQL -c "ALTER TABLE app.files OWNER TO CURRENT_USER" -c "REVOKE CREATE ON SCHEMA app FROM authz_sess_owners" -c "DROP ROLE authz_sess_owners" >/dev/null
 PSQL -c "ALTER TABLE app.files DISABLE ROW LEVEL SECURITY"
 expect "row-level security off on a table with rules: an error" "row-level security is off on app.files: the policy's rules don't apply to it"   -c "SELECT problem FROM authz.connection_check() WHERE severity = 'error'"

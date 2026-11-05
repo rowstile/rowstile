@@ -150,6 +150,8 @@ A login that is neither the app role nor a member of it can't call it at all
 A login that is a superuser or
 the policy's owner and switched to the app role with `SET ROLE` is an error too: `RESET ROLE` leaves
 row-level security, and its sessions are believed without a signature. <!-- checked: tests/sessions.sh "the owner's login, switched to the app role: an error (RESET ROLE, and settings believed unsigned)" -->
+So is one that owns a table with rules, or is a member of its owner, and switched: `RESET ROLE` leaves
+row-level security there too. <!-- checked: tests/sessions.sh "and after SET ROLE app_user, that it logs in as a member of a table's owner" -->
 Log in as the app role. Call it when the app starts and refuse to start on an
 `error`, or its tests pass without testing anything. The clients have `connection_check()` /
 `connectionCheck()`.
