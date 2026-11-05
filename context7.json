@@ -1,10 +1,17 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
   "projectTitle": "rowstile",
-  "description": "Access rules for Postgres: a policy file compiled into row-level security and shipped as migrations. SDKs for Python and TypeScript.",
+  "description": "Access rules for Postgres: a policy file compiled into row-level security and shipped as migrations. SDKs for Python and TypeScript; previews for Go, .NET, Ruby, Java and Kotlin, Rust, Elixir and PHP.",
   "folders": ["docs", "sdk"],
-  "excludeFolders": ["sdk/python/rowstile", "sdk/typescript/*/src", "**/node_modules"],
-  "excludeFiles": ["CLAUDE.md", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md", "RELEASING.md", "CONTEXT-MAP.md"],
+  "excludeFolders": ["**/node_modules"],
+  "excludeFiles": [
+    "CLAUDE.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "RELEASING.md",
+    "CONTEXT-MAP.md",
+    "command-files.txt"
+  ],
   "rules": [
     "The policy is one .authz file named by rowstile.toml, with its tests beside it. Everything that gives access is written there: app code checks nothing by hand.",
     "After editing the policy: rowstile check, then rowstile push (the development database only), then rowstile test. Or rowstile dev, which does all three on each save.",

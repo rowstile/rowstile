@@ -8,8 +8,8 @@ import { createMarkdownRenderer } from "vitepress";
 // what site.yml gives the build when a blog tag publishes onto a site tag (read when pages.mjs is imported)
 process.env.SITE_CODE = "site-v4";
 process.env.SITE_CONTENT = "blog-v2";
-const { PAGES, POSTS, REPO, checkMenus, deadAnchors, inSitemap, menuLinks, pageTitle, rewriteLinks, siteLink, slug, structured, url,
-  withoutNotes } = await import("./pages.mjs");
+const { NOTE, PAGES, POSTS, REPO, checkMenus, deadAnchors, inSitemap, menuLinks, pageTitle, rewriteLinks, siteLink, slug,
+  structured, url, withoutNotes } = await import("./pages.mjs");
 const { KEY, KEY_FILE, payload } = await import("./indexnow.mjs");
 
 let failed = 0;
@@ -147,7 +147,7 @@ check("a copy without its notes: after a sentence, and a line of their own", wit
   "```",
 ].join("\n"), withoutNotes(noted));
 const notes = Object.keys(PAGES).flatMap((source) => withoutNotes(readFileSync(join(REPO, source), "utf8")).split("\n")
-  .filter((line) => /<!-- (checked|unchecked|answer|tested|not run|features):/.test(line)).map((line) => `${source}: ${line}`));
+  .filter((line) => NOTE.test(line)).map((line) => `${source}: ${line}`));
 check("... and no page's copy keeps one", notes.length === 0, notes.join("\n"));
 
 // the menus against the pages: every page is in one, every link of one goes to a page

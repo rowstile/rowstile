@@ -30,7 +30,7 @@ import textwrap
 import threading
 import types
 import unittest
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import ClassVar, Protocol, cast
@@ -14572,7 +14572,7 @@ class LlmsTxt(unittest.TestCase):
         for link in ["docs/getting-started.md", "docs/stacks/nextjs.md", "docs/errors/AZ201.md"]:
             self.assertIn(f"<!-- {link} -->", full)
         # without the notes for the repository's checks, which the pages don't show: after a sentence, or a line
-        self.assertNotRegex(full, r"<!-- (checked|unchecked|answer|tested|not run|features):")
+        self.assertNotRegex(full, llms_full.NOTE)
         self.assertIn("Lines that only moved need no migration.\n", full)
         self.assertEqual(
             llms_full.without_notes(
@@ -14590,8 +14590,6 @@ class LlmsTxt(unittest.TestCase):
         self.assertLessEqual(len(index["description"]), 200)
         for folder in index["folders"]:
             self.assertTrue(os.path.isdir(os.path.join(self.REPO, folder)), f"context7.json reads {folder}/")
-        for name in index["excludeFiles"]:
-            self.assertTrue(os.path.isfile(os.path.join(self.REPO, name)), f"context7.json leaves out {name}")
         for folder in index["excludeFolders"]:
             self.assertTrue(
                 folder.startswith("**/") or glob.glob(os.path.join(self.REPO, *folder.split("/"))),
@@ -14600,6 +14598,48 @@ class LlmsTxt(unittest.TestCase):
         self.assertLessEqual(len(index["rules"]), 50)
         for rule in index["rules"]:
             self.assertLessEqual(len(rule), 255, rule)
+
+    @staticmethod
+    def files(top: str) -> Iterator[str]:
+        """The repository's files under top, but what a build or an install put there."""
+        for at, folders, files in os.walk(top):
+            folders[:] = [f for f in folders if f not in ("node_modules", "dist", "vendor", "target", "deps", "_build")]
+            folders[:] = [f for f in folders if not f.startswith(".")]
+            yield from (os.path.join(at, f) for f in files)
+
+    def test_the_index_reads_the_sdks_readmes_alone(self) -> None:
+        # Context7 reads the files in a docs format (.md, .mdx, .markdown, .rst, .txt, .ipynb), not source code: under
+        # sdk/, those it reads are the READMEs, and the files context7.json leaves out are there
+        with open(os.path.join(self.REPO, "context7.json"), encoding="utf-8") as fh:
+            index = json.load(fh)
+        left_out = [os.path.join(self.REPO, *g.split("/")) for g in index["excludeFolders"] if not g.startswith("**/")]
+        read = [
+            os.path.relpath(f, self.REPO)
+            for f in self.files(os.path.join(self.REPO, "sdk"))
+            if f.endswith((".md", ".mdx", ".markdown", ".rst", ".txt", ".ipynb"))
+            and os.path.basename(f) not in index["excludeFiles"]
+            and not any(fnmatch.fnmatch(f, g + "/*") for g in left_out)
+        ]
+        self.assertEqual([f for f in read if os.path.basename(f) != "README.md"], [])
+        found = {os.path.basename(f) for f in self.files(self.REPO)}
+        for name in index["excludeFiles"]:
+            self.assertIn(name, found, f"context7.json leaves out {name}, which no folder holds")
+
+    def test_the_notes_left_out_are_those_the_docs_hold(self) -> None:
+        # the kinds of notes for the checks, which llms-full.txt and the site's Markdown copies leave out: one list
+        # in each (docs/llms_full.py, site/pages.mjs), the same, and holding each kind a Markdown file uses
+        import llms_full
+
+        kinds = llms_full.NOTE_KINDS.split("|")
+        site = search(r'\nconst NOTE_KINDS = "([^"]*)";\n', read("../site/pages.mjs")).group(1)
+        self.assertEqual(site.split("|"), kinds)
+        self.assertTrue("NOTE.test(line)" in read("../site/pages_test.mjs"))  # its own check reads the same list
+        used: set[str] = set()
+        for f in self.files(self.REPO):
+            if f.endswith(".md"):
+                with open(f, encoding="utf-8") as fh:
+                    used |= set(re.findall(r"<!-- ?([a-z][a-z ]*):", fh.read()))
+        self.assertEqual(sorted(used - {"rowstile"}), sorted(kinds))  # rowstile:begin, a marker a page names
 
 
 class PythonExtras(unittest.TestCase):
