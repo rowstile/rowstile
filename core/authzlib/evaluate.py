@@ -454,6 +454,86 @@ def facts(sql: str, alike: frozenset[str]) -> Node | None:
 
 
 ORDERED = ("<", "<=", ">", ">=")
+ANOTHER = "(another)"  # a text no condition names
+
+
+def values_named(used: list[tuple[str, Scalar]], past: bool = True) -> list[Scalar]:
+    """The values a column takes for the constants the simple conditions compare it with (columns_of's hows): true
+    and false, each constant, those either side of a number an order compares with and halfway to them (between),
+    a text none of them names, and with past, a number past them all."""
+    values: list[Scalar] = []
+    consts = [v for how, v in used if how not in ("bool", "uid", "null") and v is not None]
+    if any(how == "bool" for how, _ in used) or any(isinstance(v, bool) for v in consts):
+        values += [True, False]
+    # (a number is an int or a Decimal; Decimal's 28 digits hold one of 15 and 2 more, exactly)
+    for how, v in used:
+        if how in ORDERED and isinstance(v, (int, Decimal)) and not isinstance(v, bool):
+            values += [v - 1, v, v + 1]
+        elif how not in ("bool", "uid", "null") and v is not None:
+            values.append(v)
+    if any(isinstance(v, str) for v in consts):
+        values.append(ANOTHER)
+    numbers = [v for v in consts if isinstance(v, (int, Decimal)) and not isinstance(v, bool)]
+    if numbers and past:
+        values.append(max(numbers) + 2)
+    return values + between(used, values)
+
+
+# key types whose ids are whole numbers, or numbers; another key's ids are texts (a key of one of TEXT_KEYS: any)
+WHOLE_KEYS = ("bigint", "int", "integer", "smallint", "int2", "int4", "int8", "serial", "bigserial")
+NUMBER_KEYS = ("numeric", "decimal", "real", "double precision", "float4", "float8")
+TEXT_KEYS = ("text", "varchar", "character varying", "citext")
+
+
+def named_ids(pols: Sequence[Policy]) -> dict[str, list[str]]:
+    """{type: ids}: the values the policies' simple conditions compare a relation's column with (`{owner_id <> 7}`,
+    `{parent_id = 0}`), and those around them (values_named), as ids of the type it names: the rows a world may have
+    for such a condition to hold on some row and not on another. Only ids of the key's type: a whole number for a
+    bigint key (no id lies between 7 and 8), any number for a numeric one, a text for a text one. Worked out once
+    for the policies of the last few comparisons (each world asks)."""
+    for kept, known in NAMED:
+        if len(kept) == len(pols) and all(a is b for a, b in zip(kept, pols, strict=True)):
+            return known
+    alike = alike_in(pols)
+    hows: dict[str, list[tuple[str, Scalar]]] = {}
+    for p in pols:
+        linked = {
+            (t.name, col): src.subjects[0][0]
+            for t in p.types.values()
+            for r in t.relations.values()
+            for src in r.sources
+            if (col := linked_column(src)) is not None
+        }
+        conds = [*Reference(p).conditions(), *((t.name, t.where) for t in p.types.values() if t.where)]
+        for tname, cond in conds:
+            node = facts(cond, alike)
+            for col, how in columns_of(node).items() if node is not None else ():
+                st = linked.get((tname, col))
+                if st in p.types and not p.types[st].composite:
+                    hows.setdefault(st, []).extend((h, v) for h, v in how if h != "uid")
+    out: dict[str, list[str]] = {}
+    types = {t.name: t for p in pols for t in p.types.values()}
+    for st, used in sorted(hows.items()):
+        key = types[st].pktype.lower()
+        ids: list[str] = []
+        # (an id no condition names a world has: its rows 1, 2, ...)
+        for v in values_named(used, past=False):
+            if isinstance(v, str) and v != ANOTHER and key in TEXT_KEYS:
+                ids.append(v)
+            elif (
+                isinstance(v, (int, Decimal))
+                and not isinstance(v, bool)
+                and (key in NUMBER_KEYS or (key in WHOLE_KEYS and v == int(v)))
+            ):
+                ids.append(str(int(v)) if key in WHOLE_KEYS else str(v))
+        if ids:
+            out[st] = list(dict.fromkeys(ids))
+    NAMED.insert(0, (list(pols), out))
+    del NAMED[4:]
+    return out
+
+
+NAMED: list[tuple[list[Policy], dict[str, list[str]]]] = []  # named_ids' last answers, with their policies
 
 
 def between(used: list[tuple[str, Scalar]], values: list[Scalar]) -> list[Scalar]:
@@ -522,6 +602,7 @@ class World:
         self.density, self.chained = density, chained
         self._followed: dict[int, tuple[Policy, set[tuple[str, str]]]] = {}
         self._alike: dict[int, tuple[Policy, frozenset[str]]] = {}
+        self._named: dict[str, list[str]] | None = None
 
     def facts(self, pol: Policy, sql: str) -> Node | None:
         """A condition as the world reads it from its rows' columns, or None when it draws the rows it holds for
@@ -560,9 +641,10 @@ class World:
             self._followed[id(pol)] = (pol, out)
         return self._followed[id(pol)][1]
 
-    def chain(self, ids: list[str], targets: list[str]) -> list[Pair]:
-        """Row i linked to row i + 1 of the type it names (the last one to none)."""
-        return [(o, str(int(o) + 1)) for o in ids if str(int(o) + 1) in targets]
+    @staticmethod
+    def chain(ids: list[str], targets: list[str]) -> list[Pair]:
+        """The i-th row linked to the i + 1-th of the type it names (the last one to none)."""
+        return [(o, targets[k + 1]) for k, o in enumerate(ids) if k + 1 < len(targets)]
 
     def linked(self, pol: Policy) -> dict[tuple[str, str], tuple[str, str]]:
         """{(type, column): (the type it names, the relation)}: the columns a relation of one of the world's policies
@@ -608,22 +690,7 @@ class World:
 
     def values_of(self, used: list[tuple[str, Scalar]]) -> list[Scalar]:
         """The values a column takes, from how the simple conditions read it (columns_of's hows)."""
-        values: list[Scalar] = []
-        consts = [v for how, v in used if how not in ("bool", "uid", "null") and v is not None]
-        if any(how == "bool" for how, _ in used) or any(isinstance(v, bool) for v in consts):
-            values += [True, False]
-        # (a number is an int or a Decimal; Decimal's 28 digits hold one of 15 and 2 more, exactly)
-        for how, v in used:
-            if how in ORDERED and isinstance(v, (int, Decimal)) and not isinstance(v, bool):
-                values += [v - 1, v, v + 1]
-            elif how not in ("bool", "uid", "null") and v is not None:
-                values.append(v)
-        if any(isinstance(v, str) for v in consts):
-            values.append("(another)")
-        numbers = [v for v in consts if isinstance(v, (int, Decimal)) and not isinstance(v, bool)]
-        if numbers:
-            values.append(max(numbers) + 2)
-        values += between(used, values)
+        values = values_named(used)
         if any(how == "uid" for how, _ in used):
             values += self.ids("user")
         if not values:
@@ -738,9 +805,14 @@ class World:
         return cast(V, self.made[key])  # what make gave for this key
 
     def ids(self, tname: str) -> list[str]:
+        """The type's rows: 1 to the world's size (or fewer, drawn), then each id a condition names (named_ids)."""
+        if self._named is None:
+            self._named = named_ids(self.pols)
         if self.density is not None or self.chained:  # as many rows as the world is large
-            return [str(i) for i in range(1, self.size + 1)]
-        return self.pick(("ids", tname), lambda rng: [str(i) for i in range(1, rng.randint(1, self.size) + 1)])
+            out = [str(i) for i in range(1, self.size + 1)]
+        else:
+            out = self.pick(("ids", tname), lambda rng: [str(i) for i in range(1, rng.randint(1, self.size) + 1)])
+        return out + [i for i in self._named.get(tname, []) if i not in out]
 
     def subset(self, key: tuple[object, ...], ids: list[str], p: float = 0.5) -> list[str]:
         return self.pick(key, lambda rng: [i for i in ids if rng.random() < p])
@@ -818,7 +890,7 @@ class World:
                 ("poly", t.name, src.column, src.type_col),
                 lambda rng: (
                     # in a chain, every row names the next one of one type: the world's choice
-                    [(o, x, str(int(o) + 1)) for x in [rng.choice(types)] for o in ids]
+                    [(o, x, s) for x in [rng.choice(types)] for o, s in self.chain(ids, self.ids(x))]
                     if chained
                     else [
                         (o, x, rng.choice(self.ids(x)))
@@ -1154,11 +1226,13 @@ STEPS = 100_000  # the steps of looking for links a listing takes at most
 
 class RowClass(NamedTuple):
     """What the conditions read of a type say of one of its rows: the values of the columns its simple conditions
-    read (one choice of them for each different answer the conditions give), and the other conditions (and a `where`
-    the evaluator doesn't read as a fact about the row) that hold on it."""
+    read (one choice of them for each different answer the conditions give), the other conditions (and a `where`
+    the evaluator doesn't read as a fact about the row) that hold on it, and its id where a condition names one
+    (named_ids: `{owner_id <> 7}`, user 7; None: an id no condition names)."""
 
     columns: tuple[tuple[str, Scalar], ...]
     holds: frozenset[str]
+    id: str | None = None
 
 
 Link: TypeAlias = "tuple[tuple[object, ...], str, str]"  # (what the source reads: source_key, the object, the subject)
@@ -1304,13 +1378,16 @@ class Listing:
         self.cone = found
         # a simple condition on a column a relation reads reads its links (Reference.row_values): they vary too
         linked: dict[tuple[str, str], str] = {}
+        self.linked_to: dict[tuple[str, str], str] = {}  # (type, column): the type it names
         for t in self.types.values():
             for r in t.relations.values():
                 for src in r.sources:
                     col = linked_column(src)
                     if col is not None:
                         linked.setdefault((t.name, col), r.name)
+                        self.linked_to.setdefault((t.name, col), src.subjects[0][0])
         self.linked = linked
+        self.ids_named = named_ids(self.pols)
         self.alike = alike_in(self.pols)
         # (and a type's where on such a column: which of its rows are kept is the links' to say)
         wheres = {(t.name, t.where) for t in self.types.values() if t.where and t.name in found.types}
@@ -1338,7 +1415,7 @@ class Listing:
                 opaque.append(squeeze_sql(c))  # (drawn by its text laid out one way, as World.holds draws it)
             else:
                 plain.append((node, True))
-        users = [str(i) for i in range(1, MOST_ROWS + 1)]
+        users = self.possible_ids("user")
         # a relation's column is the row's link (Listed.data): the classes are of the other columns, each class an
         # answer of the conditions for every link the row may have (to a row of the type it names, or none)
         links = {col for tname, col in self.linked if tname == t.name}
@@ -1349,7 +1426,8 @@ class Listing:
             if not cols:
                 continue  # (a condition on links alone: they vary)
             given = [
-                dict(zip(by_link, vs, strict=True)) for vs in itertools.product(*[[*users, None] for _ in by_link])
+                dict(zip(by_link, vs, strict=True))
+                for vs in itertools.product(*[[*self.possible_ids(self.linked_to[(t.name, c)]), None] for c in by_link])
             ]
             uids: list[str | None] = [*users, None] if any(uses_uid(node) for node, _ in group) else [None]
             choices = itertools.product(*[domains.get((t.name, col), [None]) for col in cols])
@@ -1377,7 +1455,19 @@ class Listing:
                         frozenset(c for c, h in zip(opaque, holds, strict=True) if h),
                     )
                 )
-        return out
+        # a row's id, where a condition names some: each of those, or one it doesn't name
+        return [c._replace(id=i) for c in out for i in [*self.ids_named.get(t.name, []), None]]
+
+    def fresh_ids(self, tname: str) -> list[str]:
+        """The ids of the rows of a type whose id no condition names: 1, 2, 3, but those named_ids gives."""
+        named = set(self.ids_named.get(tname, []))
+        return [str(i) for i in itertools.islice(itertools.count(1), MOST_ROWS + len(named)) if str(i) not in named][
+            :MOST_ROWS
+        ]
+
+    def possible_ids(self, tname: str) -> list[str]:
+        """Every id a row of the type may have in a listed world."""
+        return [*self.ids_named.get(tname, []), *self.fresh_ids(tname)]
 
     def links_of(self) -> list[Candidate]:
         """Each link a world may hold: of each source the cone reads, from each row to each subject it may name
@@ -1555,11 +1645,14 @@ class Listing:
         for choice in itertools.product(*[range(len(self.classes[t])) for t, _ in varied]):
             if any(tuple(choice[place[(t, ren.get(t, {}).get(i, i))]] for t, i in varied) < choice for ren in autos):
                 continue  # (this world renamed comes first)
+            classes = {row: self.classes[row[0]][c] for row, c in zip(varied, choice, strict=True)}
+            named = [(t, c.id) for (t, _), c in classes.items() if c.id is not None]
+            if len(set(named)) < len(named):
+                continue  # (two rows of a type with one id)
             for turn in range(turns):
-                classes = {row: self.classes[row[0]][c] for row, c in zip(varied, choice, strict=True)}
                 for t in alone:
                     classes[(t, "1")] = self.classes[t][turn % len(self.classes[t])]
-                yield Listed(self, {t: max(m, 1) for t, m in rows.items()}, classes, links)
+                yield Listed(self, {t: max(m, 1) for t, m in rows.items()}, dict(classes), links)
 
 
 class Listed(World):
@@ -1570,16 +1663,27 @@ class Listed(World):
     ) -> None:
         super().__init__("listed", MOST_ROWS, pols=listing.pols)
         self.listing, self.rows, self.classes, self.links_held = listing, rows, classes, links
+        # the links name rows 1, 2, 3 of a type: each one's id is its class's, or one no condition names
+        self.id_of: dict[str, dict[str, str]] = {}
+        for t, m in rows.items():
+            fresh = iter(listing.fresh_ids(t))
+            self.id_of[t] = {str(i): classes[(t, str(i))].id or next(fresh) for i in range(1, m + 1)}
 
     def ids(self, tname: str) -> list[str]:
-        return [str(i) for i in range(1, self.rows.get(tname, 1) + 1)]
+        return list(self.id_of[tname].values())
+
+    def subject_id(self, key: tuple[object, ...], s: str) -> str:
+        """A link's subject's id (a row of its type, numbered as the links number them; `*`, `tok1` as they are)."""
+        st, sr = key[-2], key[-1]
+        return self.id_of[st][s] if isinstance(st, str) and st in self.id_of and sr != "*" else s
 
     def data(self, pol: Policy) -> Data:
         out = Data()
         for t in pol.types.values():
-            ids = self.ids(t.name)
+            at = self.id_of[t.name]  # (row number: id)
+            ids = list(at.values())
             out.ids[t.name] = ids
-            out.columns[t.name] = {i: dict(self.classes[(t.name, i)].columns) for i in ids}
+            out.columns[t.name] = {i: dict(self.classes[(t.name, n)].columns) for n, i in at.items()}
             for r in t.relations.values():
                 for k, src in enumerate(r.sources):
                     for st, sr in src.subjects:
@@ -1589,7 +1693,7 @@ class Listed(World):
                         bare = src.kind == "table" and not src.where
                         out.pairs[(t.name, r.name, k, st, sr or "")] = list(
                             dict.fromkeys(
-                                (o, s)
+                                (at[o], self.subject_id(x, s))
                                 for x, o, s in self.links_held
                                 if x == key or (bare and x[:5] == key[:5] and x[6:] == key[6:])
                             )
@@ -1606,14 +1710,16 @@ class Listed(World):
                 out.valid[t.name] = [i for i in ids if truth(where, rows.get(i, {}), None) is True]
             else:
                 out.valid[t.name] = [
-                    i for i in ids if not t.where or squeeze_sql(t.where) in self.classes[(t.name, i)].holds
+                    i for n, i in at.items() if not t.where or squeeze_sql(t.where) in self.classes[(t.name, n)].holds
                 ]
         for tname, cond in self.listing.conditions(pol):
             if cond in KEYWORDS.values():
                 out.cond[(tname, cond)] = []
             elif facts(cond, self.listing.alike) is None:
                 key = squeeze_sql(cond)
-                out.cond[(tname, cond)] = [i for i in out.ids[tname] if key in self.classes[(tname, i)].holds]
+                out.cond[(tname, cond)] = [
+                    i for n, i in self.id_of[tname].items() if key in self.classes[(tname, n)].holds
+                ]
         return out
 
 

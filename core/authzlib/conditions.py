@@ -268,13 +268,13 @@ def held(d: Decimal) -> bool:
 
 
 def number(v: Scalar) -> Decimal | None:
-    """A number as one, and so a linked id's text that is one ('10': owner_id holds the id of its user)."""
+    """A number as one, and so a linked id's text that is one ('10', '6.5': owner_id holds the id of its user)."""
     if isinstance(v, bool) or v is None:
         return None
     if isinstance(v, Decimal):
         return v
     # (Decimal reads every int as text, and every run of digits, whatever the script)
-    return Decimal(str(v)) if isinstance(v, int) or re.fullmatch(r"-?\d+", v) else None
+    return Decimal(str(v)) if isinstance(v, int) or re.fullmatch(r"-?\d+(?:\.\d+)?", v) else None
 
 
 @cache

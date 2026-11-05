@@ -15,6 +15,9 @@ says what a change does, in plain words, for the pull request:
   fewest links first, every one with no link or one link among them: each row with every answer its
   conditions can give, so a condition added to a long `and`, or one that must say one thing on a row and another
   on the row it inherits from, shows. <!-- checked: tests/unit_test.py "test_a_condition_added_to_a_long_and_is_found"; tests/unit_test.py "test_conditions_that_differ_between_two_linked_rows_are_found"; tests/unit_test.py "test_the_small_worlds_are_listed" -->
+  A number a condition compares a column with in order gets the numbers either side of it and halfway to them
+  (`{level > 1}` and `{level >= 2}` differ on 1.5), and an id a condition compares a relation's column with is
+  the id of a row there (`{owner_id <> 7}`: a user 7, whose folders it leaves out). <!-- checked: tests/unit_test.py "test_a_number_between_two_a_condition_names_is_tried"; tests/unit_test.py "test_an_id_a_condition_names_is_a_row_of_the_worlds" -->
   The listing stops after 3,000 worlds, once those are tried. If they all grant the same, the review says
   "Meaning unchanged", and how far the listing got: "every one of up to 3 rows of each type", with "at most 2
   links" where it stopped there, and, where columns read together take more than 4,096 combinations of values,
