@@ -97,3 +97,48 @@ test "only a group's owner hands it over or deletes it; its admins manage its me
   as user $ann allowed {UPDATE fm.groups SET owner_id = $bo WHERE id = $ops}
   as user $ann refused {DELETE FROM fm.groups WHERE id = $ops}
   as user $bo allowed {DELETE FROM fm.groups WHERE id = $ops}
+
+test "a group moves only under one its mover manages"
+  given ann = {INSERT INTO fm.users (email, name) VALUES ('t-ann@x', 'Ann') RETURNING id}
+  given bo = {INSERT INTO fm.users (email, name) VALUES ('t-bo@x', 'Bo') RETURNING id}
+  given mine = {INSERT INTO fm.groups (name, owner_id) VALUES ('Mine', $ann) RETURNING id}
+  given his = {INSERT INTO fm.groups (name, owner_id) VALUES ('His', $bo) RETURNING id}
+  given more = {INSERT INTO fm.groups (name, owner_id) VALUES ('More', $ann) RETURNING id}
+  as user $ann refused {UPDATE fm.groups SET parent_id = $his WHERE id = $mine}
+  as user $ann allowed {UPDATE fm.groups SET parent_id = $more WHERE id = $mine}
+
+test "a file moves only into a folder its mover may edit"
+  given ann = {INSERT INTO fm.users (email, name) VALUES ('t-ann@x', 'Ann') RETURNING id}
+  given bo = {INSERT INTO fm.users (email, name) VALUES ('t-bo@x', 'Bo') RETURNING id}
+  given docs = {INSERT INTO fm.folders (owner_id, name) VALUES ($ann, 'Docs') RETURNING id}
+  given more = {INSERT INTO fm.folders (owner_id, name) VALUES ($ann, 'More') RETURNING id}
+  given his = {INSERT INTO fm.folders (owner_id, name) VALUES ($bo, 'His') RETURNING id}
+  given f = {INSERT INTO fm.files (folder_id, owner_id, name) VALUES ($docs, $ann, 'a.txt') RETURNING id}
+  as user $bo allowed {SELECT authz.share('folder', $his, 'viewer', 'user', $ann)}
+  user $ann can view folder $his
+  as user $ann refused {UPDATE fm.files SET folder_id = $his WHERE id = $f}
+  as user $ann allowed {UPDATE fm.files SET folder_id = $more WHERE id = $f}
+
+test "a version counts against whoever uploads it, and never changes"
+  given ann = {INSERT INTO fm.users (email, name) VALUES ('t-ann@x', 'Ann') RETURNING id}
+  given bo = {INSERT INTO fm.users (email, name) VALUES ('t-bo@x', 'Bo') RETURNING id}
+  given docs = {INSERT INTO fm.folders (owner_id, name) VALUES ($ann, 'Docs') RETURNING id}
+  given a = {INSERT INTO fm.files (folder_id, owner_id, name) VALUES ($docs, $ann, 'a.txt') RETURNING id}
+  given b = {INSERT INTO fm.files (folder_id, owner_id, name) VALUES ($docs, $ann, 'b.txt') RETURNING id}
+  given v = {INSERT INTO fm.file_versions (file_id, created_by, ready) VALUES ($a, $ann, true) RETURNING id}
+  as user $ann refused {INSERT INTO fm.file_versions (file_id, created_by) VALUES ($a, $bo)}
+  as user $ann allowed {INSERT INTO fm.file_versions (file_id, created_by) VALUES ($a, $ann)}
+  as user $ann refused {UPDATE fm.file_versions SET created_by = $bo WHERE id = $v}
+  as user $ann refused {UPDATE fm.file_versions SET file_id = $b WHERE id = $v}
+  as user $ann refused {UPDATE fm.file_versions SET object_key = gen_random_uuid() WHERE id = $v}
+  as user $ann refused {UPDATE fm.file_versions SET id = id + 1000 WHERE id = $v}
+  as user $ann allowed {UPDATE fm.file_versions SET content_type = 'text/plain' WHERE id = $v}
+
+test "a file shows a version only once it is confirmed"
+  given ann = {INSERT INTO fm.users (email, name) VALUES ('t-ann@x', 'Ann') RETURNING id}
+  given docs = {INSERT INTO fm.folders (owner_id, name) VALUES ($ann, 'Docs') RETURNING id}
+  given a = {INSERT INTO fm.files (folder_id, owner_id, name) VALUES ($docs, $ann, 'a.txt') RETURNING id}
+  given pending = {INSERT INTO fm.file_versions (file_id, created_by) VALUES ($a, $ann) RETURNING object_key}
+  as user $ann refused {UPDATE fm.files SET object_key = $pending WHERE id = $a}
+  as user $ann allowed {UPDATE fm.file_versions SET ready = true WHERE object_key = $pending}
+  as user $ann allowed {UPDATE fm.files SET object_key = $pending WHERE id = $a}

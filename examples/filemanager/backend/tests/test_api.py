@@ -203,7 +203,9 @@ def test_listings_say_what_the_user_may_do_with_each_row() -> None:
 
 def test_a_folder_cannot_go_inside_itself(world: World) -> None:
     alice, top, sub = world["alice"], world["top"], world["sub"]
-    assert alice.patch(f"/api/folders/{top['id']}", json={"parent_id": sub["id"]}).status_code == 400
+    r = alice.patch(f"/api/folders/{top['id']}", json={"parent_id": sub["id"]})
+    # rowstile's words (AZ713), as the web app shows them
+    assert (r.status_code, r.json()) == (400, {"detail": f"folder {top['id']} cannot be moved inside itself"}), r.text
 
 
 NOT_EMPTY = {
