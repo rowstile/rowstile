@@ -51,7 +51,7 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
       annotations
     - `fmt.py` — `rowstile fmt`: one layout, refused if it would change what the policy says
     - `prove.py` — `rowstile prove`: invariants in many small worlds (the reference evaluator), the smallest
-      counterexample, shrunk link by link
+      counterexample, shrunk row by row, then link by link
     - `coverage.py` — the branches of each permission no passing check makes true (from `authz.explain`'s
       answers, which the test function returns with `coverage=True`)
     - `errors.py` — each error code's page (title, meaning, the mistake, the fix); `rowstile help AZ201`
