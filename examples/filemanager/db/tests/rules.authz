@@ -76,3 +76,24 @@ test "moving a folder needs share, as deleting it does; an editor may still rena
   as user $bo refused {UPDATE fm.folders SET parent_id = NULL WHERE id = $sub}
   as user $bo allowed {UPDATE fm.folders SET name = 'Renamed' WHERE id = $sub}
   as user $ann allowed {UPDATE fm.folders SET parent_id = $other WHERE id = $sub}
+
+test "only a group's owner hands it over or deletes it; its admins manage its members"
+  given ann = {INSERT INTO fm.users (email, name) VALUES ('t-ann@x', 'Ann') RETURNING id}
+  given bo = {INSERT INTO fm.users (email, name) VALUES ('t-bo@x', 'Bo') RETURNING id}
+  given cy = {INSERT INTO fm.users (email, name) VALUES ('t-cy@x', 'Cy') RETURNING id}
+  given eng = {INSERT INTO fm.groups (name, owner_id) VALUES ('Engineering', $ann) RETURNING id}
+  given web = {INSERT INTO fm.groups (name, parent_id, owner_id) VALUES ('Web', $eng, $ann) RETURNING id}
+  given ops = {INSERT INTO fm.groups (name, parent_id, owner_id) VALUES ('Ops', $eng, $ann) RETURNING id}
+  given lab = {INSERT INTO fm.groups (name, parent_id, owner_id) VALUES ('Lab', $eng, $cy) RETURNING id}
+  given {INSERT INTO fm.group_members (group_id, user_id, is_admin) VALUES ($eng, $bo, true)}
+  user $bo can manage group $eng
+  as user $bo allowed {INSERT INTO fm.group_members (group_id, user_id) VALUES ($eng, $cy)}
+  as user $bo allowed {UPDATE fm.groups SET name = 'Eng' WHERE id = $eng}
+  as user $bo refused {DELETE FROM fm.groups WHERE id = $web}
+  as user $bo refused {UPDATE fm.groups SET owner_id = $bo WHERE id = $eng}
+  as user $ann refused {DELETE FROM fm.groups WHERE id = $lab}
+  as user $cy allowed {DELETE FROM fm.groups WHERE id = $lab}
+  as user $ann allowed {DELETE FROM fm.groups WHERE id = $web}
+  as user $ann allowed {UPDATE fm.groups SET owner_id = $bo WHERE id = $ops}
+  as user $ann refused {DELETE FROM fm.groups WHERE id = $ops}
+  as user $bo allowed {DELETE FROM fm.groups WHERE id = $ops}

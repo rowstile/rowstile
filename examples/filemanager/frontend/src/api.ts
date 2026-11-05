@@ -6,7 +6,9 @@ export type Relation = "viewer" | "editor";
 export interface User { id: string; email: string; name: string; is_support?: boolean; used?: number; quota?: number }
 export interface Version { id: number; file_id: number; size: number; content_type: string; created_at: string;
                            created_by: string; created_by_name: string; current: boolean }
-export interface Group { id: string; name: string; parent_id: string | null; member: boolean; manage: boolean }
+export interface Group { id: string; name: string; parent_id: string | null; member: boolean; manage: boolean;
+                         /** the user owns it: only its owner may delete it */
+                         own: boolean }
 export interface Member { id: string; email: string; name: string; is_admin: boolean }
 export interface Folder { id: number; parent_id: number | null; name: string; owner_id: string; inherit: boolean; created_at: string; mine?: boolean;
                           /** in a listing: whether the user may share it, which moving and deleting it need too */

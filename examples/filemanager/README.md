@@ -86,7 +86,7 @@ whether it does.
 Folders and files; upload (straight from the browser to RustFS) and download (signed links); sharing
 with people and groups, with expiry; share links anyone can open without signing in, listed and turned
 off in the share dialog; who has access and why; moving; stopping inheritance on a folder; groups run
-in the app (owners, admins, sub-groups; anyone may leave); search by name; access requests and
+in the app (owners, admins, sub-groups; only its owner deletes a group or hands it over; anyone may leave); search by name; access requests and
 reviews; break glass for support staff; file versions (every upload over a file is kept, any can be
 made current again, and the database refuses to point a file at an object that isn't one of its own
 versions); previews in the browser (images, PDF, text, audio, video; anything else, HTML above all, is
