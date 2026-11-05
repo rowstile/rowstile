@@ -448,6 +448,15 @@ func TestPerPackageSaysWhyItCantCopy(t *testing.T) {
 	if !regexp.MustCompile(`^app_[0-9a-f]{8}$`).MatchString(rowstiletest.Worker()) {
 		t.Error(rowstiletest.Worker())
 	}
+	// a URL that doesn't parse, the tests' or the app role's, says so (no panic, no app URL left out)
+	if _, err := rowstiletest.PerPackage(ctx, "postgres://conf_owner:owner@localhost/conf_%zz", "", true); err == nil ||
+		!strings.Contains(err.Error(), "names a database to copy") {
+		t.Errorf("%v", err)
+	}
+	if _, err := rowstiletest.PerPackage(ctx, os.Getenv("ROWSTILE_TESTS_URL"), "postgres://conf_app@localhost/%zz", true); err == nil ||
+		!strings.Contains(err.Error(), "the app role's URL") {
+		t.Errorf("%v", err)
+	}
 }
 
 func TestALoginInsideTxIsWhomTheTransactionIsFor(t *testing.T) {

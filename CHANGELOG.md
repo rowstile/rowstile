@@ -77,6 +77,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   54 bytes (fewer, not to cut a character in two), `_`, and the first 8 hex digits of the SHA-256 of the whole name.
   Postgres cut it before, so a long name could stand for the original, which the helper then dropped, or for
   another worker's copy.
+- The Go SDK's `rowstiletest.PerPackage` says so of a URL that doesn't parse, the app role's too, instead of
+  failing on it or leaving the app role's URL out.
 - The Rust SDK's `per_binary` names the copy in an app role's URL that names no database, and reads a name the URL
   percent-encodes; the Java SDK's `WorkerDatabase.copy` reads it too, and writes the copy's so.
 - The Python SDK's `database_per_worker` keeps a URL whose host is in its settings (`postgresql:///app?host=...`)

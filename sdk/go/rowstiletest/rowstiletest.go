@@ -80,10 +80,14 @@ func withDatabase(u *url.URL, name string) string {
 // fresh is false.
 func PerPackage(ctx context.Context, testsURL, appURL string, fresh bool) (Database, error) {
 	u, err := url.Parse(testsURL)
-	template := strings.TrimPrefix(u.Path, "/")
-	if err != nil || template == "" {
+	if err != nil || strings.TrimPrefix(u.Path, "/") == "" {
 		return Database{}, fmt.Errorf("rowstiletest: %q is not a URL that names a database to copy", testsURL)
 	}
+	app, err := url.Parse(appURL)
+	if err != nil {
+		return Database{}, fmt.Errorf("rowstiletest: the app role's URL %q is not a URL", appURL)
+	}
+	template := strings.TrimPrefix(u.Path, "/")
 	name := fitted(template + "_" + Worker())
 	ident := pgx.Identifier{name}.Sanitize()
 	// CREATE DATABASE ... TEMPLATE needs no one connected to the original, this connection included
@@ -111,7 +115,7 @@ func PerPackage(ctx context.Context, testsURL, appURL string, fresh bool) (Datab
 		return Database{}, err
 	}
 	db := Database{URL: withDatabase(u, name)}
-	if app, err := url.Parse(appURL); appURL != "" && err == nil {
+	if appURL != "" {
 		db.AppURL = withDatabase(app, name)
 	}
 	return db, nil
