@@ -46,17 +46,31 @@ defmodule Rowstile do
 
   ## Who
 
-  @doc "The user whose id this is, whatever it holds (`\"service:3\"` too: ids come from outside)."
+  @doc """
+  The user whose id this is, whatever it holds (`"service:3"` too: ids come from outside); `nobody/0` for `nil` or
+  `""`.
+  """
   @spec user(term()) :: Principal.t()
-  def user(id), do: %Principal{type: "user", id: to_string(id)}
+  def user(id), do: principal("user", id)
 
-  @doc "A principal of another type the policy declares: `Rowstile.principal(\"service\", 3)`."
+  @doc """
+  A principal of another type the policy declares: `Rowstile.principal("service", 3)`; `nobody/0`
+  without an id.
+  """
   @spec principal(String.t(), term()) :: Principal.t()
+  def principal(type, id) when is_binary(type) and id in [nil, ""], do: nobody()
   def principal(type, id) when is_binary(type), do: %Principal{type: type, id: to_string(id)}
 
-  @doc "No one signed in: only what `anyone` may see."
+  @doc """
+  No one signed in: only what `anyone` may see. Nobody has one spelling: a principal without an id (`nil` or `""`),
+  whatever its type, is this one, as the database signs it in.
+  """
   @spec nobody() :: Principal.t()
   def nobody, do: %Principal{type: nil, id: nil}
+
+  # who, or nobody() for a principal without an id: one value, which == compares
+  defp canon(%Principal{id: id}) when id in [nil, ""], do: nobody()
+  defp canon(%Principal{} = who), do: who
 
   @doc """
   Makes the calling process act for `who`: every transaction `transact/3` begins in it signs in as them.
@@ -65,7 +79,7 @@ defmodule Rowstile do
   """
   @spec put_principal(Principal.t()) :: :ok
   def put_principal(%Principal{} = who) do
-    Process.put(:rowstile_principal, who)
+    Process.put(:rowstile_principal, canon(who))
     :ok
   end
 
@@ -83,7 +97,7 @@ defmodule Rowstile do
   @spec acting_as(Principal.t(), (-> result)) :: result when result: term()
   def acting_as(%Principal{} = who, fun) when is_function(fun, 0) do
     before = Process.get(:rowstile_principal)
-    Process.put(:rowstile_principal, who)
+    Process.put(:rowstile_principal, canon(who))
 
     try do
       fun.()
@@ -126,6 +140,7 @@ defmodule Rowstile do
         when v: term(), e: term()
   def transact(db, fun, opts \\ []) when is_function(fun, 0) or is_function(fun, 1) do
     {who, opts} = Keyword.pop_lazy(opts, :as, fn -> current() || nobody() end)
+    who = canon(who)
     :ok = may_enter(db, Process.get({:rowstile_signed, db}), who)
 
     try do

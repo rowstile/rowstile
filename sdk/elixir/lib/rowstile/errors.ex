@@ -91,17 +91,20 @@ defmodule Rowstile.Errors do
   # without its schema
   @generic ~r/^(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/
 
+  # the function in Postgres that raises those refusals (the error's routine): what tells one in another language
+  @row_check "ExecWithCheckOptions"
+
   @unseen "this user may not see the row as written (the select rule). An insert that reads it back " <>
             "(RETURNING), an upsert, and an update with a WHERE need to see it."
 
+  # from the HINT, where the runtime puts it, and never the message, which may hold the request's own input
+  # (Postgres's own words quote a value it couldn't read)
   @spec code(term()) :: String.t() | nil
   def code(%Postgrex.Error{postgres: %{} = pg}) do
-    Enum.find_value([pg[:hint], pg[:message]], fn text ->
-      case Regex.run(~r/rowstile help (AZ\d{3})/, text || "") do
-        [_, code] -> code
-        nil -> nil
-      end
-    end)
+    case Regex.run(~r/rowstile help (AZ\d{3})/, pg[:hint] || "") do
+      [_, code] -> code
+      nil -> nil
+    end
   end
 
   def code(%NotSignedIn{error: error}), do: code(error)
@@ -116,8 +119,9 @@ defmodule Rowstile.Errors do
     cond do
       refused = sqlstate == "42501" && refusal(pg, code) -> refused
       status = @call_status[code] -> %CallError{message: pg.message, code: code, status: status}
-      # a login refused (AZ703) and settings changed by hand (AZ702) share the SQLSTATE, and are no such thing
-      sqlstate == "28000" and code in [nil, "AZ701"] -> %NotSignedIn{error: error}
+      # a login refused (AZ703), settings changed by hand (AZ702) and Postgres's own refusals to connect (no code: a
+      # role that isn't there, pg_hba.conf) share the SQLSTATE, and are no such thing
+      sqlstate == "28000" and code == "AZ701" -> %NotSignedIn{error: error}
       true -> error
     end
   end
@@ -128,9 +132,16 @@ defmodule Rowstile.Errors do
   # words for a check no rule's refusal covers), else nil: another 42501 (a table the app role was never granted)
   # is the app's mistake, and sign in first (AZ714) is a 42501 too, but no refusal
   defp refusal(pg, code) do
+    routine = pg[:routine]
+
     case Regex.run(@generic, pg.message) do
       [_, row, using, table] ->
         generic(pg.message, row, using, table)
+
+      # Postgres's own refusal in another language (the server's lc_messages): which table and rule, its words alone
+      # say
+      nil when code == nil and routine == @row_check ->
+        %Refused{message: pg.message}
 
       nil when code == nil or is_map_key(@call_status, code) ->
         nil

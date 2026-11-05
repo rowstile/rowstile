@@ -1,7 +1,8 @@
 defmodule Rowstile.Principal do
   @moduledoc """
   Who a transaction acts for: a user (type `"user"`), another principal type the policy declares (a service, a
-  bot), or nobody (type and id `nil`: only what `anyone` may see).
+  bot), or nobody (type and id `nil`: only what `anyone` may see). Nobody has one spelling, `Rowstile.nobody()`: a
+  principal without an id, whatever its type, is it.
 
   `to_string/1` writes one as text and `parse/1` reads it back, for text the app's own code wrote (a job's
   argument), never for an id that came from outside: `Rowstile.user("service:1")` is the user whose id that is.
@@ -21,8 +22,8 @@ defmodule Rowstile.Principal do
 
   def parse(text) when is_binary(text) do
     case {String.starts_with?(text, "("), String.split(text, ":", parts: 2)} do
-      {false, [kind, id]} -> %__MODULE__{type: kind, id: id}
-      _ -> %__MODULE__{type: "user", id: text}
+      {false, [kind, id]} -> Rowstile.principal(kind, id)
+      _ -> Rowstile.user(text)
     end
   end
 

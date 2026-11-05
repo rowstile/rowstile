@@ -365,6 +365,64 @@ defmodule Conformance.SdkTest do
     assert inspect(Rowstile.principal("service", 3)) == "#Rowstile.Principal<service:3>"
   end
 
+  test "what is read of an error: the HINT alone, AZ701 alone, and the function that raised it" do
+    # Postgres's own words quote the request's input: a code there is none of rowstile's
+    cast =
+      assert_raise Postgrex.Error, fn ->
+        as(1, fn -> Repo.query!("SELECT 'rowstile help AZ714'::bigint") end)
+      end
+
+    assert {cast.postgres.pg_code, Rowstile.error_code(cast), Rowstile.problem(cast)} ==
+             {"22P02", nil, :error}
+
+    # a 28000 without code AZ701 (Postgres's own: a login refused when connecting) is not NotSignedIn
+    login =
+      assert_raise Postgrex.Error, fn ->
+        as(1, fn ->
+          Repo.query!("DO $$BEGIN RAISE 'no pg_hba.conf entry' USING ERRCODE = '28000'; END$$")
+        end)
+      end
+
+    assert {login.postgres.pg_code, Rowstile.translate(login)} == {"28000", login}
+
+    # Postgres's own refusal on a server whose messages aren't English: told by the function that
+    # raised it, not its words, the table and the rule unnamed; another 42501 is none
+    words = "neue Zeile verletzt Policy für Sicherheit auf Zeilenebene für Tabelle »notes«"
+
+    german = fn routine ->
+      %Postgrex.Error{postgres: %{pg_code: "42501", message: words, routine: routine}}
+    end
+
+    assert %Rowstile.Refused{message: ^words, table: nil, command: nil, code: "AZ709"} =
+             Rowstile.translate(german.("ExecWithCheckOptions"))
+
+    assert Rowstile.translate(german.("aclcheck_error")) == german.("aclcheck_error")
+  end
+
+  test "nobody has one spelling: no id, whatever the type" do
+    spellings = [
+      Rowstile.user(nil),
+      Rowstile.user(""),
+      Rowstile.principal("service", nil),
+      Rowstile.Principal.parse("service:")
+    ]
+
+    nobody = {Rowstile.nobody(), "nobody"}
+    assert Enum.map(spellings, &{&1, to_string(&1)}) == [nobody, nobody, nobody, nobody]
+
+    # nobody's work runs in a transaction begun for a principal without an id, made by hand too
+    hand = %Rowstile.Principal{type: "user", id: nil}
+
+    seen =
+      Rowstile.transact(
+        Repo,
+        fn -> Rowstile.transact(Repo, fn -> {:ok, ids()} end, as: Rowstile.nobody()) end,
+        as: hand
+      )
+
+    assert seen == {:ok, expected()[nil]}
+  end
+
   test "keys as Postgres writes them" do
     shown =
       [7, [7], [1, 2], ["a b", "x,y"], ["", ~s(q"t)], ["b\\s", "(1)"], [1, nil]]
