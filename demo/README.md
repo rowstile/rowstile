@@ -22,6 +22,6 @@ a recording that shows last year's output is worse than none.
 | `demo.tape` | the script: what is typed, and how long each answer stays on screen |
 | `record.sh` | the containers around it: the recorder, Postgres, the project |
 | `files.py` | takes the tables, the policy and the tests out of the guide, so the demo and the guide can't drift |
-| `Dockerfile` | the recorder's image: VHS, with git (the review reads the base branch from it) |
+| `Dockerfile` | the recorder's image: VHS, with python3 (the command runs there) and git (the review reads the base branch from it) |
 
 Needs Docker, bash and Python. The recorder's image is 3 GB the first time.

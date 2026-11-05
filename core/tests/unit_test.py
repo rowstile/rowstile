@@ -13162,6 +13162,65 @@ class Demo(unittest.TestCase):
         self.assertEqual(text.count(old), 1, f"the tape changes {old!r}, which the guide's policy has once")
         Compiler(parse_policy(text.replace(old, new), "p.authz")).compile("p.authz")
 
+    def test_the_scenes_fit_the_guides_rows(self) -> None:
+        # record.sh shares a project with a team's members, as the project's owner, and the tape asks as a user
+        # who has no access: the guide's rows must still hold those, or the next recording shows something else
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("demo_files", os.path.join(self.REPO, "demo", "files.py"))
+        assert spec is not None and spec.loader is not None
+        files = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(files)
+        with tempfile.TemporaryDirectory() as d:
+            argv, sys.argv = sys.argv, ["files.py", d, os.path.join(d, "schema.sql")]
+            try:
+                files.main()
+            finally:
+                sys.argv = argv
+            with open(os.path.join(d, "schema.sql"), encoding="utf-8") as fh:
+                sql = fh.read()
+        with open(os.path.join(self.REPO, "demo", "demo.tape"), encoding="utf-8") as fh:
+            tape = fh.read()
+        with open(os.path.join(self.REPO, "demo", "record.sh"), encoding="utf-8") as fh:
+            record = fh.read()
+
+        def rows(table: str) -> list[tuple[str, ...]]:
+            values = search(rf"INSERT INTO app\.{table}(?: \([^)]*\))? VALUES (.*);", sql).group(1)
+            return [tuple(v.strip() for v in row.split(",")) for row in re.findall(r"\(([^)]*)\)", values)]
+
+        sharer = search(r"SET authz\.user_id = '(\d+)';", record).group(1)
+        project, team = search(
+            r"authz\.share\('project', '(\d+)', 'viewer', 'team', '(\d+)', 'member'\)", record
+        ).groups()
+        # projects and notes take their ids in order (bigserial): project 1 is the first row, its owner the sharer
+        projects, notes = rows("projects"), rows("notes")
+        self.assertEqual(project, "1", "record.sh shares the guide's first project")
+        self.assertEqual(projects[0][0], sharer, "record.sh shares the project as its owner")
+        self.assertIn((team,), [r[:1] for r in rows("teams")], f"team {team} is one of the guide's")
+        members = {m for t, m in rows("team_members") if t == team}
+        self.assertTrue(members, f"team {team} has a member, who gains access in the review's scene")
+        # the user the tape asks as exists, and has no access to the project: not its owner, not in the team
+        asked = set(re.findall(r"--as user:(\d+)", tape))
+        self.assertEqual(len(asked), 1, "the tape asks as one user")
+        (user,) = asked
+        self.assertIn(user, [r[0] for r in rows("users")])
+        self.assertNotIn(user, members | {projects[0][0]}, f"user {user} has no access to project {project}")
+        # the INSERT refused: the table's columns, in project 1, as its own author (so project.edit is what fails)
+        columns, values = search(r"INSERT INTO app\.notes \(([^)]*)\) VALUES \(([^)]*)\)", tape).groups()
+        table = search(r"CREATE TABLE app\.notes \(([^;]*)\);", sql).group(1)
+        self.assertEqual(
+            [c.strip() for c in columns.split(",")],
+            [c.split()[0] for c in table.split(",")][1:],
+            "the tape's INSERT names app.notes's columns, but its id",
+        )
+        self.assertEqual([v.strip() for v in values.split(",")][:2], [project, user])
+        # and why it would be granted, on the guide's first note, in that project
+        self.assertEqual(search(rf"rowstile why --as user:{user} note (\d+) edit", tape).group(1), "1")
+        self.assertEqual(notes[0][0], project, "note 1 is in the project shared")
+        # the command runs in the recorder's image: it brings its own python3, not only VHS's dependencies'
+        with open(os.path.join(self.REPO, "demo", "Dockerfile"), encoding="utf-8") as fh:
+            self.assertRegex(fh.read(), r"apt-get install [^\n]*\bpython3\b")
+
     def test_the_readme_shows_the_recording(self) -> None:
         with open(os.path.join(self.REPO, "README.md"), encoding="utf-8") as fh:
             self.assertIn("](demo/demo.gif)", fh.read())
