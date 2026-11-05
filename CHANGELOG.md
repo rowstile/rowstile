@@ -342,6 +342,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A policy with a permission or relation named `tree`, or `tree_` and more (`tree_links`), applies: the closure
   table that an inheritance makes takes another name (`folder__parent__tree2`) where the view of an arrow to that
   name would have had the table's.
+- `rowstile migrate` names a file of the migration tool's it can't read and exits 2, where it printed a traceback:
+  a Drizzle Kit journal or snapshot that isn't JSON (a merge's conflict markers left in it), a journal entry without
+  its `idx` or `tag`, a Django migration that isn't Python, and any of the tool's files, or the lock file, that
+  isn't UTF-8. A Drizzle Kit snapshot it can't read leaves no migration file behind.
 
 ### Upgrading
 

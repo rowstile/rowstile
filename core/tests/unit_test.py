@@ -4064,6 +4064,57 @@ class Migrations(unittest.TestCase):
             with self.assertRaisesRegex(migrations.Error, re.escape(said)):
                 migrations.journal_of(journal)
 
+    def test_a_tool_file_it_cant_read_is_named(self) -> None:
+        # a file of the app's tool that isn't UTF-8, JSON or Python (a merge's conflict markers left in it, say): an
+        # Error that names it, which rowstile migrate says with exit 2 (not a traceback), and nothing written
+        import migrations
+
+        journal = b'{"entries": [{"idx": 0, "tag": "0000_x"}]}'
+        for tool, files, said in (
+            ("drizzle", {"meta/_journal.json": b'{"entries": [\n<<<<<<< HEAD\n'}, "_journal.json: not JSON (Expecting"),
+            (
+                "drizzle",
+                {"meta/_journal.json": b'{"entries": [{"tag": "0000_x"}]}'},
+                "journal has an entry that isn't one",
+            ),
+            (
+                "drizzle",
+                {"meta/_journal.json": b'{"entries": [{"idx": "x", "tag": "0000_x"}]}'},
+                "an entry that isn't one",
+            ),
+            (
+                "drizzle",
+                {"meta/_journal.json": journal, "meta/0000_snapshot.json": b"<<<<<<< HEAD"},
+                "_snapshot.json: not JSON",
+            ),
+            (
+                "drizzle",
+                {"meta/_journal.json": journal, "meta/0000_snapshot.json": b'{"version": "7"}'},
+                "0000_snapshot.json isn't a snapshot as drizzle-kit writes it (no id)",
+            ),
+            ("alembic", {"a.py": b'revision = "\xe9"\n'}, "a.py: not UTF-8 (the byte at 12): save it as UTF-8"),
+            ("django", {"__init__.py": b"", "0001_x.py": b"<<<<<<< HEAD\n"}, "0001_x.py: not Python (invalid syntax"),
+            ("django", {"__init__.py": b"", "0001_x.py": b"# \xe9\n"}, "0001_x.py: not UTF-8 (the byte at 2)"),
+            ("ecto", {"20260101000000_x.exs": b"defmodule \xe9"}, "20260101000000_x.exs: not UTF-8 (the byte at 10)"),
+            ("efcore", {"AppModelSnapshot.cs": b"\xe9"}, "AppModelSnapshot.cs: not UTF-8 (the byte at 0)"),
+        ):
+            with tempfile.TemporaryDirectory() as d:
+                for name, data in files.items():
+                    os.makedirs(os.path.dirname(os.path.join(d, name)), exist_ok=True)
+                    with open(os.path.join(d, name), "wb") as fh:
+                        fh.write(data)
+                with self.assertRaisesRegex(migrations.Error, re.escape(said)):
+                    migrations.write_migration(tool, d, "x", "SELECT 1;\n")
+                there = sorted(os.path.relpath(os.path.join(r, f), d) for r, _, fs in os.walk(d) for f in fs)
+                self.assertEqual(there, sorted(files), f"{tool}: {said}")
+        # the app's .gitattributes, in another encoding: rowstile's lines added, its own bytes kept
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, ".gitattributes"), "wb") as fh:
+                fh.write(b"# caf\xe9\n*.bin binary\n")
+            self.assertIsNotNone(migrations.mark_generated(d, ["db/policy.lock linguist-generated=true"]))
+            with open(os.path.join(d, ".gitattributes"), "rb") as fh:
+                self.assertEqual(fh.read().split(b"\n")[:2], [b"# caf\xe9", b"*.bin binary"])
+
     def test_migrations_written_the_same_second_come_one_after_the_other(self) -> None:
         # (the suites write migrations a moment apart, with no pause for the clock): one written in the same second
         # as the last, or before it, is named a second after it

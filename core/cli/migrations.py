@@ -62,6 +62,25 @@ class Error(Exception):
     pass
 
 
+def read(path: str, encoding: str = "utf-8") -> str:
+    """A file of the app's migration tool, as text. One that isn't UTF-8 is an Error that names it (the command says
+    it with exit 2), as is one that isn't JSON or Python where that is read."""
+    try:
+        with open(path, encoding=encoding) as fh:
+            return fh.read()
+    except UnicodeDecodeError as e:
+        raise Error(f"{path}: not UTF-8 (the byte at {e.start}): save it as UTF-8") from None
+
+
+def read_json(path: str) -> object:
+    """A JSON file of the tool's (Drizzle Kit's journal and snapshots): a merge's conflict markers left in one, say,
+    are an Error that names it."""
+    try:
+        return json.loads(read(path))
+    except ValueError as e:
+        raise Error(f"{path}: not JSON ({e}): a merge left both branches' lines in it?") from None
+
+
 class JournalEntry(TypedDict):
     idx: int
     version: str
@@ -89,15 +108,18 @@ def journal_of(value: object) -> Journal:
         if not isinstance(item, dict):
             raise Error(f"drizzle's journal has an entry that isn't one: {item!r}")
         e: dict[str, object] = {str(k): v for k, v in item.items()}
-        entries.append(
-            {
-                "idx": int(str(e["idx"])),
-                "version": str(e.get("version", "7")),
-                "when": int(str(e.get("when", 0))),
-                "tag": str(e["tag"]),
-                "breakpoints": bool(e.get("breakpoints", True)),
-            }
-        )
+        try:  # (its idx and tag, which drizzle-kit always writes, and numbers where it writes numbers)
+            entries.append(
+                {
+                    "idx": int(str(e["idx"])),
+                    "version": str(e.get("version", "7")),
+                    "when": int(str(e.get("when", 0))),
+                    "tag": str(e["tag"]),
+                    "breakpoints": bool(e.get("breakpoints", True)),
+                }
+            )
+        except (KeyError, ValueError):
+            raise Error(f"drizzle's journal has an entry that isn't one: {item!r}") from None
     return {
         "version": str(data.get("version", "7")),
         "dialect": str(data.get("dialect", "postgresql")),
@@ -125,8 +147,8 @@ def mark_generated(root: str, lines: list[str]) -> str | None:
     """Adds the lines to root/.gitattributes (made if missing), so GitHub and GitLab collapse generated
     files in reviews. Returns the path if it changed it."""
     path = os.path.join(root, ".gitattributes")
-    try:
-        with open(path, encoding="utf-8") as fh:
+    try:  # (the app's file: bytes that aren't UTF-8 are written back as they were)
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
             text = fh.read()
     except FileNotFoundError:
         text = ""
@@ -134,7 +156,7 @@ def mark_generated(root: str, lines: list[str]) -> str | None:
     if not missing:
         return None
     head = "" if "# rowstile" in text else "# rowstile writes these: reviews show them collapsed\n"
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="\n") as fh:
         fh.write(text + ("\n" if text and not text.endswith("\n") else "") + head + "\n".join(missing) + "\n")
     return path
 
@@ -231,20 +253,21 @@ def drizzle(folder: str, name: str, sql: str, now: float | None) -> list[str]:
     journal_path = os.path.join(meta, "_journal.json")
     journal: Journal = {"version": "7", "dialect": "postgresql", "entries": []}
     if os.path.exists(journal_path):
-        with open(journal_path, encoding="utf-8") as fh:
-            journal = journal_of(json.load(fh))
+        journal = journal_of(read_json(journal_path))
     idx = max((e["idx"] for e in journal["entries"]), default=-1) + 1
     tag = f"{idx:04d}_{name}"
-    body = "\n--> statement-breakpoint\n".join((f"{c}\n" if c else "") + s + ";" for c, s in split(sql))
-    written = [write(os.path.join(folder, f"{tag}.sql"), body + "\n")]
+    # the snapshot before, read before anything is written: one it can't read leaves no migration behind
     prev: dict[str, object] | None = None
     if journal["entries"]:
         last = max(journal["entries"], key=lambda e: e["idx"])
         p = os.path.join(meta, f"{last['idx']:04d}_snapshot.json")
         if os.path.exists(p):
-            with open(p, encoding="utf-8") as fh:
-                got = json.load(fh)
+            got = read_json(p)
             prev = {str(k): v for k, v in got.items()} if isinstance(got, dict) else None
+            if prev is not None and "id" not in prev:
+                raise Error(f"{p} isn't a snapshot as drizzle-kit writes it (no id)")
+    body = "\n--> statement-breakpoint\n".join((f"{c}\n" if c else "") + s + ";" for c, s in split(sql))
+    written = [write(os.path.join(folder, f"{tag}.sql"), body + "\n")]
     snap: dict[str, object] = (
         dict(prev)
         if prev
@@ -290,8 +313,7 @@ def alembic_heads(folder: str) -> list[str]:
     for f in os.listdir(folder) if os.path.isdir(folder) else []:
         if not f.endswith(".py"):
             continue
-        with open(os.path.join(folder, f), encoding="utf-8") as fh:
-            text = fh.read()
+        text = read(os.path.join(folder, f))
         m = REVISION.search(text)
         if not m:
             continue
@@ -375,8 +397,11 @@ def django_graph(folder: str) -> tuple[str, list[str], int]:
     for f in sorted(os.listdir(folder)):
         if not f.endswith(".py") or f.startswith("_"):
             continue
-        with open(os.path.join(folder, f), encoding="utf-8") as fh:
-            tree = ast.parse(fh.read(), f)
+        path = os.path.join(folder, f)
+        try:
+            tree = ast.parse(read(path), f)
+        except (SyntaxError, ValueError) as e:  # (null bytes: a ValueError before Python 3.12)
+            raise Error(f"{path}: not Python ({e})") from None
         names.append(f[:-3])
         for node in ast.walk(tree):
             if not isinstance(node, ast.Assign):
@@ -459,8 +484,7 @@ def snapshot_of(folder: str) -> tuple[str, str]:
             f"{folder} has a snapshot for several DbContexts ({', '.join(found)}): give the policy's a folder of its own"
         )
     path = os.path.join(folder, found[0])
-    with open(path, encoding="utf-8-sig") as fh:
-        return path, fh.read().replace("\r\n", "\n")
+    return path, read(path, "utf-8-sig").replace("\r\n", "\n")
 
 
 def target_model(snapshot: str, path: str) -> tuple[list[str], str, bool, str, list[str]]:
@@ -623,8 +647,7 @@ def ecto(folder: str, names: list[str], ts: str, name: str, sql: str) -> list[st
     base = f"{ts}_{unique}"
     prefix = "Rowstile.Migrations"
     for f in reversed(migrations):
-        with open(os.path.join(folder, f), encoding="utf-8") as fh:
-            named = re.search(r"^defmodule ([\w.]+)\.\w+ do$", fh.read(), re.M)
+        named = re.search(r"^defmodule ([\w.]+)\.\w+ do$", read(os.path.join(folder, f)), re.M)
         if named:
             prefix = named.group(1)
             break
