@@ -1,8 +1,8 @@
 # Getting started
 
 From an empty folder to access rules enforced by Postgres, tested, in about fifteen minutes. You need a
-Postgres (Docker runs one below) and the `rowstile` command. (This guide runs as written in the tests:
-[`core/tests/docs_test.sh`](../core/tests/docs_test.sh).)
+Postgres (Docker runs one below) and the `rowstile` command. (This guide runs as written in the tests, as the
+`postgres` superuser and as an owner that isn't one: [`core/tests/docs_test.sh`](../core/tests/docs_test.sh).)
 
 ## 1. Postgres with rowstile
 
