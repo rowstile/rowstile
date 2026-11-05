@@ -388,13 +388,17 @@ async function start() {
       el.notice.hidden = false;
     }
   }
-  // #e=<slug>: one of the page's own examples, by its name (the cookbook's recipes link here)
-  const named = /^#e=([a-z0-9-]+)$/.exec(location.hash);
+  // #e=<slug>: one of the page's own examples, by its name (the cookbook's recipes link here); a name that isn't
+  // one (a recipe renamed or removed since the link was written) opens the first, and says so
+  const named = /^#e=(.+)$/.exec(location.hash);
   if (named) {
     const at = bundle.examples.findIndex((x) => x.slug === named[1]);
     if (at >= 0) {
       state = bundle.examples[at];
       el.example.value = String(at);
+    } else {
+      el.notice.textContent = `No example is named ${named[1]}: this is the first one.`;
+      el.notice.hidden = false;
     }
   }
   show(state);
