@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { build, createMarkdownRenderer } from "vitepress";
 import { FEED, LANGUAGES, feed, forFeed, postBody } from "./blog.mjs";
 import { KEY, KEY_FILE } from "./indexnow.mjs";
+import { DEPLOYED, deployed } from "./source.mjs";
 import { NOTE, ORIGIN, PAGES, POSTS, REPO, deadAnchors, inSitemap, rewriteLinks, siteLink, url, withoutNotes } from "./pages.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -72,6 +73,8 @@ for (const f of ["mark.svg", "card.png"]) cpSync(join(HERE, "assets", f), join(D
 writeFileSync(join(DIST, "robots.txt"), `User-agent: *\nAllow: /\n\nSitemap: ${ORIGIN}/sitemap.xml\n`);
 // IndexNow's key, at the root: what says the site's own deploy sent the addresses (indexnow.mjs, site.yml)
 writeFileSync(join(DIST, KEY_FILE), KEY);
+// what this site shows, which the next run of site.yml reads (source.mjs): its tags, and whether it was put back by hand
+writeFileSync(join(DIST, DEPLOYED), deployed(process.env));
 
 // the blog's feed: each post whole, as HTML, its links to the site's pages by their full address
 if (POSTS.length) {

@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FOLDERS } from "./source.mjs";
+import { FOLDERS, ORIGIN } from "./source.mjs";
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const GITHUB = "https://github.com/rowstile/rowstile";
@@ -160,8 +160,8 @@ export function inSitemap(path) {
   return !/^\/errors\/AZ\d+$/.test(path);
 }
 
-/** Where the site is served: the sitemap's and the canonical links' host. */
-export const ORIGIN = "https://rowstile.dev";
+/** Where the site is served: the sitemap's and the canonical links' host (source.mjs, which runs alone). */
+export { ORIGIN };
 
 /** One sentence per page, for search results and shared links. It is here and not in the Markdown, which is read on
  *  GitHub too, where front matter shows as a table. An error page's and a recipe's are made from their titles, a

@@ -197,7 +197,12 @@ check("IndexNow: the key is what it accepts (8 to 128 of a-z, A-Z, 0-9, -)", /^[
 
 // site.yml gives the build the tags it is built from (else its links go to main), and builds only what deploys
 const workflow = readFileSync(join(REPO, ".github", "workflows", "site.yml"), "utf8");
-check("site.yml builds with the tags source.mjs named", /- if: steps\.from\.outputs\.deploy == 'true'\n\s+env:\n\s+SITE_CODE: \$\{\{ steps\.from\.outputs\.code \}\}\n\s+SITE_CONTENT: \$\{\{ steps\.from\.outputs\.content \}\}\n\s+run: [^\n]*node build\.mjs/.test(workflow));
+check("site.yml builds with the tags source.mjs named", /- if: steps\.from\.outputs\.deploy == 'true'\n\s+env:\n\s+SITE_CODE: \$\{\{ steps\.from\.outputs\.code \}\}\n\s+SITE_CONTENT: \$\{\{ steps\.from\.outputs\.content \}\}\n\s+SITE_PINNED: \$\{\{ steps\.from\.outputs\.pinned \}\}\n\s+run: [^\n]*node build\.mjs/.test(workflow));
+
+check("build.mjs writes what the site shows, which the next run reads (source.mjs)",
+  readFileSync(join(REPO, "site", "build.mjs"), "utf8").includes("writeFileSync(join(DIST, DEPLOYED), deployed(process.env));"));
+check("site.yml says why a tag deploys nothing, or deploys the newest site in its place",
+  /- if: steps\.from\.outputs\.why != ''\n\s+env:\n\s+WHY: \$\{\{ steps\.from\.outputs\.why \}\}\n\s+run: echo "::notice::\$GIVEN \(\$WHY\)"\n/.test(workflow));
 
 check("site.yml sends IndexNow after the deploy, never failing it",
   /\n  indexnow:\n    needs: deploy\n[\s\S]*- run: node site\/indexnow\.mjs\n\s+continue-on-error: true\n/.test(workflow));

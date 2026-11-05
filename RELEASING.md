@@ -213,7 +213,11 @@ pages and the playground are all built from one commit of `main`. A **site tag**
   pushed on a commit older than another such tag's (a release made from an earlier commit, after a site tag)
   deploys nothing, and a release's tag off `main` (a patch to an older line) neither: the site never goes back
   by itself. To put it back on purpose, run it by hand: `gh workflow run site.yml -f tag=site-vN` deploys
-  that tag, whatever comes after it.
+  that tag, whatever comes after it, and it stays so until a newer tag deploys.
+- Each deploy writes what the site shows, `/deployed.json` (its tags, and whether it was put back by hand). A
+  run can be cancelled (GitHub keeps one run waiting, and a newer one takes its place) or fail, which leaves the
+  site behind its tags: the next run that would deploy nothing sees it there and deploys the newest site and
+  blog instead, and says so in its run. To catch up at once, run the newest tag by hand.
 - A **blog tag** publishes the articles and the comparison pages alone, when the rest of `main` shouldn't go
   out yet:
 
