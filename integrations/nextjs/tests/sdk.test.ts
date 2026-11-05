@@ -35,6 +35,8 @@ describe("@rowstile/client", () => {
   test("ids and principals, as the database writes them", () => {
     expect(idText([1, 'a"b\\c'])).toBe('("1","a\\"b\\\\c")');
     expect(idShown([1, null, undefined] as never)).toBe("(1,,)");          // an empty field, as Postgres writes it
+    // a field quoted for ASCII's six spaces alone, as Postgres writes it: not for a no-break space, an em space
+    expect([idShown(["\vv", "a\u00a0b"]), idShown(["\u2003\x1c", "\r\n\f"])]).toEqual(['("\vv",a\u00a0b)', '(\u2003\x1c,"\r\n\f")']);
     expect(principal({ type: "service", id: 3 } as never)).toEqual({ type: "service", id: "3" });
     expect(principal({ id: "4" } as never)).toEqual({ type: "user", id: "4" });   // a type left out: a user
     // nobody has one spelling: no id (null, undefined or ""), whatever the type, as the database signs it in
@@ -52,7 +54,9 @@ describe("@rowstile/client", () => {
   test("errors, as a problem body and as a response", async () => {
     const share = new Refused("you cannot share project 1", undefined, undefined, [], { code: "AZ705" });
     expect(share.problem()).toMatchObject({ status: 403, detail: "you cannot share project 1", table: null, command: null, code: "AZ705" });
-    expect([new NotFound().message, new NotFound("app.notes").message]).toEqual(["the row not found", "app.notes not found"]);
+    // as every SDK words a hidden row: its table and key, either alone, or neither
+    expect([new NotFound("app.notes", "7"), new NotFound("app.notes"), new NotFound(undefined, "7"), new NotFound()].map((e) => e.message))
+      .toEqual(["app.notes 7 not found", "app.notes not found", "row 7 not found", "not found"]);
     const r = problemResponse(share);
     expect([r?.status, r?.headers.get("content-type"), (await r?.json()).code]).toEqual([403, "application/problem+json", "AZ705"]);
     expect([problemResponse(new Error("the app's")), problemOf(new Error("the app's"))]).toEqual([null, null]);
@@ -95,6 +99,9 @@ describe("the runtime's functions over pg", () => {
     try {
       expect(await actingAs("1", () => a.list("project", "view", { limit: 1 }))).toEqual(["1"]);
       expect(await actingAs("1", () => a.list("project", "view", { after: 1, limit: 5 }))).toEqual(["3"]);
+      // a cursor without a size: every row after it; no cursor (null, as a request's missing parameter): the first
+      expect(await actingAs("1", () => a.list("project", "view", { after: 1 }))).toEqual(["3"]);
+      expect(await actingAs("1", () => a.list("project", "view", { after: null, limit: 1 }))).toEqual(["1"]);
       expect(await actingAs("1", () => a.perms("project", 999))).toEqual([]);   // no such project
       await actingAs("1", () => a.share("project", 1, "viewer", "user", 2));
       const shares = await actingAs("1", () => a.listShares("project", 1));
