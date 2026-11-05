@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -110,7 +111,7 @@ func TestCheck4APooledConnectionCarriesNoOneOver(t *testing.T) {
 
 func TestCheck5ConcurrentRequestsNeverMixUsers(t *testing.T) {
 	check(t, "5: concurrent requests never mix users")
-	users := slicesRepeat([]string{"1", "2", "3", ""}, 10)
+	users := slices.Repeat([]string{"1", "2", "3", ""}, 10)
 	got := make([]Answer, len(users))
 	var wg sync.WaitGroup
 	for i, user := range users {
@@ -122,14 +123,6 @@ func TestCheck5ConcurrentRequestsNeverMixUsers(t *testing.T) {
 			t.Errorf("request %d, user %q: %v", i, user, got[i])
 		}
 	}
-}
-
-func slicesRepeat(s []string, n int) []string {
-	var out []string
-	for range n {
-		out = append(out, s...)
-	}
-	return out
 }
 
 func TestCheck6ARefusedInsertSaysWhichRule(t *testing.T) {

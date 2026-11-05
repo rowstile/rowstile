@@ -29,7 +29,7 @@ import (
 	"github.com/rowstile/rowstile/integrations/go/internal/authz"
 )
 
-// whom is who the transaction is signed in as, in the words the database's refusals use
+// whom is who the transaction is signed in as, in the words the SDK's own errors use (signedInAlready)
 func whom(ctx context.Context, tx pgx.Tx) string {
 	var who string
 	_ = tx.QueryRow(ctx, "SELECT coalesce((SELECT principal_type || ' ' || principal_id FROM authz.principal()), "+

@@ -21,7 +21,7 @@ import (
 // service), which names no rule.
 type Refused struct {
 	Message string
-	Table   string // schema.table, "" when the refusal names none
+	Table   string // schema.table; the table alone in Postgres's own refusals, whose words name no schema; "" for none
 	Command string // insert, update, delete or select; "" when it names none
 	Why     []string
 	Code    string
