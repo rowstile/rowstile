@@ -357,6 +357,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - Ctrl-C stops any command with `stopped` and exit 130: one that reads no database (a long `rowstile prove`,
   `review`, `migrate`), or one still connecting, printed a traceback, as did `rowstile dev` stopped in its first
   pass. `rowstile dev` ends with 0 on Ctrl-C whenever it comes, as it did once watching; `dev --once` with 130.
+- The command signs in with a SCRAM password that mixes right-to-left letters (Hebrew, Arabic) with others, or that
+  is made only of characters SCRAM drops, as psql does. It prepared such a password other than Postgres had, and
+  the server refused it.
 
 ### Upgrading
 

@@ -531,7 +531,9 @@ class Connection:
 
 def _saslprep(password: str) -> str:
     """The password as SCRAM prepares it (RFC 4013): what maps to nothing is dropped, other spaces become a space,
-    compatibility characters their plain form. One with a prohibited character is used as it is, as Postgres does."""
+    compatibility characters their plain form. One that maps to nothing, has a prohibited character, or has a
+    right-to-left letter but doesn't start and end with one or also has a left-to-right letter (the bidi rule) is used
+    as it is, as Postgres does."""
     if password.isascii():
         return password
     import stringprep
@@ -551,7 +553,14 @@ def _saslprep(password: str) -> str:
         stringprep.in_table_c8,
         stringprep.in_table_c9,
     )
-    return password if any(f(c) for c in out for f in prohibited) else out
+    if not out or any(f(c) for c in out for f in prohibited):
+        return password
+    right_to_left = stringprep.in_table_d1
+    if any(right_to_left(c) for c in out) and (
+        any(stringprep.in_table_d2(c) for c in out) or not right_to_left(out[0]) or not right_to_left(out[-1])
+    ):
+        return password
+    return out
 
 
 # the hash a certificate was signed with, by its signature algorithm (an OID's bytes); MD5 and SHA-1 count as
