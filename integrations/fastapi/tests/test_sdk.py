@@ -90,10 +90,28 @@ class VersionedNote(Versioned):
 def test_a_principal_as_it_is_and_one_without_an_id() -> None:
     service = Principal("service", "1")
     assert Principal.of(service) is service
-    assert Principal.of(("service", None)) == Principal("service", None)
     assert rowstile.act_as_args(("service", None)) == (None, None)  # without an id it is nobody, whatever its type
     assert rowstile.act_as_sql(service) == "SELECT authz.act_as('service', '1')"
     assert rowstile.act_as_sql("o'k") == "SELECT authz.act_as('user', 'o''k')"
+
+
+def test_nobody_has_one_spelling() -> None:
+    """Without an id (None or ''), whatever its type, a principal is nobody, as the database signs it in: one value,
+    so work for nobody runs inside a transaction begun for another spelling of it."""
+    spellings: list[rowstile.Who] = [
+        None,
+        "",
+        ("service", None),
+        ("service", ""),
+        Principal("service"),
+        Principal("bot", ""),
+    ]
+    for who in spellings:
+        p = Principal.of(who)
+        assert (p, str(p), rowstile.act_as_args(who)) == (rowstile.NOBODY, "nobody", (None, None)), who
+    assert Principal.parse("service:") == rowstile.NOBODY
+    with psycopg.connect(libpq(SYNC)) as conn, pgp.transaction(conn, ("service", None)), pgp.transaction(conn, None):
+        assert [r[0] for r in conn.execute(PROJECTS)] == [3]  # (a savepoint: the same principal's)
 
 
 def test_a_job_in_a_plain_function() -> None:
@@ -621,6 +639,38 @@ async def test_a_database_error_that_isnt_a_refusal(app: FastAPI) -> None:
         await autocommit.dispose()
 
 
+def test_a_code_is_read_from_the_hint_alone() -> None:
+    """Postgres's own words may quote the request's input: a code there is none of rowstile's, and the error stays
+    the app's (a 500). A 28000 without code AZ701 (Postgres's own: a login refused when connecting, a role that isn't
+    there) is not the not-signed-in error."""
+    with psycopg.connect(libpq(SYNC)) as conn:
+        with pytest.raises(psycopg.errors.InvalidTextRepresentation) as cast:
+            conn.execute("SELECT 'rowstile help AZ714'::bigint")
+        conn.rollback()
+        with pytest.raises(psycopg.errors.InvalidAuthorizationSpecification) as login:
+            conn.execute("DO $$BEGIN RAISE 'no pg_hba.conf entry' USING ERRCODE = '28000'; END$$")
+    assert (rowstile.error_code(cast.value), rowstile._call_problem(cast.value)) == (None, None)
+    assert (rowstile.sqlstate(login.value), rowstile.not_signed_in(login.value)) == ("28000", False)
+
+
+def test_postgres_own_refusal_in_another_language() -> None:
+    """On a server whose lc_messages isn't English, Postgres's own refusal is told by the function that raised it,
+    not by its words: a refusal still, its table and rule unnamed. Another 42501 (a grant missing) is none."""
+    words = "neue Zeile verletzt Policy für Sicherheit auf Zeilenebene für Tabelle »notes«"
+
+    class Diag:  # psycopg's, as a server in German fills it
+        def __init__(self, function: str) -> None:
+            self.sqlstate, self.message_primary, self.source_function = "42501", words, function
+
+    class Translated(Exception):
+        def __init__(self, function: str) -> None:
+            self.diag = Diag(function)
+
+    refused = rowstile.refusal(Translated("ExecWithCheckOptions"))
+    assert refused and (refused.message, refused.table, refused.command, refused.code) == (words, None, None, "AZ709")
+    assert rowstile.refusal(Translated("aclcheck_error")) is None
+
+
 # Postgres's own words, where no rule's refusal speaks first, read for what refused: an update after which the row
 # would be hidden is the select rule's, and no read back; an upsert of a row the user may not change is the update
 # rule's; MERGE's names no command, since Postgres doesn't say whether the update rule or the delete rule
@@ -630,6 +680,7 @@ def test_postgres_own_refusals_name_the_rule() -> None:
         def refused(sql: LiteralString) -> Refused | None:
             with pytest.raises(psycopg.errors.InsufficientPrivilege) as e, pgp.transaction(conn, 3):
                 conn.execute(sql)
+            assert e.value.diag.source_function == "ExecWithCheckOptions"  # what tells it in any language
             return rowstile.refusal(e.value)
 
         hidden = refused("UPDATE app.notes SET project_id = 2 WHERE id = 4")  # into bo's project

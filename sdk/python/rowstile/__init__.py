@@ -37,16 +37,23 @@ R = TypeVar("R")
 @dataclass(frozen=True)
 class Principal:
     """Who a transaction acts for: a user (type 'user'), another principal type the policy declares
-    (a service, a bot), or nobody (id None: only what `anyone` may see)."""
+    (a service, a bot), or nobody (id None: only what `anyone` may see). Nobody has one spelling: a principal
+    made without an id (None or ''), whatever its type, is NOBODY, as the database signs it in."""
 
     type: str = "user"
     id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            object.__setattr__(self, "type", "user")
+            object.__setattr__(self, "id", None)
 
     @classmethod
     def of(cls, who: Who) -> Principal:
         """42, '42', ('service', 3), a Principal, or None (nobody). A plain id is a user's, whatever it holds:
         'service:3' is the user whose id that is (ids often come from outside: a username, an identity
-        provider's subject), never service 3. Another principal type is named: ('service', 3)."""
+        provider's subject), never service 3. Another principal type is named: ('service', 3). Without an id
+        (None or ''), whatever the type, it is NOBODY."""
         if isinstance(who, Principal):
             return who
         if who is None:
@@ -349,15 +356,10 @@ def _field(errs: list[BaseException], *names: str) -> str | None:
 
 def error_code(exc: BaseException) -> str | None:
     """rowstile's code for a database error (AZ709; `rowstile help AZ709` says what it means): from its HINT,
-    where the runtime puts it, or its message. None for an error rowstile didn't raise."""
-    import re
-
-    errs = _db_error(exc)
-    for text in (_field(errs, "message_hint", "hint"), _field(errs, "message_primary", "message") or str(errs[-1])):
-        m = re.search(r"rowstile help (AZ\d{3})", text or "")
-        if m:
-            return m.group(1)
-    return None
+    where the runtime puts it, and never its message, which may hold the request's own input (Postgres's own
+    words quote a value it couldn't read). None for an error rowstile didn't raise."""
+    m = re.search(r"rowstile help (AZ\d{3})", _field(_db_error(exc), "message_hint", "hint") or "")
+    return m.group(1) if m else None
 
 
 # rowstile's codes for a call the database turned down that is no refusal, and what their pages say to answer
@@ -391,6 +393,8 @@ def sqlstate(exc: BaseException) -> str | None:
     return _field(err, "sqlstate", "pgcode")
 
 
+# the function in Postgres that raises its own row-level security refusals (the error's source function)
+_ROW_CHECK = "ExecWithCheckOptions"
 _UNSEEN = (
     "this user may not see the row as written (the select rule). An insert that reads it back (RETURNING), "
     "an upsert, and an update with a WHERE need to see it."
@@ -412,6 +416,10 @@ def refusal(exc: BaseException) -> Refused | None:
         r'(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"', message
     )
     if code is None and not generic:
+        # the same refusal in another language (the server's lc_messages): the function that raised it says so,
+        # not its words, and which table and rule it was is in those words alone
+        if _field(err, "source_function", "server_source_function") == _ROW_CHECK:
+            return Refused(message)
         return None
     if code in _CALL_PROBLEMS:  # sign in first (AZ714) is a 42501 too, but no refusal: a 401
         return None
@@ -447,9 +455,10 @@ def refusal(exc: BaseException) -> Refused | None:
 
 def not_signed_in(exc: BaseException) -> bool:
     """Whether exc is strict sign-in's error (rowstile help AZ701): a query that needs to know who is asking ran in
-    a transaction nobody signed in to. A login refused (AZ703) and settings changed by hand (AZ702) share its
-    SQLSTATE, 28000, but are no such thing."""
-    return sqlstate(exc) == "28000" and error_code(exc) in (None, "AZ701")
+    a transaction nobody signed in to. Its SQLSTATE, 28000, is shared by a login refused (AZ703), settings changed
+    by hand (AZ702) and Postgres's own refusals to connect (a role that isn't there, pg_hba.conf), which carry no
+    code: none of them is."""
+    return sqlstate(exc) == "28000" and error_code(exc) == "AZ701"
 
 
 def _check_problems(rows: Iterable[tuple[str, str]]) -> list[str]:

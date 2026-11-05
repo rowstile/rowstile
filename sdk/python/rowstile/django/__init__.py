@@ -127,7 +127,7 @@ def _sign_in(execute: _Execute, sql: str, params: object, many: bool, context: d
         signed = getattr(raw, _SIGNED, None)
         if db.atomic_blocks and getattr(db.atomic_blocks[0], "_from_testcase", False):
             signed = _in_a_test(db, raw, who, sql, signed)
-        elif signed is not None and who != signed[0]:
+        elif signed is not None and (who or NOBODY) != signed[0]:
             if not _AROUND.match(sql):
                 raise _signed_in_already(signed[0], who)
         elif who is not None and (signed is None or not signed[1]):
@@ -162,7 +162,7 @@ def _in_a_test(
     owner: tuple[object, Principal] | None = getattr(raw, _BLOCK, None)
     if owner is not None and owner[0] is not block:
         owner = None  # the block it was for is released or rolled back
-    if owner is not None and who != owner[1]:
+    if owner is not None and (who or NOBODY) != owner[1]:
         if not _AROUND.match(sql):
             raise _signed_in_already(owner[1], who)
         return signed
