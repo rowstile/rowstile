@@ -897,7 +897,7 @@ def load_sql(pol: Policy, data: evaluate.Data, principals: bool = True, rows_dec
                         ]
                     elif src.kind == "shared":
                         # to user:* or anyone, the subject is '*', whoever the world's link names; to a link, the
-                        # hash of its token (as authz.share_link() writes it), which the session holds
+                        # hash of its token (as authz.create_link() writes it), which the session holds
                         def subject(s: str, st: str = st, sr: str | None = sr) -> str:
                             if st == "link":
                                 return f"encode(sha256(convert_to({lit(s)}, 'UTF8')), 'hex')"
@@ -940,7 +940,7 @@ def moved(data: evaluate.Data, names: dict[str, str], shift: int, principals: se
 
 
 def hashed(data: evaluate.Data) -> evaluate.Data:
-    """A world with its links' tokens as the database stores them, hashed (as authz.share_link() writes them)."""
+    """A world with its links' tokens as the database stores them, hashed (as authz.create_link() writes them)."""
     return dataclasses.replace(
         data,
         pairs={
