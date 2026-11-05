@@ -610,6 +610,9 @@ def check_settings(path: str, data: Mapping[str, object]) -> None:
             elif not right(value, SETTINGS[table][key]):
                 example = 'tests = ["db/tests/*.authz"]' if key == "tests" else f"{key} = ..."
                 fail(f"{path}: {name} is {SETTINGS[table][key]}: {example}", 2)
+            elif key == "write_after" and isinstance(value, (int, float)) and not value >= 0:  # (nan too)
+                # below 0, the timer would be due at once: the migration written at every save
+                fail(f"{path}: {name} is seconds after the last save, 0 or more (0: never): write_after = 300", 2)
 
     check("", data)
 

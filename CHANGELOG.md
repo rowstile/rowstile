@@ -350,6 +350,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   (`rowstile migrate --tool sql --check --bogus`): it left the last word out, as it does for `rowstile sql`'s
   statement. A number option given digits of another script (`--worlds ²`) is a usage mistake (exit 2), not a
   traceback.
+- `rowstile.toml` refuses a `[migrations] write_after` below 0, which made `rowstile dev` write the migration at
+  every save instead of once you stop editing.
 
 ### Upgrading
 
