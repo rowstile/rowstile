@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from functools import cache
 
 from .parse import Loc, fail
 
@@ -571,6 +572,21 @@ def sql_code(sql: str) -> list[tuple[bool, str]]:
         out.append((True, sql[start:]))
     return out
 
+
+@cache
+def squeeze_sql(sql: str) -> str:
+    """A condition's SQL laid out one way: each run of spaces outside its quotes and comments one space, and none
+    beside a parenthesis or a comma (`exists ( select` is `exists(select`). What a quote holds is what it says:
+    `'a  b'` and `E'it\\'s  b'` keep their spaces. Two conditions that read the same this way are one condition (the
+    review, and the worlds of the reference evaluator, which draw a condition they can't read by its text)."""
+    out: list[str] = []
+    for code, text in sql_code(sql.strip()):
+        out.append(PUNCTUATION_SPACES.sub(r"\1", SPACES.sub(" ", text)) if code else text)
+    return "".join(out)
+
+
+SPACES = re.compile(r"\s+")
+PUNCTUATION_SPACES = re.compile(r" ?([(),]) ?")
 
 # `this.` in a condition: the row the condition is about (not a part of a longer name, nor after a dot)
 THIS = re.compile(rf"(?<![{LETTER}0-9$.\"])this\s*\.\s*(?=[{LETTER}\"])", re.IGNORECASE)
