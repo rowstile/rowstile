@@ -25,6 +25,8 @@
 
 - **Shares die with their row.** Deleting a row, changing its id or truncating its
   table removes the shares on it and to it. <!-- checked: tests/scenario.sql "so it goes with its row"; tests/scenario.sql "share on the old id is gone"; tests/governance.sh "and the shares on its rows go with them"; tests/governance.sh "emptying a table takes the shares to its rows too"; tests/principals.sh "deleting a user deletes the shares to them" -->
+  `TRUNCATE ONLY` on a table others inherit from empties that table alone: the rows stored in the others keep
+  their shares, API keys and pending requests. <!-- checked: tests/children.sh "the shares of the rows stored under it stay, those of its own rows go"; tests/children.sh "and so do the pending requests (one for no doc stays pending)"; tests/children.sh "the keys of the people stored under it stay, those of its own go" -->
   `authz.share` and `authz.break_glass` lock the object and the
   subject, so a concurrent delete can't slip in between. <!-- checked: tests/concurrency.sh "the share waits for the delete, then is refused"; tests/concurrency.sh "no share is left on the deleted id"; tests/concurrency.sh "breaking the glass waits for the delete, then is refused" -->
   A delete, a new id or a `TRUNCATE` in REPEATABLE READ or SERIALIZABLE whose snapshot is older than a

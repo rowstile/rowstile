@@ -2238,12 +2238,22 @@ DROP SCHEMA authz_keep CASCADE;
 -- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION authz_int."user__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_gone text[];
 BEGIN
-  IF TG_OP = 'TRUNCATE' THEN
+  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "cx"."users") THEN   -- the table is empty, and so are those under it
     DELETE FROM authz.shares WHERE object_type = 'user';
     DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = 'user';
     PERFORM authz_int.requests_gone('user', NULL);
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
+    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+    v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'user'
+                                      UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'user' AND s.subject_id <> '*'
+                                      UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'user') g(id)
+                    WHERE NOT EXISTS (SELECT 1 FROM "cx"."users" x WHERE x."id"::text = g.id));
+    PERFORM authz_int.forget_marks('user', v_gone);
+    DELETE FROM authz.shares WHERE object_type = 'user' AND object_id = ANY (v_gone);
+    DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id = ANY (v_gone);
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks('user', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'user' AND object_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
@@ -2266,12 +2276,21 @@ BEGIN
   PERFORM authz_int.requests_gone('user', ARRAY[OLD."id"::text]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
+-- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
+-- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
+-- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
+-- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION authz_int."user__forget_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
     PERFORM authz_int.forget_marks('user', ARRAY(SELECT x."id"::text FROM "cx"."users" x));
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"cx"."users"'::pg_catalog.regclass) THEN
+    PERFORM authz_int.requests_gone('user', ARRAY(
+      SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'user' UNION SELECT r.requester FROM authz.requests r WHERE r.status = 'pending') g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY "cx"."users" x WHERE x."id"::text = g.id)
+        AND NOT EXISTS (SELECT 1 FROM "cx"."users" y WHERE y.tableoid <> '"cx"."users"'::pg_catalog.regclass AND y."id"::text = g.id)));
   END IF;
   RETURN NULL;
 END $f$;
@@ -2297,12 +2316,22 @@ END $tr$;
 -- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION authz_int."bot__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_gone text[];
 BEGIN
-  IF TG_OP = 'TRUNCATE' THEN
+  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "cx"."bots") THEN   -- the table is empty, and so are those under it
     DELETE FROM authz.shares WHERE object_type = 'bot';
     DELETE FROM authz.shares WHERE subject_type = 'bot' AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = 'bot';
     PERFORM authz_int.requests_gone('bot', NULL);
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
+    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+    v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'bot'
+                                      UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'bot' AND s.subject_id <> '*'
+                                      UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'bot') g(id)
+                    WHERE NOT EXISTS (SELECT 1 FROM "cx"."bots" x WHERE x."id"::text = g.id));
+    PERFORM authz_int.forget_marks('bot', v_gone);
+    DELETE FROM authz.shares WHERE object_type = 'bot' AND object_id = ANY (v_gone);
+    DELETE FROM authz.shares WHERE subject_type = 'bot' AND subject_id = ANY (v_gone);
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks('bot', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'bot' AND object_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
@@ -2325,12 +2354,21 @@ BEGIN
   PERFORM authz_int.requests_gone('bot', ARRAY[OLD."id"::text]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
+-- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
+-- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
+-- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
+-- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION authz_int."bot__forget_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
     PERFORM authz_int.forget_marks('bot', ARRAY(SELECT x."id"::text FROM "cx"."bots" x));
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"cx"."bots"'::pg_catalog.regclass) THEN
+    PERFORM authz_int.requests_gone('bot', ARRAY(
+      SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'bot') g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY "cx"."bots" x WHERE x."id"::text = g.id)
+        AND NOT EXISTS (SELECT 1 FROM "cx"."bots" y WHERE y.tableoid <> '"cx"."bots"'::pg_catalog.regclass AND y."id"::text = g.id)));
   END IF;
   RETURN NULL;
 END $f$;
@@ -2356,12 +2394,22 @@ END $tr$;
 -- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION authz_int."team__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_gone text[];
 BEGIN
-  IF TG_OP = 'TRUNCATE' THEN
+  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "cx"."teams") THEN   -- the table is empty, and so are those under it
     DELETE FROM authz.shares WHERE object_type = 'team';
     DELETE FROM authz.shares WHERE subject_type = 'team' AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = 'team';
     PERFORM authz_int.requests_gone('team', NULL);
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
+    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+    v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'team'
+                                      UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'team' AND s.subject_id <> '*'
+                                      UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'team') g(id)
+                    WHERE NOT EXISTS (SELECT 1 FROM "cx"."teams" x WHERE ROW(x."org_id"::bigint, x."slug"::text)::text = g.id));
+    PERFORM authz_int.forget_marks('team', v_gone);
+    DELETE FROM authz.shares WHERE object_type = 'team' AND object_id = ANY (v_gone);
+    DELETE FROM authz.shares WHERE subject_type = 'team' AND subject_id = ANY (v_gone);
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks('team', ARRAY(SELECT ROW(o."org_id"::bigint, o."slug"::text)::text FROM old_rows o EXCEPT SELECT ROW(n."org_id"::bigint, n."slug"::text)::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'team' AND object_id IN (SELECT ROW(o."org_id"::bigint, o."slug"::text)::text FROM old_rows o EXCEPT SELECT ROW(n."org_id"::bigint, n."slug"::text)::text FROM new_rows n);
@@ -2384,12 +2432,21 @@ BEGIN
   PERFORM authz_int.requests_gone('team', ARRAY[ROW(OLD."org_id"::bigint, OLD."slug"::text)::text]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
+-- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
+-- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
+-- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
+-- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION authz_int."team__forget_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
     PERFORM authz_int.forget_marks('team', ARRAY(SELECT ROW(x."org_id"::bigint, x."slug"::text)::text FROM "cx"."teams" x));
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"cx"."teams"'::pg_catalog.regclass) THEN
+    PERFORM authz_int.requests_gone('team', ARRAY(
+      SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'team') g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY "cx"."teams" x WHERE ROW(x."org_id"::bigint, x."slug"::text)::text = g.id)
+        AND NOT EXISTS (SELECT 1 FROM "cx"."teams" y WHERE y.tableoid <> '"cx"."teams"'::pg_catalog.regclass AND ROW(y."org_id"::bigint, y."slug"::text)::text = g.id)));
   END IF;
   RETURN NULL;
 END $f$;
@@ -2415,12 +2472,22 @@ END $tr$;
 -- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION authz_int."folder__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_gone text[];
 BEGIN
-  IF TG_OP = 'TRUNCATE' THEN
+  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "cx"."folders") THEN   -- the table is empty, and so are those under it
     DELETE FROM authz.shares WHERE object_type = 'folder';
     DELETE FROM authz.shares WHERE subject_type = 'folder' AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = 'folder';
     PERFORM authz_int.requests_gone('folder', NULL);
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
+    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+    v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'folder'
+                                      UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'folder' AND s.subject_id <> '*'
+                                      UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'folder') g(id)
+                    WHERE NOT EXISTS (SELECT 1 FROM "cx"."folders" x WHERE ROW(x."org_id"::bigint, x."id"::bigint)::text = g.id));
+    PERFORM authz_int.forget_marks('folder', v_gone);
+    DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = ANY (v_gone);
+    DELETE FROM authz.shares WHERE subject_type = 'folder' AND subject_id = ANY (v_gone);
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks('folder', ARRAY(SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o EXCEPT SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id IN (SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o EXCEPT SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n);
@@ -2443,12 +2510,21 @@ BEGIN
   PERFORM authz_int.requests_gone('folder', ARRAY[ROW(OLD."org_id"::bigint, OLD."id"::bigint)::text]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
+-- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
+-- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
+-- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
+-- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION authz_int."folder__forget_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
     PERFORM authz_int.forget_marks('folder', ARRAY(SELECT ROW(x."org_id"::bigint, x."id"::bigint)::text FROM "cx"."folders" x));
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"cx"."folders"'::pg_catalog.regclass) THEN
+    PERFORM authz_int.requests_gone('folder', ARRAY(
+      SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'folder') g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY "cx"."folders" x WHERE ROW(x."org_id"::bigint, x."id"::bigint)::text = g.id)
+        AND NOT EXISTS (SELECT 1 FROM "cx"."folders" y WHERE y.tableoid <> '"cx"."folders"'::pg_catalog.regclass AND ROW(y."org_id"::bigint, y."id"::bigint)::text = g.id)));
   END IF;
   RETURN NULL;
 END $f$;
@@ -6699,8 +6775,11 @@ END $f$;
 CREATE FUNCTION authz_int."user__keys_gone"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  IF TG_OP = 'TRUNCATE' THEN
+  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "cx"."users") THEN   -- the table is empty, and so are those under it
     PERFORM authz_int.keys_gone('user', NULL);
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there, and keep their keys
+    PERFORM authz_int.keys_gone('user', ARRAY(SELECT k.user_id FROM authz.api_keys k WHERE k.principal_type = 'user'
+                                              AND NOT EXISTS (SELECT 1 FROM "cx"."users" x WHERE x."id"::text = k.user_id)));
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.keys_gone('user', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
   ELSE
@@ -6715,11 +6794,12 @@ BEGIN
   RETURN NULL;
 END $f$;
 -- before TRUNCATE empties the table: with a snapshot older than a key made for one of its rows, fail to serialize
+-- (the keys go after it, of the rows that are gone: TRUNCATE ONLY keeps those of the tables under it)
 CREATE FUNCTION authz_int."user__keys_gone_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.keys_gone('user', ARRAY(SELECT x."id"::text FROM "cx"."users" x));
+    PERFORM authz_int.forget_marks('user', ARRAY(SELECT x."id"::text FROM "cx"."users" x));
   END IF;
   RETURN NULL;
 END $f$;
@@ -6745,8 +6825,11 @@ END $tr$;
 CREATE FUNCTION authz_int."bot__keys_gone"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  IF TG_OP = 'TRUNCATE' THEN
+  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "cx"."bots") THEN   -- the table is empty, and so are those under it
     PERFORM authz_int.keys_gone('bot', NULL);
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there, and keep their keys
+    PERFORM authz_int.keys_gone('bot', ARRAY(SELECT k.user_id FROM authz.api_keys k WHERE k.principal_type = 'bot'
+                                              AND NOT EXISTS (SELECT 1 FROM "cx"."bots" x WHERE x."id"::text = k.user_id)));
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.keys_gone('bot', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
   ELSE
@@ -6761,11 +6844,12 @@ BEGIN
   RETURN NULL;
 END $f$;
 -- before TRUNCATE empties the table: with a snapshot older than a key made for one of its rows, fail to serialize
+-- (the keys go after it, of the rows that are gone: TRUNCATE ONLY keeps those of the tables under it)
 CREATE FUNCTION authz_int."bot__keys_gone_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.keys_gone('bot', ARRAY(SELECT x."id"::text FROM "cx"."bots" x));
+    PERFORM authz_int.forget_marks('bot', ARRAY(SELECT x."id"::text FROM "cx"."bots" x));
   END IF;
   RETURN NULL;
 END $f$;

@@ -148,6 +148,28 @@ same "the table that inherits from the people's has the row trigger that deletes
 PSQL -c "UPDATE ch.people SET id = 111 WHERE id = 11" -c "DELETE FROM ch.people WHERE id = 12" -c "UPDATE ch.people SET name = 'still' WHERE id = 13"
 same "... so a person stored there loses their keys with a new id, and one above with their row; one renamed there keeps them" "$(keys person)" "13"
 
+echo "-- TRUNCATE ONLY a table others inherit from: it empties that table alone"
+# docs 2 is stored in ch.docs, 13 in the table that inherits, 21 in the one made since; 999 is no doc
+as 1 -c "SELECT authz.share('doc', 2, 'editor', 'user', 2)" -c "SELECT authz.share('doc', 13, 'editor', 'user', 2)" >/dev/null
+as 3 -c "SELECT authz.request_access('doc', '2', 'editor', 'to read it')" -c "SELECT authz.request_access('doc', '13', 'editor', 'to read it')" \
+     -c "SELECT authz.request_access('doc', '999', 'editor', 'to read it')" >/dev/null
+PSQL -c "INSERT INTO ch.people VALUES (14, 'above')" -c "INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash) VALUES ('14', 'person', 'h', 'ak_', 'h8')"
+docshares() { echo "SELECT coalesce(string_agg(object_id, ' ' ORDER BY object_id::int), '') FROM authz.shares WHERE object_type = 'doc'"; }
+pending() { echo "SELECT coalesce(string_agg(object_id, ' ' ORDER BY object_id::int), '') FROM authz.requests WHERE object_type = 'doc' AND status = 'pending'"; }
+for level in "READ COMMITTED" "REPEATABLE READ"; do
+  same "TRUNCATE ONLY ch.docs ($level): the shares of the rows stored under it stay, those of its own rows go" \
+    "$(PSQL -c "BEGIN ISOLATION LEVEL $level" -c "TRUNCATE ONLY ch.docs" -c "$(docshares)" -c "ROLLBACK")" "13 21"
+  same "... and so do the pending requests (one for no doc stays pending)" \
+    "$(PSQL -c "BEGIN ISOLATION LEVEL $level" -c "TRUNCATE ONLY ch.docs" -c "$(pending)" -c "ROLLBACK")" "13 999"
+  same "TRUNCATE ONLY ch.people ($level): the keys of the people stored under it stay, those of its own go" \
+    "$(PSQL -c "BEGIN ISOLATION LEVEL $level" -c "TRUNCATE ONLY ch.people" -c "SELECT coalesce(string_agg(user_id, ' ' ORDER BY user_id), '') FROM authz.api_keys WHERE principal_type = 'person'" -c "ROLLBACK")" "13"
+done
+same "TRUNCATE ch.docs, the tables under it too: every share and pending request of docs goes" \
+  "$(PSQL -c "BEGIN" -c "TRUNCATE ch.docs" -c "SELECT '[' || ($(docshares)) || '|' || ($(pending)) || ']'" -c "ROLLBACK")" "[|]"
+same "... and of people, every key" \
+  "$(PSQL -c "BEGIN" -c "TRUNCATE ch.people" -c "SELECT count(*) FROM authz.api_keys WHERE principal_type = 'person'" -c "ROLLBACK")" 0
+PSQL -c "DELETE FROM ch.people WHERE id = 14" -c "UPDATE authz.requests SET status = 'cancelled' WHERE status = 'pending'"
+
 echo "-- trees whose tables have no rules, written directly through what is under them (posts read them)"
 # Postgres runs a table's statement triggers only for statements on it, and those keep the trees, the shares and
 # the audit current: each partition, and each table that inherits, has them too. The app role is given these tables

@@ -224,6 +224,7 @@ class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, Li
         fn = f"authz_int.{q(t.name + '__forget')}"
         fn_row = f"authz_int.{q(t.name + '__forget_id')}"
         fn_trunc = f"authz_int.{q(t.name + '__forget_all')}"
+        regclass = f"{lit(tbl)}::pg_catalog.regclass"
         name = lit(t.name)
         gone = f"SELECT {self.key_text(t, 'o')} FROM old_rows o EXCEPT SELECT {self.key_text(t, 'n')} FROM new_rows n"
         moved = trigger_if_partitioned(
@@ -231,16 +232,31 @@ class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, Li
             f"CREATE TRIGGER {q('authz_' + t.name + '_forget_moved')} AFTER UPDATE ON {tbl} "
             f"REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn}()",
         )
+        # the ids a pending request names: its object's, and for users its requester's too (requests_gone)
+        requested = (
+            f"SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = {name}"
+            + (" UNION SELECT r.requester FROM authz.requests r WHERE r.status = 'pending'" if t.name == "user" else "")
+        )
         return f"""-- shares on {t.name} rows that are gone, or whose id changed, are removed (and their marks: forget_marks), and
 -- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_gone text[];
 BEGIN
-  IF TG_OP = 'TRUNCATE' THEN
+  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM {tbl}) THEN   -- the table is empty, and so are those under it
     DELETE FROM authz.shares WHERE object_type = {name};
     DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = {name};
     PERFORM authz_int.requests_gone({name}, NULL);
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
+    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+    v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = {name}
+                                      UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = {name} AND s.subject_id <> '*'
+                                      UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = {name}) g(id)
+                    WHERE NOT EXISTS (SELECT 1 FROM {tbl} x WHERE {self.key_text(t, "x")} = g.id));
+    PERFORM authz_int.forget_marks({name}, v_gone);
+    DELETE FROM authz.shares WHERE object_type = {name} AND object_id = ANY (v_gone);
+    DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id = ANY (v_gone);
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks({name}, ARRAY({gone}));
     DELETE FROM authz.shares WHERE object_type = {name} AND object_id IN ({gone});
@@ -263,12 +279,21 @@ BEGIN
   PERFORM authz_int.requests_gone({name}, ARRAY[{self.key_text(t, "OLD")}]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
+-- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
+-- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
+-- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
+-- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION {fn_trunc}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
     PERFORM authz_int.forget_marks({name}, ARRAY(SELECT {self.key_text(t, "x")} FROM {tbl} x));
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = {regclass}) THEN
+    PERFORM authz_int.requests_gone({name}, ARRAY(
+      SELECT g.id FROM ({requested}) g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY {tbl} x WHERE {self.key_text(t, "x")} = g.id)
+        AND NOT EXISTS (SELECT 1 FROM {tbl} y WHERE y.tableoid <> {regclass} AND {self.key_text(t, "y")} = g.id)));
   END IF;
   RETURN NULL;
 END $f$;
