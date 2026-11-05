@@ -354,6 +354,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   every save instead of once you stop editing.
 - The command run from the source (`core/cli/rowstile`) on a Python older than 3.11 says it needs 3.11 or newer,
   and exits 2, where it stopped with a traceback.
+- Ctrl-C stops any command with `stopped` and exit 130: one that reads no database (a long `rowstile prove`,
+  `review`, `migrate`), or one still connecting, printed a traceback, as did `rowstile dev` stopped in its first
+  pass. `rowstile dev` ends with 0 on Ctrl-C whenever it comes, as it did once watching; `dev --once` with 130.
 
 ### Upgrading
 
