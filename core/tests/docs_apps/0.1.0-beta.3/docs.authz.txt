@@ -1,0 +1,104 @@
+-- docs.authz: who can do what in the example docs app.
+--
+-- type      maps a kind of thing to one of your tables
+-- relation  name : who = where the link lives
+--             = column                       a column on this table
+--             = table(this_col -> who_col)   rows in another table
+--             shared                         shares people make with authz.share()
+--           Declare a relation again to add another source.
+--           "member : team#member" on a team means sub-teams' members count too.
+-- can       a permission: or, and, not, parentheses,
+--             rel.perm   follow a relation (parent.view = "view on my parent")
+--             {sql}      any SQL condition on this row (columns, subqueries, now(), ...)
+--           "or rel.perm" with a relation to the same type inherits through it,
+--           across every source of that relation, as deep as it goes;
+--           "(rel.perm and {cond})" says where it stops. Such conditions may read
+--           other tables, but not the clock or the current user.
+-- rules     which permission each command on a table needs
+--             update cols : ...        changing these columns needs this, on the row before
+--             update cols after : ...  ...and this, on the row after (e.g. where it moves to)
+-- invariants  what must never happen: checked by the tests and by authz.check_invariants()
+-- test      checks of the data already there, which rowstile test and rowstile dev run (never apply)
+
+app role app_user
+
+type user = app.users
+  -- support: an org admin may view the app as any member of their org (read-only, audited)
+  can impersonate = {exists (select 1 from app.org_members a join app.org_members b on a.org_id = b.org_id
+              where a.user_id = authz.uid() and a.role = 'admin' and b.user_id = this.id)}
+
+type org = app.orgs
+  member : user = app.org_members(org_id -> user_id)
+  admin  : user = app.org_members(org_id -> user_id) where {role = 'admin'}
+
+type team = app.teams
+  member : user        = app.team_members(team_id -> user_id)
+  member : team#member = app.teams(parent_id -> id)  -- members of sub-teams count too
+
+type folder = app.folders
+  org         : org         = org_id
+  parent      : folder      = parent_id
+  linked_into : folder      = app.folder_links(folder_id -> parent_id)  -- also shown inside these
+  owner       : user        = owner_id
+  viewer      : user, team#member, org#member shared
+  viewer      : team#member = app.folder_team_access(folder_id -> team_id)
+  editor      : user, team#member shared
+  editor      : team#member = app.folder_team_access(folder_id -> team_id) where {access = 'edit'}
+
+  can share = owner or org.admin or (parent.share and {inherit})
+  can edit  = share or editor or (parent.edit and {inherit})
+  can view  = edit or viewer or (parent.view and {inherit})
+           or linked_into.view  -- links pass on view, not edit
+  -- emergency access: any org member may give themselves access for an hour (authz.break_glass),
+  -- which is audited and announced on the authz_alerts channel
+  can break_glass = org.member
+
+type file = app.files
+  folder : folder = folder_id
+  owner  : user   = owner_id
+  viewer : user, team#member shared
+
+  can share = owner or folder.share
+  can edit  = share or folder.edit
+  can view  = edit or viewer
+           or (folder.view and not {confidential})
+
+-- what tokens may do (API keys, JWTs); a transaction without scopes may do everything
+scope read  = select, view
+scope files = app.files.select, app.files.update, file.view, file.edit
+
+rules app.folders
+  select                               : view
+  insert                               : parent.edit and owner
+  update                               : edit
+  update parent_id after               : parent.edit or ({parent_id is null} and share)
+  update id, owner_id, org_id, inherit : share
+  delete                               : share
+
+rules app.files
+  select                            : view
+  insert                            : folder.edit and owner
+  update                            : edit
+  update folder_id after            : folder.edit
+  update id, owner_id, confidential : share
+  delete                            : edit
+
+invariants
+  never folder: share and not org.member  -- only members of its org manage a folder
+
+test
+  user 1 can edit file 11      -- alice owns Engineering
+  user 1 cannot view file 13   -- alice's ownership stops at Secrets
+  user 2 can view file 12      -- bob: the Backend team can view Secrets
+  user 2 cannot edit file 12
+  user 2 can edit file 11      -- bob: Backend sits inside Engineering, which edits Engineering
+  user 7 can view file 12      -- gina: Platform sits inside Backend
+  user 7 can edit file 11      -- ...which sits inside Engineering
+  user 7 cannot view file 10
+  user 5 can edit file 12      -- erin is an Acme admin: every Acme folder
+  user 5 can view file 14
+  user 6 cannot view folder 1  -- frank is in Globex
+  user 6 can view file 15
+  user 6 can edit file 16
+  user 5 can view file 16      -- erin: Joint project is linked into Company
+  user 5 cannot edit file 16   -- links pass on view rights only

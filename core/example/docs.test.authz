@@ -5,6 +5,7 @@ test "a folder's owner edits what is inside, and others see nothing"
   given ann = {INSERT INTO app.users (id, name) VALUES (9001, 'Ann') RETURNING id}
   given bo = {INSERT INTO app.users (id, name) VALUES (9002, 'Bo') RETURNING id}
   given acme = {INSERT INTO app.orgs (id, name) VALUES (9001, 'Acme') RETURNING id}
+  given m = {INSERT INTO app.org_members (org_id, user_id, role) VALUES ($acme, $ann, 'member') RETURNING org_id}
   given top = {INSERT INTO app.folders (org_id, owner_id, name) VALUES ($acme, $ann, 'Top') RETURNING id}
   given sub = {INSERT INTO app.folders (org_id, parent_id, name) VALUES ($acme, $top, 'Sub') RETURNING id}
   given f = {INSERT INTO app.files (folder_id, name) VALUES ($sub, 'plan.txt') RETURNING id}
@@ -20,6 +21,7 @@ test "a folder's owner edits what is inside, and others see nothing"
 test "turning inheritance off stops it there"
   given ann = {INSERT INTO app.users (id, name) VALUES (9001, 'Ann') RETURNING id}
   given acme = {INSERT INTO app.orgs (id, name) VALUES (9001, 'Acme') RETURNING id}
+  given m = {INSERT INTO app.org_members (org_id, user_id, role) VALUES ($acme, $ann, 'member') RETURNING org_id}
   given top = {INSERT INTO app.folders (org_id, owner_id, name) VALUES ($acme, $ann, 'Top') RETURNING id}
   given sub = {INSERT INTO app.folders (org_id, parent_id, name, inherit) VALUES ($acme, $top, 'Private', false) RETURNING id}
   user $ann can view folder $top

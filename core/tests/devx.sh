@@ -49,7 +49,7 @@ case "$out" in "0/"*) bad "named tests" "$out";; *) [ "${out%/*}" = "${out#*/}" 
   ok "... and leave no rows behind" || bad "named tests left rows"
 sed 's/user $bo cannot view file $f/user $bo can view file $f/' example/docs.test.authz > "$T/t.authz"
 out=$(rows "$T/t.authz" | awk -F'\t' '$3 == "f" {print $2 ": " $4}')
-case "$out" in "t.authz line 13: user \$bo can view file \$f"*"does not hold view on file"*) ok "a failing check names its file and line, and explains itself";;
+case "$out" in "t.authz line 14: user \$bo can view file \$f"*"does not hold view on file"*) ok "a failing check names its file and line, and explains itself";;
   *) bad "failing check" "$out";; esac
 sed 's/as user $bo refused {INSERT/as user $bo allowed {INSERT/' example/docs.test.authz > "$T/t.authz"
 out=$(rows "$T/t.authz" | awk -F'\t' '$3 == "f" {print $4}')
@@ -695,7 +695,7 @@ cp "$T/p/tests/docs.authz" "$T/docs.keep"
 sed -i 's/user $bo cannot view file $f/user $bo can view file $f/' "$T/p/tests/docs.authz"
 devonce
 case "$(cat "$T/dev.log")" in *"         ok    "*) bad "dev lists the checks that pass with the one that fails" "$(cat "$T/dev.log")";;
-  *"  x    1 of "*" checks fail"*"FAIL  tests/docs.authz line 13: user \$bo can view file \$f"*"does not hold view on file"*)
+  *"  x    1 of "*" checks fail"*"FAIL  tests/docs.authz line 14: user \$bo can view file \$f"*"does not hold view on file"*)
     [ $rc -eq 1 ] && ok "dev on a failing test: which check, its line and why, not the ones that pass; exit 1" || bad "dev on a failing test: exit" "$rc";;
   *) bad "dev on a failing test" "$(cat "$T/dev.log")";; esac
 cp "$T/docs.keep" "$T/p/tests/docs.authz"
