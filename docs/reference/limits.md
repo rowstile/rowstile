@@ -133,6 +133,9 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   that reads nothing, however its name is written, or an operator Postgres doesn't have for its own types) is
   called as a function per row the rules check, which costs more on large reads than the same test written as
   a relation.
+  One exception: a function or operator of the app's that has a built-in's name, in a schema on the search path
+  (an overload of `lower`, an `=` for one of the app's types), is read as the built-in: written into the rules
+  as it is, it runs there with the app role's privileges. <!-- unchecked: the policy's text can't tell it from the built-in, and only the roles applying trusts (the owner, superusers) may create in the search path's schemas (AZ612) -->
 - **A write rule sees the tables as the statement found them.** Postgres checks each row an `INSERT` or
   `UPDATE` writes as it writes it, and a rule's condition, relation or permission reads the tables as they were
   before the statement: the statement's other rows aren't there for it, those of a `WITH` query in the same
