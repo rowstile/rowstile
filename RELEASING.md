@@ -236,7 +236,9 @@ pages and the playground are all built from one commit of `main`. A **site tag**
   it (`docs/comparison.md` links each, `site/pages.mjs` describes it), and the workflow refuses the blog tag.
 - `site/source.mjs` holds the rule and `site/source_test.mjs` checks it; `node site/source.mjs site-vN` (or
   `blog-vN`) says whether a tag deploys, and what from. The site's links to files in the two folders go to the
-  blog tag.
+  blog tag. A post's or a comparison page's link to any other file goes to the site tag's, the files the site is
+  built from, which may be older than the post: to show code as the post read it, at a line, link it at a commit
+  (`https://github.com/rowstile/rowstile/blob/<commit>/core/...#L120`), which the site leaves as it is.
 - The release workflow doesn't run on a site or blog tag, which publish no package (`Delivery` in
   `core/tests/unit_test.py` checks that no pattern of its own matches one).
 - What the comparison pages say of other projects is quoted from their documentation, with the day it was

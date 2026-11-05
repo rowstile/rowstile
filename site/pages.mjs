@@ -14,7 +14,9 @@ export const GITHUB = "https://github.com/rowstile/rowstile";
 /** The repository's files themselves, as GitHub serves them. */
 const RAW = "https://raw.githubusercontent.com/rowstile/rowstile";
 // Where a link to a file on GitHub points: the tag the site is built from, and the blog tag whose articles and
-// comparison pages it shows (site.yml sets both, from site/source.mjs). A build of a branch links to main.
+// comparison pages it shows, for a file in those two folders (site.yml sets both, from site/source.mjs). An article's
+// link to any other file goes to the site's tag, whose files are those checked out (RELEASING.md). A build of a
+// branch links to main.
 const CODE = process.env.SITE_CODE || "main";
 const CONTENT = process.env.SITE_CONTENT || CODE;
 
