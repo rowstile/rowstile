@@ -264,6 +264,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   if` condition is refused when compiling, with its line (AZ212). Such a policy failed to apply with `duplicate key
   value violates unique constraint "shared_relations_pkey"` when the permissions differed, and otherwise kept only
   the first line's `shared if`.
+- A share with `anyone` is stored with the id `*`, whatever id `authz.share` was given: sharing with `''` and with
+  `'*'` makes one share, `authz.unshare` with either id removes it, and `authz.who` counts one made with `''`.
+  Applying gives the shares with anyone stored before the id `*`, two of one share kept once.
 
 ### Upgrading
 

@@ -984,6 +984,27 @@ out=$(python3 cli/rowstile_cli.py --db "dbname=$SDB" apply "$T/wide.authz" 2>&1)
   SQ -c "SELECT authz.share('folder', '1', 'viewer', 'user', '2')" -c "SELECT authz.share('folder', '1', 'viewer', 'team', '10', 'member')" \
      -c "SELECT authz.share('folder', '1', 'viewer', 'user', '*')" -c "SELECT authz.share('folder', '1', 'viewer', 'anyone', '')" >/dev/null ||
   bad "sharing with user:* and anyone" "$out"
+# anyone is one subject, whatever id a share names it with: stored as '*', and unshared with any id
+anyone_ids() { psql -X -q -At -d "$SDB" -c "SELECT string_agg(quote_literal(subject_id), ' ' ORDER BY object_id, subject_id COLLATE \"C\") FROM authz.shares WHERE subject_type = 'anyone'"; }
+public() { psql -X -q -At -d "$SDB" -c "SELECT authz.can('folder', '1', 'view')"; }
+everyone() { SQ -c "SELECT (SELECT count(*) FROM authz.who('folder', '1', 'view')) = (SELECT count(*) FROM app.users)"; }
+got="$(anyone_ids) $(everyone)"
+got="$got / $(SQ -c "SELECT authz.share('folder', '1', 'viewer', 'anyone', '*')" >/dev/null && echo "$(anyone_ids) $(public)")"
+got="$got / $(SQ -c "SELECT authz.unshare('folder', '1', 'viewer', 'anyone', 'x')" >/dev/null && echo "$(anyone_ids) $(public)")"
+[ "$got" = "'*' t / '*' t /  f" ] &&
+  ok "a share with anyone is one share, whatever id it is made with: authz.who counts it, and it is unshared with any id" ||
+  bad "anyone's ids" "$got"
+# ... and shares stored with another id before take '*' when applying, the one with '*' staying
+SQ -c "SELECT authz.share('folder', '1', 'viewer', 'anyone', '')" -c "ALTER TABLE authz.shares DISABLE TRIGGER authz_shares_canon" \
+   -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES
+         ('folder', '1', 'viewer', 'anyone', ''), ('folder', '2', 'viewer', 'anyone', ''), ('folder', '2', 'viewer', 'anyone', 'x')" >/dev/null
+before=$(anyone_ids)
+out=$(python3 cli/rowstile_cli.py --db "dbname=$SDB" apply "$T/wide.authz" --force 2>&1)
+got=$(psql -X -q -At -d "$SDB" -c "SELECT string_agg(object_id || ':' || subject_id, ' ' ORDER BY object_id) FROM authz.shares WHERE subject_type = 'anyone'")
+[ "$before" = "'' '*' '' 'x'" ] && [ "$out" = "$T/wide.authz: applied" ] && [ "$got" = "1:* 2:*" ] &&
+  ok "applying gives shares with anyone stored with another id the id '*', two of one share kept once" ||
+  bad "anyone's ids stored before" "$before, then $got: $out"
+SQ -c "DELETE FROM authz.shares WHERE object_id = '2' AND subject_type = 'anyone'" >/dev/null
 out=$(python3 cli/rowstile_cli.py --db "dbname=$SDB" apply example/docs.authz 2>&1)
 [ "$out" = "WARNING: 2 shares are for relations this policy does not declare as shared; they are kept, but grant nothing
 example/docs.authz: applied" ] && ok "applying warns of the shares with user:* and anyone a policy no longer takes, not of a user's or a team's" ||
