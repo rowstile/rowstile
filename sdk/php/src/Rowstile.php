@@ -48,8 +48,9 @@ final class Rowstile
         .'AND c.oid = pg_catalog.to_regclass(pg_catalog.quote_ident(CAST(? AS text)))), CAST(? AS text)) AS tbl) t';
 
     /**
-     * Who the code running now acts for (a request, a job, actingAs), or null when nothing set it: a transaction
-     * begun then isn't signed in, and the database refuses what needs to know who asks (AZ701).
+     * Who the code running now acts for (a request, a job, actingAs), or null when nothing set it (a migration, an
+     * artisan command). Then a Laravel connection signs nothing in: as the app role, the database refuses what needs
+     * to know who asks (AZ701). transaction() signs in as nobody then.
      */
     public static function current(): ?Principal
     {
