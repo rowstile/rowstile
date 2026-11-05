@@ -18,8 +18,8 @@ the tables; everything else here is plain SQL.
 ## Behind a pooler
 
 rowstile signs in each transaction, so a pooler in transaction mode works for the app's connection. Every
-night both SDKs' conformance suites run with the app's connection through PgBouncer 1.26 in transaction mode,
-keeping prepared statements ([`integrations/pooler.sh`](../integrations/pooler.sh)); the owner and the change feed connect directly.
+night every conformance suite (each SDK's, and the sync engines') runs with the app's connection through PgBouncer
+1.26 in transaction mode, keeping prepared statements ([`integrations/pooler.sh`](../integrations/pooler.sh)); the owner and the change feed connect directly.
 Supavisor (Supabase's pooler) was tried by hand, before 0.1.0-alpha.1: [Managed Postgres](managed-postgres.md).
 Session mode works as plain connections do. Statement mode can't: signing in and the queries after it are one
 transaction, and it refuses transactions.
