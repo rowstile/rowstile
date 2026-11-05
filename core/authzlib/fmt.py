@@ -19,7 +19,7 @@ import dataclasses
 import re
 from typing import NamedTuple, TypeAlias
 
-from .parse import Scanner, Step, meaning_lines
+from .parse import BOM, Scanner, Step, meaning_lines
 
 TOP = re.compile(r"^(type|rules|scope|caveat|app\s+role|sync|include|invariants|test)\b")
 CONT = re.compile(r"^(or|and|where|if)\b")
@@ -91,7 +91,8 @@ def kind_of(code: str, block: str | None) -> str:
 
 
 def format_policy(text: str) -> str:
-    lines = text.replace("\r\n", "\n").split("\n")
+    # (a byte order mark is left out, as the parser leaves it out)
+    lines = text.removeprefix(BOM).replace("\r\n", "\n").split("\n")
     items: list[Line] = []
     block: str | None = None
     reading = Scanner()  # the lines as the parser reads them: what is a comment, which braces are open

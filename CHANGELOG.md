@@ -134,6 +134,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `authz.connection_check()` reports a login that is a member of a table's owner without inheriting its rights:
   it may `SET ROLE` to the owner. It also reports a login that switched to the app role with `SET ROLE` and owns a
   table with rules, or is a member of its owner: `RESET ROLE` leaves the rules.
+- `rowstile fmt` lays out a file that starts with a byte order mark as any other, and leaves the mark out. Before,
+  it didn't line up the relations and permissions of the file's first block.
 
 ### Upgrading
 
