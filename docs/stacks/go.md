@@ -21,7 +21,9 @@ rowstile init                                 # once your migrations made the ta
 
 The SDK needs pgx v5 and nothing else, and Go 1.25 or newer (its `go.mod`; the suite runs on Go 1.26). Its
 package is `rowstile` (`import rowstile "github.com/rowstile/rowstile/sdk/go"`), and its test helpers are
-`rowstiletest`.
+`rowstiletest`. Its versions will be the repository's tags `sdk/go/vX.Y.Z`, and no release has made one yet: `go
+get` takes the newest commit of `main`, which may be ahead of the command and the database you have. To match a
+release, name the commit its tag `vX.Y.Z` is on: `go get github.com/rowstile/rowstile/sdk/go@<commit>`.
 
 `init` finds goose's migrations, and writes `rowstile.toml` for them; the line that says where the policy's names
 go (`[clients]`) is yours to add. The conformance app's, with its own name for the variable that holds the
@@ -57,6 +59,8 @@ doesn't show it.
 
 `rowstile.Tx(ctx, pool, fn)` runs `fn` in a transaction signed in as whoever `ctx` acts for, and commits it if
 `fn` returns nil. The sign-in lasts the transaction alone, so pools and PgBouncer in transaction mode are safe.
+A pooler that keeps no prepared statements needs pgx to make none ([Behind a
+pooler](../operations.md#behind-a-pooler)).
 sqlc's code runs on the transaction it gives (`db.New(tx)`: sqlc's `DBTX` is what a `pgx.Tx` is). A list shows
 only the user's rows:
 

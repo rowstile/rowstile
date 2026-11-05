@@ -223,7 +223,8 @@ func login(ctx context.Context, tx pgx.Tx, sql, secret string) (context.Context,
 
 // Tx runs fn in a transaction signed in as whoever ctx acts for (nobody if nothing set it), and commits it if fn
 // returns nil. fn's ctx acts for them too. The sign-in lasts the transaction alone, so pools and poolers in
-// transaction mode are safe. A database error (fn's, or the commit's) comes back as rowstile's when it is one:
+// transaction mode are safe (one that keeps no prepared statements needs pgx to make none:
+// default_query_exec_mode=exec). A database error (fn's, or the commit's) comes back as rowstile's when it is one:
 // *Refused, *NotSignedIn, *CallError; NotFound comes from Expect.
 func Tx(ctx context.Context, db Beginner, fn func(ctx context.Context, tx pgx.Tx) error) error {
 	who, _ := Current(ctx)
