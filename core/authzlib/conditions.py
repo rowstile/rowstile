@@ -8,7 +8,8 @@ database. Any other condition (a subquery, a function, arithmetic) is a set of r
 which (evaluate.Data.cond).
 
 The grammar: or < and < not < a comparison (`=`, `<>`, `!=`, `<`, `<=`, `>`, `>=`), `is [not] null`,
-`[not] in (...)`, of a column (`col`, `this.col`) with a constant (`'text'`, a number, `true`, `false`, `null`)
+`[not] in (...)`, of a column (`col`, `this.col`; a bare `user`, `current_date` and SQL's other such words name the
+role, the session or the clock, not a column) with a constant (`'text'`, a number, `true`, `false`, `null`)
 or `authz.uid()`; a column alone is a boolean. Values follow SQL's three-valued logic: NULL compares to nothing.
 
 A column is named as Postgres reads it: a bare name with its ASCII letters in lower case (`Archived` is `archived`,
@@ -46,7 +47,7 @@ from decimal import Decimal
 from functools import cache
 from typing import NamedTuple, TypeAlias
 
-from .sqlutil import NAME, fold
+from .sqlutil import NAME, UNSTABLE_WORDS, fold
 
 # a column's value in a made-up row (a number with a decimal point: a Decimal, exact, as Postgres's numeric)
 Scalar: TypeAlias = "str | int | Decimal | bool | None"
@@ -122,6 +123,8 @@ def tokens(sql: str) -> list[tuple[str, str]]:
         text = m.group(kind)
         if kind == "name":
             name = re.sub(r"^this\s*\.\s*", "", text, flags=re.IGNORECASE)
+            if fold(name) in UNSTABLE_WORDS and name == text:
+                raise NotSimple(text)  # (`user`, `current_date`: the role, the session or the clock, not a column)
             kind, text = ("word", fold(name)) if fold(name) in WORDS and name == text else ("name", fold(name))
         elif kind == "quoted":  # a quoted name: as written, its case kept ("B1", "order", "a""b")
             name = re.sub(r"^this\s*\.\s*", "", text, flags=re.IGNORECASE)
