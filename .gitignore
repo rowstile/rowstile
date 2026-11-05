@@ -22,6 +22,7 @@ integrations/nextjs/edge/next-env.d.ts
 examples/helpdesk/.next/
 examples/helpdesk/src/generated/
 examples/helpdesk/next-env.d.ts
+examples/helpdesk/tsconfig.tsbuildinfo
 integrations/nextjs/edge/tsconfig.tsbuildinfo
 integrations/nextjs/.work/
 integrations/nextjs/coverage/
