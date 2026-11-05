@@ -104,7 +104,8 @@ compile error: `rowstile client py > authz_client.py`
 anything with `query(text, params)`; on the TypeScript SDK, `rowstile client ts-sdk`, the names alone); `rowstile client go` writes the names alone, for the Go SDK. Generate it from the policy in force and commit it next to
 your code; regenerate when the policy changes (the file manager's tests fail when it is stale).
 
-- **Python: supported.** Part of the 1.0 surface: `Authz(conn)`, with `sign_in`, `sign_in_as` (a principal
+- **Python: supported.** Whether its names are part of what 1.0 promises is decided before 1.0. It has
+  `Authz(conn)`, with `sign_in`, `sign_in_as` (a principal
   other than a user), `principal`, `connection_check`, `can`, `list` (with `after` and `limit` for pages), `perms`,
   `who`, `explain`, `share` (its `caveat_args` a dict), `unshare`, `list_shares`, `create_link`, `list_links`,
   `revoke_link`, `use_links`, `request_access`, `decide_request`, `cancel_request`, `pending_requests`,

@@ -9,5 +9,5 @@
 
 ## Relationships
 
-- **File manager, messenger, helpdesk → rowstile**: each is an ordinary user of rowstile. It writes its own policy file against its own tables, applies it from its migrations, and calls only the public surface (the `rowstile` command, the `authz` functions and settings, and the generated Python or TypeScript client). rowstile never names anything from the file manager.
+- **File manager, messenger, helpdesk → rowstile**: each is an ordinary user of rowstile. It writes its own policy file against its own tables, applies it from its migrations, and calls only the public surface (the `rowstile` command, the `authz` functions and settings, the generated Python or TypeScript client, and the SDKs: the helpdesk is built on the TypeScript SDK's packages). rowstile never names anything from the file manager.
 - **Shared terms**: the file manager's folders and files, and the messenger's chats and messages, and the helpdesk's tickets and comments, are rowstile **objects**; their users (and the file manager's groups, the messenger's bots, the helpdesk's teams and integrations) are **subjects**; the file manager's sharing screens, the messenger's invite links and the helpdesk's copying someone in create **shares**. Use the rowstile words for those concepts in every context.

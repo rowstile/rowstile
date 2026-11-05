@@ -35,8 +35,8 @@ A stored row giving one subject one relation on one object, whether made by a pe
 _Avoid_: grant, tuple, relationship, ACL entry
 
 **Role**:
-A set of permissions that people define at runtime on an object (such as "reviewer" in one org) and then share like a relation.
-_Avoid_: custom role (in prose, once introduced), permission set; never use for the database role or for owner/editor/viewer
+A set of permissions that people define at runtime on an object (such as "reviewer" in one org) and then share like a relation. "Custom role" says the same, and reads better beside a Postgres role.
+_Avoid_: permission set; never use for the database role or for owner/editor/viewer
 
 **Rule**:
 What a table command (select, insert, update, delete) requires, stated per table and enforced by row-level security.
@@ -57,7 +57,7 @@ _Avoid_: event stream, notifications, change log
 ### Release
 
 **Public surface**:
-What 1.0 promises not to break without a major version: the policy syntax and meaning, the `authz` functions and settings, the generated client's names, the data in the persistent tables, and what each error code means (not the wording of messages).
+What 1.0 promises not to break without a major version: the policy syntax and meaning, the `authz` functions and settings, the data in the persistent tables, and what each error code means (not the wording of messages). Whether the generated clients' names and the SDKs are part of it is decided before 1.0.
 _Avoid_: API (alone)
 
 **Error code**:
@@ -116,4 +116,10 @@ _Avoid_: pilot, customer, design partner, "our app"
 The messenger (`examples/messenger/`), a WhatsApp-style app built to show what rowstile takes off an app. The
 same rules as the first adopter: the public surface only, the features an app of its kind needs, its tests on
 every change.
+_Avoid_: demo, sample app, "our app"
+
+**Third adopter**:
+The helpdesk (`examples/helpdesk/`), several companies' support desks on one database, built on Next.js, Prisma
+and the TypeScript SDK. The same rules as the first adopter: the public surface only, the features an app of its
+kind needs, its tests on every change.
 _Avoid_: demo, sample app, "our app"
