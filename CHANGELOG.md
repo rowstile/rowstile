@@ -602,6 +602,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   are read and written under the policy. Before, each run made `public` again without its usual owner and grants,
   so asking as someone was refused there. Each run also starts from a new session: what the last run's tables and
   data set (`SET search_path`, `SET session_replication_role`, a temporary table) is gone.
+- A playground link that names no example (`#e=` and a recipe renamed or removed since) opens the first one and
+  says that no example has that name. Before, it opened the first one and said nothing.
 
 ### Upgrading
 

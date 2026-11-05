@@ -239,8 +239,13 @@ try {
   check("a link that names an example opens it", Array.isArray(recipe) && String(recipe[0]).startsWith("Recipe: ") && recipe[1] === true, recipe);
   check("... and its tests pass", /^\d+ ✓$/.test(String(await until("document.getElementById('count').textContent"))),
     await js("document.getElementById('count').textContent"));
+  check("... with no notice", (await js("document.getElementById('notice').hidden")) === true);
   await open(`${PAGE}#e=no-such-recipe`);
   check("a link that names no example: the first one", (await js("document.getElementById('example').value")) === "0");
+  const unnamed = await js("document.getElementById('notice').hidden ? null : document.getElementById('notice').textContent");
+  check("... and it says that no example has that name", unnamed === "No example is named no-such-recipe: this is the first one.", unnamed);
+  await js(`(() => { const s = document.getElementById('example'); s.value = '1'; s.dispatchEvent(new Event('change')); })()`);
+  check("... until another example is chosen", (await js("document.getElementById('notice').hidden")) === true);
 
   // the page's bundle.json missing: it says so, rather than load for ever
   await send("Page.navigate", { url: "about:blank" }, sessionId);

@@ -8,7 +8,7 @@ someone" runs a statement as the app role, signed in as whoever you name, and ro
 `ROLLBACK` in the statement ends that transaction early, and what follows runs signed in as nobody; a `RESET
 ROLE` makes the rest run as the owner: the answer says so). "Copy link" puts
 the whole state in the link, and `#e=<name>` opens one of the page's own examples (each recipe of the cookbook
-links here that way).
+links here that way; a name that isn't one opens the first example, and says so).
 
 One thing it can't show is signed sessions. PGlite has a single session, the owner's, and rowstile believes
 the owner's settings without a signature: a statement under "Ask as someone" may `SET authz.user_id` and
