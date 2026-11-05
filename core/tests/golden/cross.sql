@@ -102,7 +102,16 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'a2a58ec18ac7e1860b08a62b6f7d4cb2', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree'), ('folder_project__backer_parent__tree', 'c2f9201bb38601723af1e15b8b7d2015', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
+           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'a2a58ec18ac7e1860b08a62b6f7d4cb2', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder_project__backer_parent__tree', 'c2f9201bb38601723af1e15b8b7d2015', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -716,9 +725,18 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder_project__host_inside_parent__tree2', 'a2a58ec18ac7e1860b08a62b6f7d4cb2', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
-  ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[]),
-  ('folder_project__backer_parent__tree', 'c2f9201bb38601723af1e15b8b7d2015', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]);
+  ('folder_project__host_inside_parent__tree2', 'a2a58ec18ac7e1860b08a62b6f7d4cb2', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid)),
+  ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid)),
+  ('folder_project__backer_parent__tree', 'c2f9201bb38601723af1e15b8b7d2015', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid));
 
 -- The subject key of a share (as the policy writes it: user, team#member, user:*, anyone, link)
 CREATE FUNCTION authz_int.subject_key(p_type text, p_id text, p_relation text) RETURNS text

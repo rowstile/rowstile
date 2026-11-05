@@ -170,6 +170,10 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   an app role that may do it. <!-- checked: tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips its triggers" -->
   Dropping or detaching a partition skips them too, which leaves its rows' shares until the next
   apply.
+  An inheritance table whose table, or link table, has other tables under it than at the last apply (a
+  partition attached, detached, made or dropped, a table that inherits made or dropped) is computed again by
+  the next apply, not kept, and `rowstile apply` then applies: rows that reached it so, or rows written
+  straight into a partition made since, are in it after that apply. <!-- checked: tests/children.sh "and computes the tree again: user 1 sees the notes under theirs"; tests/children.sh "apply is not 'unchanged' once a partition was detached"; tests/keep.sh "a new permission rebuilds the trees that read its table"; tests/keep.sh "applying the same policy again rebuilds the trees that read its table" -->
 - **A key handed over inside one update of a partitioned table**: a row's shares are forgotten when
   its key changes, so a row that has the key later starts with none. Where the update also puts the
   row in another partition, rowstile forgets the shares of every key the update left without a row;

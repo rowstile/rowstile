@@ -728,8 +728,9 @@ def intact(db: Db, sql: str, compiler: Compiler) -> bool:
     )
     # ... and nothing was made or given since that applying again puts right: a partition of a table with rules,
     # or a table that inherits from it, has row-level security on, each table under one rowstile watches has
-    # the triggers of the table above (its statement triggers; the row triggers too, where it inherits), and
-    # nobody holds a privilege on rowstile's own schemas that the policy doesn't give
+    # the triggers of the table above (its statement triggers; the row triggers too, where it inherits), no
+    # inheritance table reads other tables than when it was last computed (a partition attached or detached since),
+    # and nobody holds a privilege on rowstile's own schemas that the policy doesn't give
     return kept and flag(
         db.rows(
             "WITH RECURSIVE below(oid) AS ("
@@ -738,6 +739,7 @@ def intact(db: Db, sql: str, compiler: Compiler) -> bool:
             "  UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid) "
             "SELECT NOT EXISTS (SELECT 1 FROM below b JOIN pg_catalog.pg_class c ON c.oid = b.oid "
             "  WHERE NOT c.relrowsecurity) AND NOT EXISTS (SELECT 1 FROM authz_int.child_triggers()) "
+            f"AND NOT EXISTS ({compiler.trees_changed_sql()}) "
             f"AND NOT EXISTS ({compiler.extra_grants_sql()}) AS closed",
             [text_array(sorted({qt(r.table) for r in rules}))],
         )[0],

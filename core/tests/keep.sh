@@ -67,6 +67,25 @@ SQL
 apply "$DOCS"
 [ "$(trees)" != "$BEFORE" ] && verify && ok "a recreated link table rebuilds the trees that read it" || bad "recreated table" "$(trees)"
 
+# rows that reach a tree's table with no trigger to see them (a table that inherits from it, made since, written
+# directly; then dropped): applying rebuilds the trees that read the table (here both read the folders)
+apply "$DOCS"
+BEFORE=$(trees)
+PSQL -c "CREATE TABLE app.folders_more () INHERITS (app.folders)" \
+     -c "INSERT INTO app.folders_more (id, org_id, parent_id, name) SELECT 900001, org_id, id, 'stored below' FROM app.folders WHERE parent_id IS NOT NULL ORDER BY id LIMIT 1" \
+     -c "INSERT INTO app.folders_more (id, org_id, parent_id, name) SELECT 900002, org_id, 900001, 'below that' FROM app.folders WHERE id = 900001" >/dev/null
+verify && bad "rows written straight into a table that inherits are in the trees already" || ok "rows written straight into a table that inherits: the trees don't know them yet"
+apply "$MORE"
+AFTER=$(trees)
+kept=$(comm -12 <(echo "$BEFORE" | tr ' ' '\n' | sort) <(echo "$AFTER" | tr ' ' '\n' | sort) | wc -l)
+[ "$kept" -eq 0 ] && verify && ok "... a new permission rebuilds the trees that read its table" ||
+  bad "a table that inherits, made since" "kept $kept of $(echo "$AFTER" | wc -w)"
+BEFORE=$AFTER
+PSQL -c "DROP TABLE app.folders_more" >/dev/null
+verify && bad "the trees no longer hold the rows of a table dropped" || ok "the table that inherits dropped: the trees still hold its rows"
+apply "$MORE"
+[ "$(trees)" != "$BEFORE" ] && verify && ok "... applying the same policy again rebuilds the trees that read its table" || bad "a table that inherits, dropped" "$(trees)"
+
 # an index on share ids for a type the policy no longer has (made for a type gone since): applying drops it, so a
 # share of another type of that name, with ids of another kind, isn't refused by its cast
 PSQL -c "CREATE INDEX shares_obj_ghost_bigint ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'ghost'" >/dev/null
