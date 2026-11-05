@@ -22,6 +22,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +60,16 @@ class SdkTest extends Conformance {
         List<String> shown = keys.stream().map(k -> new NotFound("app.members", k).id()).toList();
         assertEquals(List.of("7", "7", "(1,2)", "(\"a b\",\"x,y\")", "(\"\",\"q\"\"t\")", "(\"b\\\\s\",\"(1)\")", "(1,)"),
                 shown);
+        // any array or collection of the columns (an Object[], a long[], a Set in its order), and a field quoted for
+        // ASCII's six spaces alone, as Postgres does: not for a no-break space, an em space
+        List<Object> more = List.of(new Object[] {1, "a b"}, new long[] {1, 2}, new int[] {3}, new LinkedHashSet<>(List.of(4, 5)),
+                List.of("\u000bv", "a\u00a0b"), new String[] {"\u2003\u001c", "\r\n\f"});
+        assertEquals(List.of("(1,\"a b\")", "(1,2)", "3", "(4,5)", "(\"\u000bv\",a\u00a0b)", "(\u2003\u001c,\"\r\n\f\")"),
+                more.stream().map(k -> new NotFound("app.members", k).id()).toList());
+        // as every SDK words a hidden row: its table and key, either alone, or neither
+        assertEquals(List.of("app.notes 7 not found", "app.notes not found", "row 7 not found", "not found"),
+                List.of(new NotFound("app.notes", 7).getMessage(), new NotFound("app.notes", null).getMessage(),
+                        new NotFound(null, 7).getMessage(), new NotFound(null, null).getMessage()));
         NotFound gone = new NotFound("app.members", List.of(1, 2));
         assertEquals("app.members (1,2) not found", gone.getMessage());
         assertEquals("app.members", gone.table());
