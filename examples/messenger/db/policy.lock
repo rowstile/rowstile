@@ -105,7 +105,8 @@ function authz.can(p_type text, p_id bigint, p_perm text) | 3b89f3888983 shape=a
 function authz.can(p_type text, p_id text, p_perm text) | 211400cbf31d shape=220bc89f
 function authz.can(p_type text, p_id uuid, p_perm text) | 1acab4c19015 shape=54adceba
 function authz.cancel_request(p_id bigint) | 14f17f222d45 shape=19aa0bb3
-function authz.changes_since(p_pos bigint, p_limit int) | b494cb9cea48 shape=0448ffba
+function authz.changes_position() | 5df1d41ccaab shape=515e7531
+function authz.changes_since(p_pos bigint, p_limit int) | d421b775ac32 shape=0448ffba
 function authz.check_invariants() | 5d677568a799 shape=a2072420
 function authz.close_review(p_review bigint, p_revoke_undecided boolean) | 5c17d4af6ead shape=8a35940c
 function authz.connection_check() | 7977a49699bc shape=35f6ddfc
@@ -168,7 +169,7 @@ function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 5
 function authz.start_review(p_type text, p_id uuid, p_closes_at timestamptz) | ec7375d1508c shape=e7e50df0
 function authz.sync_members(p_type text, p_id text, p_relation text, p_members text[], OUT added int, OUT removed int) | 9d498bf0f0e1 shape=c0ea90e1
 function authz.trim_audit(p_keep interval) | 506854f7888f shape=59da80c2
-function authz.trim_changes(p_keep interval) | 99129c6c680e shape=5f059d1e
+function authz.trim_changes(p_keep interval) | b05f3766e01d shape=5f059d1e
 function authz.uid() | fdfdb40f750a shape=e4787fc1
 function authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text) | 9fe75a510714 shape=55f81bb0
 function authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | 9c287ae61155 shape=0bec2b1b
@@ -498,7 +499,7 @@ rls "ms"."messages" | d9a7cf4ac532
 rls "ms"."users" | 79ad975def28
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
-step base | c621017d9647
+step base | 799bb7e5cb67
 step cascades | 836fb13e0bf4
 step grant_api | 204583d0a869
 step grant_functions | 5eba9f6b5ab9
