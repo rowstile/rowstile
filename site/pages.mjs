@@ -498,7 +498,7 @@ export function menuLinks(menu) {
 }
 
 /** Pages no menu needs to list: the home page (the logo goes there) and the SDKs' problem types (their answers link
- *  to them, and so does each stack's page). */
+ *  to them, and so does the stacks' index, docs/stacks/README.md). */
 const OFF_MENUS = /^(index\.md|problems\/.*)$/;
 
 /** The menus' links against the pages: every page is in a menu, and every link of a menu goes to a page. A page

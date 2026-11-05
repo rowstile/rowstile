@@ -24,10 +24,31 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 | Anything else | [sql.md](sql.md) | none: a few SQL statements |
 
 Every line of code these pages show is in a tested app ([`integrations/fastapi`](../../integrations/fastapi), [`integrations/nextjs`](../../integrations/nextjs),
-[`integrations/go`](../../integrations/go), [`integrations/django`](../../integrations/django), [`integrations/aspnetcore`](../../integrations/aspnetcore), [`integrations/rails`](../../integrations/rails), [`integrations/spring`](../../integrations/spring), [`integrations/ktor`](../../integrations/ktor), [`integrations/axum`](../../integrations/axum), [`integrations/phoenix`](../../integrations/phoenix), [`integrations/laravel`](../../integrations/laravel), [`integrations/electric`](../../integrations/electric), [`integrations/zero`](../../integrations/zero), [`integrations/powersync`](../../integrations/powersync), the conformance suites), in [`docs/getting-started.md`](../getting-started.md), which runs as written, or, for the SQL the SDKs send, in
+[`integrations/node`](../../integrations/node), [`integrations/go`](../../integrations/go), [`integrations/django`](../../integrations/django), [`integrations/aspnetcore`](../../integrations/aspnetcore), [`integrations/rails`](../../integrations/rails), [`integrations/spring`](../../integrations/spring), [`integrations/ktor`](../../integrations/ktor), [`integrations/axum`](../../integrations/axum), [`integrations/phoenix`](../../integrations/phoenix), [`integrations/laravel`](../../integrations/laravel), [`integrations/electric`](../../integrations/electric), [`integrations/zero`](../../integrations/zero), [`integrations/powersync`](../../integrations/powersync), the conformance suites), in [`docs/getting-started.md`](../getting-started.md), which runs as written, or, for the SQL the SDKs send, in
 the SDKs' own code. [`core/tests/unit_test.py`](../../core/tests/unit_test.py) checks each line, and that the install lines have each rowstile
 package the code imports. A block is lines of one file, in their order, though it may leave lines out; a comment
 naming a file (`# app/worker.py`) starts the lines of that file. So read the text around a block too.
+
+## Problem details
+
+Every SDK answers a refused write, a row that is hidden or isn't there, and each code a call meets as its page
+says, with an RFC 9457 problem body that is the same in every language. Its `type` is a page of this site:
+[Refused](../../site/problems/refused.md) (403), [Not found](../../site/problems/not-found.md) (404),
+[Not signed in](../../site/problems/not-signed-in.md) (401), [Bad argument](../../site/problems/bad-argument.md)
+(400) and [Conflict](../../site/problems/conflict.md) (409). Anything else is the app's mistake: no body, a 500.
+
+| SDK | answers for you | the body of an error, for a handler of your own |
+|---|---|---|
+| Python | `rowstile.fastapi`, Django's `rowstile.django.Middleware` | `Refused.problem()`, `NotFound.problem()` |
+| TypeScript | `route()` and `action()` in `@rowstile/next`, the routes `authzRoutes()` makes | `problemOf(e)`, `problemResponse(e)` |
+| Go | `rowstile.Handler`, `rowstile.Middleware` | `ProblemOf(err)`, `WriteProblem(w, err)` |
+| .NET | `UseRowstile()` of `Rowstile.AspNetCore` | `Errors.ProblemOf(e)` |
+| Ruby | `Rowstile::Middleware`, which the Railtie adds | `Rowstile.problem_of(e)` |
+| Java | the Spring Boot starter | `Errors.problem(e)` |
+| Kotlin | the Ktor plugin `Rowstile` | `e.problem()`, `call.respondProblem(problem)` |
+| Rust | `Error`, an Axum response (the `axum` feature) | `error.problem()` |
+| Elixir | `Rowstile.Plug.Fallback` | `Rowstile.problem(e)`, `Rowstile.Plug.send_problem(conn, e)` |
+| PHP | Laravel's service provider | `Rowstile::problemOf($e)` |
 
 Start with [getting started](../getting-started.md) for the policy itself. Or from an app that already
 runs, as a template repository: the [FastAPI starter](https://github.com/rowstile/starter-fastapi) and the

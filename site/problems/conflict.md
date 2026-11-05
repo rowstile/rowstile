@@ -19,8 +19,9 @@ conflict, not a malformed request.
 - `code`: [AZ713](../../docs/errors/AZ713.md), moved inside itself.
 
 `rowstile.fastapi` answers 409 too when an ORM update matched no row though the rules allow it: the row changed
-since it was read (a version counter, SQLAlchemy's `version_id_col`). Read it again, then try again. This one
-has no `code`, since the database turned nothing down:
+since it was read (a version counter, SQLAlchemy's `version_id_col`). So do the SDKs for ASP.NET Core (EF Core),
+Rails (`lock_version`), Spring (JPA) and Phoenix (Ecto). Read it again, then try again. This one has no `code`,
+since the database turned nothing down:
 
 ```json
 {
@@ -31,6 +32,7 @@ has no `code`, since the database turned nothing down:
 }
 ```
 
-Where it comes from: `rowstile.fastapi` ([FastAPI](../../docs/stacks/fastapi.md)), `route()` and `action()` in
-`@rowstile/next` ([Next.js](../../docs/stacks/nextjs.md)) and `problemOf(e)` for any other framework
+Where it comes from: every SDK ([each one's calls](../../docs/stacks/README.md#problem-details)). In Python and TypeScript: `rowstile.fastapi`
+([FastAPI](../../docs/stacks/fastapi.md)), `route()` and `action()` in `@rowstile/next`
+([Next.js](../../docs/stacks/nextjs.md)) and `problemOf(e)` for any other framework
 ([Node](../../docs/stacks/node.md)).
