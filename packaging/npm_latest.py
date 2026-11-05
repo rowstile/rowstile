@@ -73,6 +73,11 @@ def npm(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run([command, *args], capture_output=True, text=True, encoding="utf-8", check=False)
 
 
+def absent(said: subprocess.CompletedProcess[str]) -> bool:
+    """Whether `npm view <name>` said the registry has no such package (its first version isn't published yet)."""
+    return said.returncode != 0 and "E404" in said.stderr + said.stdout
+
+
 def published(name: str) -> tuple[dict[str, str], list[str]]:
     """A package's tags and versions, as the registry has them."""
     out = npm("view", name, "dist-tags", "versions", "--json")
@@ -124,8 +129,14 @@ def main(argv: list[str]) -> None:
         )
     refused = []
     late = []
+    new = []
     until = time.monotonic() + WAIT
     for name in names():
+        if absent(npm("view", name, "name")):
+            # a new package: its first version goes out by hand, under `latest` (npm gives it the first version)
+            new.append(name)
+            print(f"{name}: not on npm yet, nothing to move")
+            continue
         found = published(name) if expect is None else shown(name, expect, until)
         if found is None:
             late.append(name)
@@ -155,6 +166,8 @@ def main(argv: list[str]) -> None:
             f"{expect} under next within {WAIT // 60} minutes. Everything published stays published. Once "
             "`python3 packaging/npm_latest.py` shows it there: gh workflow run release.yml -f latest=true"
         )
+    if new and os.environ.get("GITHUB_ACTIONS"):
+        print(f"::warning::not on npm yet, nothing moved: {', '.join(new)}. A first version is published by hand")
     for said in unmoved:
         if os.environ.get("GITHUB_ACTIONS"):
             print(f"::warning::{said}")

@@ -18042,6 +18042,15 @@ class Version(unittest.TestCase):
             )
         )
         self.assertEqual(len(slept), 3)
+        # a package npm doesn't have yet (its first version goes out by hand) is passed over, not a failure: the
+        # others still move, and the npm job publishes the rest without it unless a token is set
+        said = subprocess.CompletedProcess
+        self.assertTrue(npm_latest.absent(said([], 1, "", "npm error code E404\nnpm error 404 Not Found")))
+        self.assertFalse(npm_latest.absent(said([], 0, "@rowstile/jest\n", "")))
+        self.assertFalse(npm_latest.absent(said([], 1, "", "npm error code ETIMEDOUT")))
+        self.assertIn(
+            'elif [ -z "$NODE_AUTH_TOKEN" ] && [[ "$(npm view "$name" name 2>&1)" == *E404* ]]; then', release
+        )
         # a release is published as `latest` itself: its run moves nothing, whatever the registry shows
         out = io.StringIO()
         with (

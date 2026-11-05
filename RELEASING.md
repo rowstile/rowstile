@@ -147,7 +147,10 @@ request of its own, before the release's.
    first, up to twenty minutes: npm shows a publish some minutes late, and a package it still doesn't show
    is named, for the by-hand run below. Moving the tag needs **Allow npm dist-tag** ticked in each
    package's trusted publisher on npmjs.com: where it isn't, the run says which packages and the release
-   stands. The tag also deploys the docs site at
+   stands. A package npm doesn't have yet can't be published by trusted publishing: without the environment's
+   `NPM_TOKEN`, the run publishes the others and names it, and its first version goes out by hand from the run's
+   `npm-files` (`npm publish --access public --tag next <file>`), then its trusted publisher is set as for the
+   others. The tag also deploys the docs site at
    rowstile.dev (`.github/workflows/site.yml`), built from its commit, when that commit is on `main` and no
    site tag is on a later one (below).
 5. **Check it** as a user would: install from the registries on Linux, then `rowstile init`, `migrate` and
