@@ -9,7 +9,7 @@ use PDO;
 use PDOException;
 use RuntimeException;
 
-use function hash, ltrim, parse_url, preg_match, preg_replace, rawurldecode, rawurlencode, sprintf, str_replace, strlen, substr;
+use function array_filter, explode, hash, ltrim, parse_url, preg_match, preg_replace, rawurldecode, rawurlencode, sprintf, str_replace, strlen, substr;
 
 /**
  * A test database for each worker, copied from the migrated one (with the policy). Loading a dump into each can't
@@ -75,11 +75,19 @@ final class Databases
         return (string) preg_replace('#^([^/]*//[^/]*)(/[^?]*)?#', '$1/'.rawurlencode($database), $url, 1);
     }
 
-    /** A PDO connection to the database a postgresql:// URL names (or to $database on the same server). */
+    /**
+     * A PDO connection to the database a postgresql:// URL names (or to $database on the same server), with the URL's
+     * settings (?sslmode=require&connect_timeout=5: libpq's).
+     */
     public static function connect(string $url, ?string $database = null): PDO
     {
-        $parts = (array) parse_url($url) + ['host' => 'localhost', 'port' => 5432, 'user' => '', 'pass' => ''];
-        $dsn = sprintf('pgsql:host=%s;port=%s;dbname=%s', $parts['host'], $parts['port'], $database ?? self::database($url));
+        $parts = (array) parse_url($url) + ['host' => 'localhost', 'port' => 5432, 'user' => '', 'pass' => '', 'query' => ''];
+        $quoted = static fn (string $value): string => "'".str_replace(['\\', "'"], ['\\\\', "\\'"], $value)."'";
+        $dsn = sprintf('pgsql:host=%s;port=%s;dbname=%s', $parts['host'], $parts['port'], $quoted($database ?? self::database($url)));
+        foreach (array_filter(explode('&', sprintf('%s', $parts['query'])), static fn (string $s): bool => $s !== '') as $setting) {
+            [$key, $value] = explode('=', $setting, 2) + [1 => ''];
+            $dsn .= sprintf(';%s=%s', rawurldecode($key), $quoted(rawurldecode($value)));
+        }
         $user = rawurldecode(sprintf('%s', $parts['user']));
         return new PDO($dsn, $user, rawurldecode(sprintf('%s', $parts['pass'])), [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
     }

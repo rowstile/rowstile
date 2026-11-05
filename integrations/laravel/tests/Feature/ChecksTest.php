@@ -189,12 +189,20 @@ final class ChecksTest extends TestCase
         $server->exec("DROP DATABASE IF EXISTS \"{$long}\"");
         $server->exec("CREATE DATABASE \"{$long}\"");
         try {
-            $url = Databases::withDatabase(self::env('ROWSTILE_TESTS_URL'), $long);
+            // with the URL's settings, as libpq takes them (on a server without SSL: sslmode=disable)
+            $url = Databases::withDatabase(self::env('ROWSTILE_TESTS_URL'), $long).'?sslmode=disable&application_name=conformance';
             // (Postgres would cut both to the original's name)
             self::assertSame([$named[0], $named[1]], [Databases::copy($url, '1'), Databases::copy($url, '10')]);
             $there = $server->query("SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%' ORDER BY datname COLLATE \"C\"");
             self::assertNotFalse($there);
             self::assertSame([$named[1], $named[0], $named[2]], $there->fetchAll(PDO::FETCH_COLUMN)); // as the bytes order them
+            // sslmode=require asks the server for SSL, which this one hasn't
+            try {
+                Databases::copy(str_replace('sslmode=disable', 'sslmode=require', $url), '1');
+                self::fail('expected the copy to ask for SSL');
+            } catch (PDOException $e) {
+                self::assertStringContainsString('SSL', $e->getMessage());
+            }
         } finally {
             foreach ($named as $name) {
                 $server->exec("DROP DATABASE IF EXISTS \"{$name}\" WITH (FORCE)");

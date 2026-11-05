@@ -198,7 +198,8 @@ defmodule Conformance.ChecksTest do
     server = &Rows.owner(&1, "postgres")
     server.(&Postgrex.query!(&1, ~s{DROP DATABASE IF EXISTS "#{long}"}, []))
     server.(&Postgrex.query!(&1, ~s{CREATE DATABASE "#{long}"}, []))
-    url = Rows.owner_url(URI.encode(long, &URI.char_unreserved?/1))
+    # (on a server without SSL: sslmode=disable, as the URL may say)
+    url = Rows.owner_url(URI.encode(long, &URI.char_unreserved?/1)) <> "?sslmode=disable"
 
     try do
       # (Postgres would cut both to the original's name)
@@ -220,6 +221,16 @@ defmodule Conformance.ChecksTest do
           do:
             server.(&Postgrex.query!(&1, ~s{DROP DATABASE IF EXISTS "#{name}" WITH (FORCE)}, []))
     end
+  end
+
+  test "12: ... the URL's sslmode is the connection's" do
+    settings = fn mode ->
+      url = URI.parse("postgres://u:p@db.example/app?sslmode=" <> mode)
+      Rowstile.Testing.connection(url)[:ssl]
+    end
+
+    assert Enum.map(~w(require verify-ca verify-full disable prefer), settings) ==
+             [[verify: :verify_none], true, true, nil, nil]
   end
 
   test "12: ... and a copy is refused, saying why, while something is connected to the original" do
