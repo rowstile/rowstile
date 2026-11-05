@@ -3,7 +3,9 @@
 //!
 //! `cargo test` runs each test binary (each file in `tests/`, and the crate's own) in a process of its own: each
 //! binary is a worker, and gets its own database, named after the one it copies and the binary. The tests of one
-//! binary share it. The copy is named `<database>_<worker>`; a name longer than Postgres's 63 bytes is shortened: its first
+//! binary share it. cargo-nextest runs each test in a process of its own, many at once: there a worker is a slot
+//! of nextest's (`NEXTEST_TEST_GLOBAL_SLOT`, a number no other running test has), and each test makes its copy
+//! again. The copy is named `<database>_<worker>`; a name longer than Postgres's 63 bytes is shortened: its first
 //! 54 bytes (fewer, not to cut a character in two), `_`, and the first 8 hex digits of the SHA-256 of the whole
 //! name.
 //!
@@ -33,11 +35,14 @@ pub struct Database {
 }
 
 /// This test binary's name for its database: the binary's own name, as cargo built it (its target's name and a
-/// hash: `conformance_0f1e2d3c4b5a6978`), lowercase, a `_` for what Postgres would quote.
+/// hash: `conformance_0f1e2d3c4b5a6978`), lowercase, a `_` for what Postgres would quote; under cargo-nextest, and
+/// its slot (`conformance_0f1e2d3c4b5a6978_s3`).
 #[must_use]
 pub fn worker() -> String {
     let exe = std::env::current_exe().ok();
     let name = exe.as_deref().and_then(std::path::Path::file_stem).map_or("rust".into(), |s| s.to_string_lossy());
+    let slot = std::env::var("NEXTEST_TEST_GLOBAL_SLOT").map_or_else(|_| String::new(), |slot| format!("_s{slot}"));
+    let name = name + slot.as_str();
     name.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect()
 }
 

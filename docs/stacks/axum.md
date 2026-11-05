@@ -164,7 +164,9 @@ rowstile migrate --check                      # in CI: exit 1 if a policy change
 
 `cargo test` runs each test binary (each file in `tests/`) in a process of its own: each binary is a worker.
 `rowstile::testing::per_binary` copies the migrated test database once for the binary that calls it, so tests that
-write don't meet another binary's. A binary's tests share its copy.
+write don't meet another binary's. A binary's tests share its copy. cargo-nextest runs each test in a process of its
+own, many at once: there the copy is the binary's and nextest's slot's (`NEXTEST_TEST_GLOBAL_SLOT`), and each test
+makes it again.
 
 ```rust
                 let db = rowstile::testing::per_binary(&tests, Some(&app), true).await.expect("a copy");

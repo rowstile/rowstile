@@ -25,6 +25,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   sessions of the policy's owner and superusers.
 - The Rust SDK's `rowstile::testing::per_binary` refuses an app role's URL that isn't a Postgres URL, instead of
   giving it back as it was.
+- The Rust SDK's `per_binary` gives each slot of cargo-nextest (`NEXTEST_TEST_GLOBAL_SLOT`) a copy of its own, as
+  each binary has under `cargo test`.
 
 ### Fixed
 
