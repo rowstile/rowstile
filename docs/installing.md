@@ -80,5 +80,7 @@ names the one to add) and says which line to change.
 - [Getting started](getting-started.md): from a schema to a policy, its tests, the edit loop and the first
   migration.
 - [Your stack](stacks/README.md): the SDK's packages for it ([Python](../sdk/python/README.md),
-  [TypeScript](../sdk/typescript/README.md)), and where each line goes.
+  [TypeScript](../sdk/typescript/README.md); previews for [Go](../sdk/go/README.md), [.NET](../sdk/dotnet/README.md),
+  [Ruby](../sdk/ruby/README.md), [Java and Kotlin](../sdk/java/README.md), [Rust](../sdk/rust/README.md),
+  [Elixir](../sdk/elixir/README.md) and [PHP](../sdk/php/README.md)), and where each line goes.
 - [Editors](../editor/README.md): highlighting and the language server for VS Code, Zed, Helix and Neovim.

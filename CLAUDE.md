@@ -62,11 +62,15 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
       owner and undone, with what else it grants (a preview: the command's, not the runtime's)
     - `migrate.py` — policy changes as migrations: the compiled policy as objects, the lock file,
       the migration from a lock to a policy (only what changed), trees built beside then swapped in
+    - `sync.py` — the sync index (a preview): who may read each synced row, as keys in schema `authz_sync`
+      (readers, keys, groups; keyed by a type's inheritance; PowerSync's mirrors), worked out again at commit or,
+      with `sync after commit`, by `authz.sync_work()`; `sync_tick`, `sync_verify`, the sync role's grants and lint
   - `cli/` — the command runs on Python 3.11 or newer, standard library only: `rowstile` (`rowstile_cli.py`: compiles, and runs `authzlib.database` over its own connection; reads
     included files and `rowstile.toml` from disk; `dev` watches and runs the loop), `lsp.py` (the
     language server, `rowstile lsp`), `mcp.py` (the MCP server for coding agents, `rowstile mcp`: each tool runs
     the command once; `tests/mcp_test.py`), `init.py` (`rowstile init`), `migrations.py` (a migration's files for
-    each tool: Alembic, Prisma, Drizzle Kit, SQL, goose, dbmate, Flyway), `stack.py` (the app's stack, for
+    each tool `TOOLS` names: Alembic, Django, Prisma, Drizzle Kit, Rails, Laravel, Ecto, EF Core, sqlx, goose,
+    dbmate, Flyway or plain SQL), `stack.py` (the app's stack, for
     `init`), `studio.py` and `studio/` (Studio: a local web page and its JSON API; read-only transactions unless
     `--write` or `dev`; localhost and a token; `tests/studio_test.py`) and `pgwire.py` (stdlib Postgres client,
     SCRAM, notices, URLs, `script()` for many statements)
@@ -101,17 +105,27 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   `docker-compose.yml` (rowstile image from this repo, RustFS); `test.sh` runs its tests
 - `examples/messenger/` — the second adopter, a WhatsApp-style app built to show what rowstile takes off an app
   (same stack and rules as the file manager: public surface only, `check_public_surface.py`); `test.sh` runs its tests
-- `examples/public_surface.py` — the one public-surface check both examples run (each one's
+- `examples/helpdesk/` — the third adopter, several companies' support desks on one database (a multi-tenant
+  Next.js app on Prisma and the TypeScript SDK, live updates through Electric; public surface only,
+  `check_public_surface.py`); `test.sh` runs its tests
+- `examples/public_surface.py` — the one public-surface check every example runs (each one's
   `check_public_surface.py` calls it on its folder): what is public, and how a name is matched
 - `sdk/python/` — the `rowstile` Python package: the Python SDK (`rowstile`: FastAPI, SQLAlchemy, psycopg, asyncpg,
   Alembic, pytest) and the command, which `hatch_build.py` puts inside it (`rowstile/_command`).
   It holds no rowstile logic: it signs transactions in and translates the `authz.*` answers
 - `sdk/typescript/` — the TypeScript SDK (`@rowstile/client`, `/pg`, `/postgres`, `/prisma`, `/drizzle`, `/next`,
-  `/react`, `/vitest`), one package per folder, built with `npx tsc -b sdk/typescript`. The repository
-  root's `package.json` is the npm workspace for these packages and `integrations/nextjs` (one React, one pg);
-  `npm ci` at the root. Like the Python SDK it holds no rowstile logic
-- `integrations/<stack>/` — each SDK's conformance suite: a small app and the checks listed in `integrations/README.md`;
-  `integrations/fastapi/test.sh` (uv, Docker), `integrations/nextjs/test.sh` (Next.js, Prisma 7, Vitest, Docker);
+  `/react`, `/vitest`, `/jest`), one package per folder, built with `npx tsc -b sdk/typescript`. The repository
+  root's `package.json` is the npm workspace for these packages, the TypeScript conformance apps
+  (`integrations/nextjs`, `integrations/node`, `integrations/electric`, `integrations/zero`,
+  `integrations/powersync`) and `examples/helpdesk` (one React, one pg); `npm ci` at the root. Like the Python SDK
+  it holds no rowstile logic
+- The SDKs in preview, each in its language's own layout and with no rowstile logic either: `sdk/go/` (pgx,
+  `rowstiletest`), `sdk/dotnet/` (`Rowstile`, `Rowstile.EntityFrameworkCore`, `Rowstile.AspNetCore`), `sdk/ruby/`
+  (the gem, for Rails; Steep's signatures in `sig/`), `sdk/java/` (Maven: `rowstile` on JDBC, `rowstile-kotlin`,
+  `rowstile-spring-boot-starter`), `sdk/rust/` (the crate, on sqlx or tokio-postgres), `sdk/elixir/` (Ecto,
+  Postgrex) and `sdk/php/` (PDO, with Laravel); each README says what it holds
+- `integrations/<stack>/` — each SDK's conformance suite, and each sync engine's: a small app and the checks listed
+  in `integrations/README.md`, which names every suite; each one's `test.sh` runs it in Docker;
   `pooler.sh` puts PgBouncer in front of a suite's Postgres (`POOLER=pgbouncer test.sh`), its image pinned in
   `images/Dockerfile`
 - `packaging/` — how rowstile is installed: `npm/build.mjs` (the `rowstile` npm package and one
@@ -140,7 +154,7 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
 - `README.md` — the landing page: the pitch, installing, the docs, the folders. `core/README.md` is for working
   on the core folder (what's where, the test suites)
 - `docs/` — `reference/` (the reference by subject: `language.md`, `app-code.md`, `identity.md`,
-  `governance.md`, `tools.md`, `migrations.md`, `review.md`, `guarantees.md`, `limits.md`),
+  `governance.md`, `tools.md`, `migrations.md`, `review.md`, `guarantees.md`, `limits.md`, `sync.md`),
   `installing.md` (the site's Installing page: it holds the README's install lines, `DocPages` checks),
   `getting-started.md` (run as written by `tests/docs_test.sh`, its Python too, with the README's and the home page's
   policy and SQL), `cookbook.md` + `cookbook/` (the index, and
@@ -202,7 +216,7 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   beta on), the proofs (`--proofs`) on each version, the soak (new seeds each night, one version in turn, in six
   parts side by side; by hand, several at once on the three versions: `gh workflow run nightly.yml -f only=soak
   -f soaks=7`), the conformance suites on 17 and 18 and on 16 through PgBouncer (`integrations/pooler.sh`), the
-  migrations `rowstile migrate` writes run by goose, dbmate and Flyway (`tests/migration_tools.sh`), the grammar
+  migrations `rowstile migrate` writes run by goose, dbmate, Flyway and Django (`tests/migration_tools.sh`), the grammar
   and the parser on every small policy, the statements of rowstile's PL/pgSQL the suites run, the fuzzer, the
   comparison pages' readings (`readings`), and the benchmark check (`-f only=bench`; it judges speed against the
   runners' own baseline, not the gate's limits). `ci.sh` writes its logs to `/tmp`
@@ -319,6 +333,15 @@ For one suite, start a container and run it inside:
   or it must not be kept. `tests/keep.sh`.
 - Moves and link changes shift stored closure rows (`_shift` in `trees.py`) when only the changed rows' own links
   changed and none loops back below them; otherwise everything below is recomputed. `tests/moves.sh` checks both.
+- The sync index (`sync.py`, a preview; `docs/reference/sync.md`) lives in schema `authz_sync`, whose tables
+  applying keeps (their rows too, when what they are worked out by didn't change); a policy without sync lines, and
+  `rowstile remove`, drop it. Every trigger that may change access calls `authz_int.changed()`, which with sync
+  notes the objects in `authz_int.sync_dirty`; a deferred constraint trigger works their readers out again at
+  commit, or, with `sync after commit`, notes them in `authz_sync.pending` for `authz.sync_work()`. The sync role
+  gets USAGE and SELECT on `authz_sync` and nothing else: applying takes back any other privilege there
+  (`sync_extra_grants_sql`), and `authz.lint()` reports a later one, and a sync role that may read a masked column,
+  is a superuser, a member of the app role or an owner of a governed table, or lacks BYPASSRLS. `tests/sync.sh`
+  checks it, and `tests/difftest.py` holds the index to the reference evaluator.
 - New `authz.*` functions: add the name to `GENERATED_FUNCTIONS` (base.py) and, if the app role may call them,
   their signatures to `api_signatures()` (hardening.py). Everything else is admin-only: applying takes back any
   other privilege on the three schemas and what is in them (`extra_grants_sql`, the owner's default privileges
@@ -362,14 +385,15 @@ For one suite, start a container and run it inside:
   and these rules name one version of Ruff. A commit that only lays code out goes in `.git-blame-ignore-revs`
   once it is on `main` (its full hash; the same test checks). ty's root settings cover the standard-library code; what needs
   a package's environment has its own (`uv sync` it first), `--project` sdk/python (the fastapi app's
-  environment), integrations/fastapi, examples/filemanager and examples/messenger (their backends'); CI's `unit`
-  job runs them all. Test code types the JSON it checks as `Answer = Any`, one alias, named; app code types rows
-  as psycopg's `DictRow`. Python 3.11 syntax, standard library only (no `typing.override`, 3.12). A policy
-  expression is a frozen dataclass per kind (`parse.Expr`: `Or`, `And`, `Not`, `Cond`, `Ref`, `Arrow`, `ArrowOn`):
+  environment), integrations/fastapi, integrations/django (with sdk/python/rowstile/django, the SDK's Django
+  module), examples/filemanager and examples/messenger (their backends'); CI's `unit` job runs them all. Test code
+  types the JSON it checks as `Answer = Any`, one alias, named; app code types rows as psycopg's `DictRow`.
+  Python 3.11 syntax, standard library only (no `typing.override`, 3.12). A policy expression is a frozen dataclass
+  per kind (`parse.Expr`: `Or`, `And`, `Not`, `Cond`, `Ref`, `Arrow`, `ArrowOn`):
   build them with the class, and take them apart with `match`/`isinstance` (they have no `node[0]`).
 - JavaScript is typed too: JSDoc, checked by `tsc` with `checkJs` and `strict`, one `tsconfig.json` per folder with its
-  environment's types (playground, site, editor, editor/tree-sitter-authz, packaging/npm; Studio's page:
-  `core/cli/tsconfig.studio.json`); CI's `javascript` job runs them after `npm ci` in each. The page's API answers
+  environment's types (playground, site, editor, editor/tree-sitter-authz, packaging/npm, core/tests; Studio's
+  page: `core/cli/tsconfig.studio.json`); CI's `javascript` job runs them after `npm ci` in each. The page's API answers
   are typedefs matching what the Python sends (`studio.py`, `core.mjs`); keep them in step.
 - Words: see `core/CONTEXT.md` (share, not grant; role means a runtime role; app role for the Postgres one).
 - Prose style in docs and messages: plain words, short sentences.

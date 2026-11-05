@@ -1,7 +1,7 @@
 # What ci.yml leaves out of each push, every night on main: the full run on 16 (ci.yml runs --quick there), every
 # suite on PostgreSQL 17 and 18 (ci.yml runs only what depends on the version there), with upgrades from every
 # release from the beta on (each push: from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
-# SDKs' conformance suites on 17 and 18, rowstile's migrations run by goose, dbmate and Flyway (tools), the grammar
+# SDKs' conformance suites on 17 and 18, rowstile's migrations run by goose, dbmate, Flyway and Django (tools), the grammar
 # and the parser on more policies (grammar), each statement of rowstile's PL/pgSQL the suites run (statements), the
 # parser and the compiler under a coverage-guided fuzzer (fuzz), whether a comparison page's reading of another
 # project's documentation is more than a quarter old (readings), and the scale benchmark.

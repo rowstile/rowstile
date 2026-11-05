@@ -6,13 +6,14 @@ permission data to copy into one and keep in step: the rules read the tables you
 
 ![A policy, its tests, a one-word change and what the review says of it, a refused write that says why, and what would grant it](demo/demo.gif)
 
-Write who-can-do-what in one small file, next to the data it depends on. The `rowstile`
-command compiles it into plain SQL: views, trigger-maintained tables for inheritance, row-level
-security policies, and functions for app code: checks, sharing, "who has access", "why", access
-requests, reviews, audit. Each change to the policy ships as a migration for the tool your app
-already uses (Alembic, Prisma, Drizzle Kit, plain SQL). Nothing is installed in the database first,
-and nothing has to run next to it: any Postgres 16, 17 or 18 works, managed or not, and the owner of
-your tables runs the migrations, no superuser needed.
+Write who-can-do-what in one small file, next to the data it depends on. The `rowstile` command
+compiles it into plain SQL: views, trigger-maintained tables for inheritance, row-level security
+policies, and functions for app code: checks, sharing, "who has access", "why", access requests,
+reviews, audit. Each change to the policy ships as a migration for the tool your app already uses
+(Alembic, Django, Prisma, Drizzle Kit, Rails, Laravel, Ecto, EF Core, sqlx, goose, dbmate, Flyway or
+plain SQL). Nothing is installed in the database first, and nothing has to run next to it: any
+Postgres 16, 17 or 18 works, managed or not, and the owner of your tables runs the migrations, no
+superuser needed.
 
 ```authz
 app role app_user                               -- the Postgres role the app connects as

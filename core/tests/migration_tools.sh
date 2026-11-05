@@ -1,9 +1,10 @@
 #!/bin/bash
-# migration_tools.sh: the migrations rowstile migrate writes for goose, dbmate and Flyway, run by each tool itself
-# (tests/migrations.sh checks their files' names and markers; only the tools can say they run them): the docs app's
-# policy, then a change, written in an empty folder (versions by the time) and in one the app numbers by hand (the
-# next numbers), applied by the tool as the tables' owner; then the app's next migration, numbered after rowstile's,
-# runs too (goose, dbmate --strict and Flyway refuse one below a version applied already; Django's depends on it).
+# migration_tools.sh: the migrations rowstile migrate writes for goose, dbmate, Flyway and Django, run by each tool
+# itself (tests/migrations.sh checks their files' names and markers; only the tools can say they run them): the docs
+# app's policy, then a change, written in an empty folder (versions by the time) and in one the app numbers by hand
+# (the next numbers), applied by the tool as the tables' owner; then the app's next migration, numbered after
+# rowstile's, runs too (goose, dbmate --strict and Flyway refuse one below a version applied already; Django's depends
+# on it).
 # On the machine, beside a Postgres of its own (the image core/Dockerfile names, on a port Docker picks, removed
 # after): docker, python3, curl and sha256sum. goose and dbmate are their releases' Linux x86-64 binaries, checked
 # against their hashes, run in the Postgres container; Flyway is its image; Django runs in Python's image beside it,

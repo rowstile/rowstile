@@ -572,12 +572,15 @@ CODES = {
         "left. A development database that `rowstile dev` or `push` brought to the newest policy already holds "
         'what this migration brings, and the migration says so ("this database already holds what this '
         "migration brings\"): don't run it there. Tell the migration tool it is applied, or make the database "
-        "again from the migrations. Each tool keeps what ran in a table of its own. Alembic, Prisma and Django have "
-        "a command that records a migration as applied; for the others, a row in that table does:\n\n"
+        "again from the migrations. Alembic, Prisma, Django, Flyway and sqlx have a command that records a "
+        "migration as applied; the others keep what ran in a table of their own, and a row in it does:\n\n"
         "- Alembic: `alembic stamp head`.\n"
         "- Prisma: `prisma migrate resolve --applied <the migration's folder>`, which also clears the failed "
         "migration Prisma kept.\n"
         "- Django: `python manage.py migrate <app> <the migration> --fake`.\n"
+        "- Flyway: `flyway -skipExecutingMigrations=true -target=<its version> migrate`, which records the "
+        "migrations up to it without running them.\n"
+        "- sqlx: `sqlx migrate override skip --target-version <its number>` (sqlx-cli 0.9 or newer), the same.\n"
         "- Rails: `INSERT INTO schema_migrations (version) VALUES ('<the number its file name starts with>')`.\n"
         "- Ecto: `INSERT INTO schema_migrations (version, inserted_at) VALUES (<the number its file name starts "
         "with>, now())`.\n"
@@ -587,9 +590,10 @@ CODES = {
         "\"ProductVersion\") VALUES ('<the id in its [Migration] attribute>', '<EF Core's version>')`.\n"
         "- goose: `INSERT INTO goose_db_version (version_id, is_applied) VALUES (<its number>, true)`.\n"
         "- dbmate: `INSERT INTO schema_migrations (version) VALUES ('<its number>')`.\n"
-        "- Drizzle Kit, Flyway and sqlx keep a hash of each migration's file with it: make the database again from "
-        "the migrations.\n"
-        "- sql (files you run yourself): don't run this one there.",
+        "- Drizzle Kit: `INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('<the SHA-256 of its "
+        ".sql file>', <the when of its entry in meta/_journal.json>)`. Drizzle runs the migrations whose `when` is "
+        "after the latest `created_at` there.\n"
+        "- SQL (files you run yourself): don't run this one there.",
         "",
         "",
         when="deploy",
