@@ -90,7 +90,8 @@ async def database_error(request: Request, e: psycopg.Error) -> JSONResponse:
     known = CONSTRAINTS.get(diag.constraint_name or "") if diag else None
     if known and isinstance(e, (errors.UniqueViolation, errors.ForeignKeyViolation)):
         return JSONResponse({"detail": known[1]}, known[0])
-    if isinstance(e, errors.ProgramLimitExceeded):  # the storage quota (db migration 0004)
+    # the storage quota (the trigger fm_quota, db/migrations/0001_schema.sql)
+    if isinstance(e, errors.ProgramLimitExceeded):
         return JSONResponse({"detail": message}, 413)
     if isinstance(
         e,
