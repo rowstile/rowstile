@@ -54,6 +54,14 @@ Postgres writes for the row: `authz.can('folder', '(1,42)', 'view')`, or from SQ
 `ROW(f.org_id, f.id)::text`; `authz.list` returns ids in that form (`'(1,"a b")'` for a text
 column that needs quoting), and the generated clients take a tuple or array.
 
+`authz.can`, `authz.list`, `authz.perms` and `authz.perms_of` answer for the rows you may see: on a table
+with a select rule, a row its rule doesn't let you select reads as a missing one, whatever you hold on it
+(`false`, left out of the list, no permissions). <!-- checked: tests/adversarial.sh "authz.list names only the rows she may see"; tests/adversarial.sh "authz.can says of a hidden folder what it says of a missing one"; tests/adversarial.sh "and so do authz.perms and authz.perms_of" -->
+`authz.who_among` asks `authz.can` as each one, so it answers the same way. Seeing who has access
+(`authz.who`, `authz.list_shares`, `authz.list_links`, `authz.explain` for someone else) takes `share` on a
+row you may see. What acts on an object asks the permission itself: `authz.break_glass` works on a folder
+you can't see. <!-- checked: tests/governance.sh "carol breaks the glass, and the alert goes out" -->
+
 | task | function |
 |---|---|
 | check, list, all permissions | `authz.can('file', 11, 'edit')`, `authz.list('folder', 'edit')`, `authz.perms('file', 11)` |

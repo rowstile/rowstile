@@ -1363,7 +1363,9 @@ class Checker:
             t = self.types[tname]
             held = {p for p in t.perms if i in state[(tname, p)] & self.ref.ids(t)}
             manageable = {r for (o, r), by in self.link_by.items() if o == tname and signed_in and by in held}
-            visible: set[str] | None = {r for r, _ in links} if "share" in held else (manageable or None)
+            # (whoever may share it on a row they may select, as authz.can says, sees all its links)
+            inspects = "share" in t.perms and i in self.ref.answers(state, t, "share")
+            visible: set[str] | None = {r for r, _ in links} if inspects else (manageable or None)
             if visible is None:
                 want = [f"42501: you cannot see the links of {tname} {i}"]
                 want += [f"42501: you cannot turn off the links of {tname} {i}"] * len(link_ids(links))
@@ -1392,7 +1394,7 @@ class Checker:
         for tname in self.inspected:
             t = self.types[tname]
             for i, got in snap.get((u, "list_shares", tname), []):
-                if i in state[(tname, "share")] & self.ref.ids(t):
+                if i in self.ref.answers(state, t, "share"):  # (share, on a row they may select)
                     want: Answer = {"ok": sorted(self.shares_now.get((tname, i), []))}
                     got = {"ok": sorted(got["ok"])} if "ok" in got else got  # (the order is the database's)
                 else:
@@ -1603,7 +1605,7 @@ class Checker:
                 if service:
                     judge(f"authz.start_review('{tname}', {i})", got, users_only("start_review"))
                     continue
-                if not holds(t, i, "share"):
+                if "share" not in t.perms or i not in self.ref.answers(state, t, "share"):
                     judge(f"authz.start_review('{tname}', {i})", got, f"42501: you cannot review {tname} {i}")
                     continue
                 items = got.get("items", []) if isinstance(got, dict) else []
@@ -1736,9 +1738,11 @@ class Checker:
                 self.decisions.observe(data, u, self.links_of(u), shares, scope)
             for t in self.types.values():
                 for p in t.perms:
+                    # who asks the permission itself as each one, who_among authz.can: on rows they may select
                     for i in state[(t.name, p)] & self.ref.ids(t):
                         if self.listed(u):
                             holders.setdefault((t.name, p, i), set()).add(u)
+                    for i in self.ref.answers(state, t, p):
                         if signs_in_as_user(u, self.types):
                             among.setdefault((t.name, p, i), set()).add(u)
                     for i, line in snap[(u, "explain", t.name, p)]:
@@ -1752,7 +1756,8 @@ class Checker:
                     # may share it, and so inspect it)
                     for key in ("explain self", "explain self by id"):
                         for i, line in snap.get((u, key, t.name, p), []):
-                            inspects = "share" in t.perms and i in state[(t.name, "share")] & self.ref.ids(t)
+                            # (who may share it, on a row they may select, as authz.can says)
+                            inspects = "share" in t.perms and i in self.ref.answers(state, t, "share")
                             if key == "explain self by id" and self.ref.principal is None:
                                 # signed in as nobody (their row isn't there): the id is another user's, explained
                                 # only to one who may inspect the object
@@ -1829,7 +1834,7 @@ class Checker:
             for t in self.types.values():
                 public = [p for p, x in t.perms.items() if not x.hidden]
                 for i, got in snap.get((u, "perms_of", t.name), []):
-                    want = sorted(p for p in public if i in state[(t.name, p)] & self.ref.ids(t))
+                    want = sorted(p for p in public if i in self.ref.answers(state, t, p))
                     if sorted(got or []) != want:
                         problems.append(f"user {u}: authz.perms_of('{t.name}', [{i}]) says {got}, expected {want}")
             # explain_rule as the app asks it: nothing about a row the user can't see; on one they see, yes exactly
@@ -1849,7 +1854,7 @@ class Checker:
             for t in self.types.values():
                 ids = self.ref.ids(t)
                 for p in t.perms:
-                    want = state[(t.name, p)] & ids
+                    want = self.ref.answers(state, t, p)
                     got = set(snap[(u, "list", t.name, p)])
                     if got != want:
                         problems.append(
@@ -1975,7 +1980,7 @@ class Checker:
         problems: list[str] = []
         for t in self.types.values():
             for p in t.perms:
-                want = state[(t.name, p)] & self.ref.ids(t) if self.scope_allows(scope, "perm", t.name, p) else set()
+                want = self.ref.answers(state, t, p) if self.scope_allows(scope, "perm", t.name, p) else set()
                 got = set(snap[("scoped", "list", t.name, p)])
                 if got != want:
                     problems.append(
@@ -2025,6 +2030,7 @@ class Checker:
                         for ii in state[(tt.name, pp)] & self.ref.ids(tt):
                             if self.listed(u):
                                 out.setdefault((tt.name, pp, ii), set()).add(u)
+                        for ii in self.ref.answers(state, tt, pp):  # (who_among asks authz.can)
                             if signs_in_as_user(u, self.types):
                                 out_all.setdefault((tt.name, pp, ii), set()).add(u)
             self._nocontext, self._nocontext_all = out, out_all

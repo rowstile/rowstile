@@ -2,9 +2,9 @@
 
 The permission's expression says where access can come from: a share, a row in a link table, a column, a
 group the person could join, or the same permission on the object above. Each candidate change is tried in
-a savepoint, as the policy's owner, then checked with authz.can as the person, and undone: only the ones
-that grant it are kept, with what else they would do: every other permission the person would hold, on the
-object and on any other, who else would hold the permission on the object, and what the people in what a change
+a savepoint, as the policy's owner, then checked as the person (the permission itself, authz_int.can, as
+authz.explain says it), and undone: only the ones that grant it are kept, with what else they would do: every other
+permission the person would hold, on the object and on any other, who else would hold the permission on the object, and what the people in what a change
 replaces (the owner a column names now) would no longer hold. Only the permissions a change can reach are counted:
 those that read what it writes, worked out from the policy. A preview that writes and rolls back belongs to the
 command, not to the runtime.
@@ -202,7 +202,8 @@ def reads(c: Compiler) -> dict[Part, set[tuple[Fact, bool]]]:
 @dataclass
 class Held:
     objects: dict[Part, int]  # how many objects of each type the person holds each permission on (those counted)
-    perms: set[str]  # every permission the person holds on the object asked about
+    perms: set[str]  # every permission the person holds on the object asked about (the permission itself)
+    listed: set[str]  # those authz.list counts it in: on a row the person may select (authz.perms)
 
 
 @dataclass
@@ -327,7 +328,7 @@ class Grants:
             if self.probe(
                 f"SELECT 1 AS x WHERE coalesce(authz_int.share_if({lit(key)}, {obj}, {lit(st)}, {subj}, {lit(sr)}), "
                 f"false) AND NOT EXISTS (SELECT 1 FROM unnest($1::text[]) n "
-                f"WHERE NOT coalesce(authz.can({lit(t.name)}, {lit(oid)}, n), false))",
+                f"WHERE NOT coalesce(authz_int.can({lit(t.name)}, {lit(oid)}, n), false))",
                 [need],
             ):
                 ok = True
@@ -579,20 +580,23 @@ class Grants:
         return out - {(self.ptype, self.pid)}
 
     def held(self, who: Person, kinds: Sequence[Part], t: Type, oid: str) -> Held:
-        """What someone holds now: on how many objects of each type each permission of kinds, and every permission
-        on t oid (in one query, signed in as them)."""
+        """What someone holds now: on how many objects of each type each permission of kinds (as authz.list counts
+        them), and every permission on t oid, held and listed (in one query, signed in as them)."""
         from .database import text_array
 
         self.sign_in(who)
         rows = self.db.rows(
-            "SELECT k.t, k.p, (SELECT count(*) FROM authz.list(k.t, k.p)) AS n, false AS here "
+            "SELECT k.t, k.p, (SELECT count(*) FROM authz.list(k.t, k.p)) AS n, '' AS here "
             "FROM unnest($1::text[], $2::text[]) k(t, p) "
-            "UNION ALL SELECT $3, p, 0, true FROM unnest(authz.perms($3, $4)) p",
+            "UNION ALL SELECT $3, p.perm, 0, 'held' FROM authz_int.perms p WHERE p.type = $3 "
+            "AND authz_int.can($3, $4, p.perm) "
+            "UNION ALL SELECT $3, p, 0, 'listed' FROM unnest(authz.perms($3, $4)) p",
             [text_array(tn for tn, _ in kinds), text_array(pn for _, pn in kinds), t.name, oid],
         )
         return Held(
-            {(text(r, "t"), text(r, "p")): number(r, "n") for r in rows if not flag(r, "here")},
-            {text(r, "p") for r in rows if flag(r, "here")},
+            {(text(r, "t"), text(r, "p")): number(r, "n") for r in rows if not text(r, "here")},
+            {text(r, "p") for r in rows if text(r, "here") == "held"},
+            {text(r, "p") for r in rows if text(r, "here") == "listed"},
         )
 
     def before(self, who: Person, kinds: Sequence[Part], t: Type, oid: str) -> Held:
@@ -628,7 +632,9 @@ class Grants:
                             self.db.script(ch.sql)
                         self.sign_in()
                         way.grants = flag(
-                            self.db.rows("SELECT coalesce(authz.can($1, $2, $3), false) AS ok", [t.name, oid, perm])[0],
+                            self.db.rows(
+                                "SELECT coalesce(authz_int.can($1, $2, $3), false) AS ok", [t.name, oid, perm]
+                            )[0],
                             "ok",
                         )
                         if way.grants:
@@ -645,7 +651,7 @@ class Grants:
         except Undo:
             pass
         except self.db.errors as e:
-            # (a read that counts what else it does can fail after authz.can said yes: a way whose cost wasn't
+            # (a read that counts what else it does can fail after authz_int.can said yes: a way whose cost wasn't
             # counted is no answer, only one that couldn't be tried)
             way.grants, way.error = False, getattr(e, "message", str(e))
         return way
@@ -654,13 +660,16 @@ class Grants:
         """What a way that grants it gives the person (on the object, and how many more of each kind), and what it
         takes from the others, from what each held before and after."""
         me = (self.ptype, self.pid)
+
+        def on(tn: str, pn: str, was: Held, now: Held) -> int:
+            """How many more times authz.list counts the object asked about for pn now than before (said as on it)."""
+            return int(pn in now.listed) - int(pn in was.listed) if tn == t.name else 0
+
         was, now = held.pop(me)
         way.also = sorted(now.perms - was.perms - {perm})
         # what it gives on other objects: what is held now on how many, but this one (asked about, or said as "on
-        # it")
-        more = {k: now.objects[k] - was.objects[k] for k in kinds}
-        for p in [perm, *way.also]:
-            more[(t.name, p)] -= 1
+        # it"), which authz.list counts where the person may select it
+        more = {(tn, pn): now.objects[(tn, pn)] - was.objects[(tn, pn)] - on(tn, pn, was, now) for tn, pn in kinds}
         way.more_objects = max(0, more.pop((t.name, perm)))
         # (this object's type first, then the policy's order)
         way.elsewhere = sorted(((tn, pn, n) for (tn, pn), n in more.items() if n > 0), key=lambda x: x[0] != t.name)
@@ -675,8 +684,7 @@ class Grants:
             lost = []
             for before, after in held.values():
                 # (what it gives or takes on the object asked about is said as on it)
-                on_it = int(pn in before.perms) - int(pn in after.perms) if tn == t.name else 0
-                n = before.objects[(tn, pn)] - after.objects[(tn, pn)] - on_it
+                n = before.objects[(tn, pn)] - after.objects[(tn, pn)] + on(tn, pn, before, after)
                 if n > 0:
                     lost.append(n)
             if lost:
@@ -715,7 +723,7 @@ def how_to_grant(
         else []
     )
     g.sign_in()
-    holds = flag(db.rows("SELECT coalesce(authz.can($1, $2, $3), false) AS ok", [type_name, oid, perm])[0], "ok")
+    holds = flag(db.rows("SELECT coalesce(authz_int.can($1, $2, $3), false) AS ok", [type_name, oid, perm])[0], "ok")
     if ptype != "user":
         explain = [text(x, "l") for x in db.rows("SELECT l FROM authz.explain($1, $2, $3) l", [type_name, oid, perm])]
     p = t.perms[perm]

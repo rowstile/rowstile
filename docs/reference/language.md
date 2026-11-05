@@ -172,6 +172,10 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   (a `project.view` that inherits from folders): both are refused (AZ306). <!-- checked: tests/policy_errors.py "a deny on a permission that inherits through a relation to another type too"; tests/policy_errors.py "a deny on a permission that inherits through another type" -->
   Another type's permission beside the deny is fine: in `(viewer or parent.view or project.view) and not hidden`,
   `project.view` gives `view` like `viewer` does, and `hidden` takes it away. <!-- answer: deny-other-types -->
+  A deny made of conditions on the row (`can hidden = {hidden} or parent.hidden`) is held by everyone on the
+  rows it marks, as any permission of conditions alone is. `authz.can`, `authz.list` and `authz.perms` answer
+  for the rows you may select, so on a table with a select rule they tell nobody which rows those are: a row
+  you can't see reads as a missing one ([App code](app-code.md)). <!-- checked: docs/cookbook/deny-that-inherits/tests.authz "as user $bo sees 0"; tests/adversarial.sh "authz.list names only the rows she may see" --> <!-- answer: answers-seen -->
   A condition joined the same way holds at every level:
   `(viewer or parent.view) and {not archived}` stops at an archived folder. <!-- answer: condition-every-level -->
 - **Custom roles**: `roles : user, team#member` says who may hold roles people create at runtime
@@ -229,7 +233,9 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   `sync app.files : view mirrored` keeps a copy of the table for PowerSync, every column but the masked ones and
   each row's readers; with `by`, it is refused (AZ811). <!-- checked: tests/sync.sh "applied: the mirror holds every file, each with its readers, as a JSON array of keys"; tests/policy_errors.py "a mirrored sync line keyed by a type" -->
 - **Tests**: the unnamed `test` section checks the data already in the database, with lines
-  `user|<principal type> X can|cannot PERM TYPE ID` (or `anyone ...`). A named test,
+  `user|<principal type> X can|cannot PERM TYPE ID` (or `anyone ...`). Such a line checks the permission itself,
+  whether X may select the row or not; what `authz.can` answers X is asked with
+  `as user X sees 1 {SELECT WHERE authz.can(...)}`. A named test,
   `test "..."`, brings its own: `given name = {SQL ... RETURNING id}` rows (as whoever applies
   policies; `$name` is what it returned, a key of several columns as its row text), then the same
   checks, and `as user X allowed|refused

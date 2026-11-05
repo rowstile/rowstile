@@ -835,7 +835,7 @@ class Scheduler:
                 state = self.ref.evaluate(data, u)
                 for (t, p), ids in zip(self.world.perms, got, strict=True):
                     assert isinstance(ids, list), ids
-                    db, want = {str(i) for i in ids}, set(state[(t, p)])
+                    db, want = {str(i) for i in ids}, self.ref.answers(state, self.ref.types[t], p)
                     if db != want:
                         problems.append(
                             f"user {u}, {t} {p}: authz.list says {sorted(db)}, the evaluator {sorted(want)}"

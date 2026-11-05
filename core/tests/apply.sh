@@ -996,7 +996,8 @@ dropdb "$SDB"
 
 echo "-- a permission named like what a view's name says of it"
 # the view of r's sources other than columns, and the arrow r.ext to a permission named ext: two views, two names.
-# User 2 owns doc 10 and has user 1 as their vip; user 1 reads doc 11 only
+# User 2 owns doc 10 and has user 1 as their vip; user 1 reads doc 11 only (the permissions themselves, asked as the
+# owner: authz.can answers user 1 only for doc 11, which they may select)
 fresh "$CDB"
 quiet -d "$CDB" -c "CREATE SCHEMA app" -c "CREATE TABLE app.users (id bigint PRIMARY KEY, vip_id bigint)" \
   -c "CREATE TABLE app.docs (id bigint PRIMARY KEY, owner_id bigint)" \
@@ -1010,16 +1011,17 @@ printf '%s\n' "app role app_user" "type user = app.users" "  vip : user = vip_id
 out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/ext.authz" 2>&1)
 got=$(psql -X -q -At -d "$CDB" -c "SET ROLE app_user" -c "SET authz.user_id = 1" \
   -c "SELECT string_agg(id::text, ',' ORDER BY id) FROM app.docs" \
-  -c "SELECT authz.can('doc', '10', 'view'), authz.can('doc', '10', 'promo'), authz.can('doc', '11', 'promo')" \
-  -c "SELECT authz.can('user', '2', 'ext'), authz.can('user', '3', 'ext'), authz.can('user', 'x', 'ext')" \
+  -c "SELECT authz.can('doc', '11', 'promo'), authz.can('user', '2', 'ext'), authz.can('user', '3', 'ext'), authz.can('user', 'x', 'ext')" \
   -c "SELECT (SELECT string_agg(x, ',' ORDER BY x) FROM authz.list('doc', 'promo') x), (SELECT string_agg(x, ',' ORDER BY x) FROM authz.list('user', 'ext') x)" \
-  -c "SELECT array_to_string(authz.perms('doc', '10'), ','), array_to_string(authz.perms('user', '2'), ',')" \
+  -c "SELECT array_to_string(authz.perms('doc', '11'), ','), array_to_string(authz.perms('user', '2'), ',')" \
+  -c "RESET ROLE" -c "SELECT authz_int.can('doc', '10', 'view'), authz_int.can('doc', '10', 'promo'), authz_int.can('doc', '11', 'promo')" \
   2>&1 | tr '\n' ' ')
 # and who and explain, as the tables' owner (who may ask of any object)
 got="$got$(psql -X -q -At -d "$CDB" -c "SELECT (SELECT string_agg(x, ',') FROM authz.who('doc', '10', 'promo') x),
   (SELECT string_agg(x, ',') FROM authz.who('user', '2', 'ext') x), (SELECT count(*) FROM authz.explain('doc', '10', 'promo', '1')) > 0,
   (SELECT count(*) FROM authz.explain('user', '2', 'ext', '1')) > 0" 2>&1)"
-[ "$out" = "$T/ext.authz: applied" ] && [ "$got" = "11 f|t|f t|f|f 10|2 promo|ext 1|1|t|t" ] &&
+# (user 1 lists no doc with promo: doc 10, where they hold it, is a row they may not select)
+[ "$out" = "$T/ext.authz: applied" ] && [ "$got" = "11 f|t|f|f |2 view|ext f|t|f 1|1|t|t" ] &&
   ok "a permission named ext is its own view: a reader sees what they read, not what the arrow r.ext reaches" ||
   bad "a permission named ext" "$out: $got"
 dropdb "$CDB"

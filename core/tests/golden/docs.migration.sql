@@ -3,16 +3,16 @@
 -- + type file: can comment = folder.view
 
 -- a migration is one transaction: outside one, nothing below changes anything
-SELECT pg_catalog.set_config('authz_ctx.migration', '14c3c58ea3a8323a', true);
+SELECT pg_catalog.set_config('authz_ctx.migration', '2aa8aa215fd224ad', true);
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '14c3c58ea3a8323a' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '2aa8aa215fd224ad' THEN
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '14c3c58ea3a8323a' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '2aa8aa215fd224ad' THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
       USING HINT = 'nothing was changed, and this session is read-only from here on; run the file with your migration tool, or with psql -1 -f';
   END IF;
@@ -28,13 +28,13 @@ BEGIN
   IF to_regclass('authz.policy_versions') IS NOT NULL THEN
     EXECUTE 'SELECT lock FROM authz.policy_versions ORDER BY id DESC LIMIT 1' INTO v_lock;
   END IF;
-  IF v_lock = '14c3c58ea3a8323a' THEN
+  IF v_lock = '2aa8aa215fd224ad' THEN
     RAISE EXCEPTION 'rowstile: this database already holds what this migration brings (it ran here before, or rowstile dev or push took the database there): don''t run it, tell your migration tool it is applied [AZ607]'
       USING HINT = 'Prisma: prisma migrate resolve --applied <the migration''s folder>. Alembic: alembic stamp head. '
                    'Others, and why: rowstile help AZ607';
-  ELSIF v_lock IS DISTINCT FROM '06d6510711591508' THEN
+  ELSIF v_lock IS DISTINCT FROM '8e7a7dcde7820733' THEN
     RAISE EXCEPTION 'rowstile: this migration changes the policy the migration before it left (%), but the database has % [AZ607]',
-      '06d6510711591508', coalesce(v_lock, 'none')
+      '8e7a7dcde7820733', coalesce(v_lock, 'none')
       USING HINT = 'apply the migrations in order; a database changed with rowstile push or apply since needs the '
                    'migrations from the start (or rowstile apply of the policy the previous migration left) '
                    '(rowstile help AZ607)';
@@ -124,8 +124,76 @@ INSERT INTO authz_int.perms VALUES
 CREATE VIEW authz_int."file__comment" AS
   SELECT id FROM authz_int."file__folder__view";
 
+-- A permission on an object, whether the user may select its row or not: what the functions that act on the
+-- object ask (sharing, roles, keys, view_as, break_glass, requests), where authz.can's answer is for rows they may see
+CREATE OR REPLACE FUNCTION authz_int.can(p_type text, p_id text, p_perm text) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_bigint bigint;
+BEGIN
+  IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN false; END IF;
+  CASE p_type
+    WHEN 'user' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      CASE p_perm
+        WHEN 'impersonate' THEN RETURN EXISTS (SELECT 1 FROM "app"."users" o WHERE o."id" = v_bigint AND (coalesce((exists (select 1 from app.org_members a join app.org_members b on a.org_id = b.org_id where a.user_id = (SELECT authz.uid()) and a.role = 'admin' and b.user_id = o.id)), false)));
+        ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+      END CASE;
+    WHEN 'org' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+    WHEN 'team' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+    WHEN 'folder' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      CASE p_perm
+        WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR (coalesce((inherit), false)
+    AND authz_int."folder__share__has"(o."parent_id")))));
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND authz_int."folder__edit__has"(o."parent_id")))));
+        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND authz_int."folder__view__has"(o."parent_id"))
+    OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = o."id" AND authz_int."folder__view__has"(s."parent_id")))));
+        WHEN 'break_glass' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")));
+        ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+      END CASE;
+    WHEN 'file' THEN
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
+      v_bigint := p_id::bigint;
+      CASE p_perm
+        WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR authz_int."folder__share__has"(o."folder_id"))));
+        WHEN 'comment' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND (authz_int."folder__view__has"(o."folder_id")));
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR authz_int."folder__edit__has"(o."folder_id"))));
+        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR authz_int."folder__edit__has"(o."folder_id")
+    OR (NOT coalesce((confidential), false)
+    AND authz_int."folder__view__has"(o."folder_id")))));
+        ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
+      END CASE;
+    ELSE
+      RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';
+  END CASE;
+END $f$;
+
 -- Check a permission from app code: SELECT authz.can('file', 11, 'edit')
--- (only objects that exist; plans are cached per session)
+-- (only objects that exist, and on a table with a select rule only rows the user may select: a row they can't see
+-- reads as a missing one; plans are cached per session)
 CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE v_allowed boolean; v_bigint bigint;
@@ -179,7 +247,14 @@ BEGIN
     OR (coalesce((inherit), false)
     AND authz_int."folder__view__has"(o."parent_id"))
     OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = o."id" AND authz_int."folder__view__has"(s."parent_id")))));
-        WHEN 'break_glass' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")));
+        WHEN 'break_glass' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id"))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND authz_int."folder__view__has"(o."parent_id"))
+    OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = o."id" AND authz_int."folder__view__has"(s."parent_id")))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'file' THEN
@@ -188,7 +263,12 @@ BEGIN
       CASE p_perm
         WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__share__has"(o."folder_id"))));
-        WHEN 'comment' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND (authz_int."folder__view__has"(o."folder_id")));
+        WHEN 'comment' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND (authz_int."folder__view__has"(o."folder_id"))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR authz_int."folder__edit__has"(o."folder_id")
+    OR (NOT coalesce((confidential), false)
+    AND authz_int."folder__view__has"(o."folder_id")))));
         WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__edit__has"(o."folder_id"))));
         WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
@@ -324,14 +404,38 @@ BEGIN
     WHEN 'folder.break_glass' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
-        WHERE EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id");
+        WHERE ((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id"))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = o."id"))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
-        WHERE EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")
+        WHERE ((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id"))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = o."id"))))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
-        WHERE o."id" > p_after::bigint AND EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")
+        WHERE o."id" > p_after::bigint AND ((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id"))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR (coalesce((inherit), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = o."id"))))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'file.share' THEN
@@ -356,17 +460,38 @@ BEGIN
     WHEN 'file.comment' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
-        WHERE (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"));
+        WHERE (((EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id")))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"))
+    OR (NOT coalesce((confidential), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
-        WHERE (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))
+        WHERE (((EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id")))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"))
+    OR (NOT coalesce((confidential), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))))))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
-        WHERE o."id" > p_after::bigint AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))
+        WHERE o."id" > p_after::bigint AND (((EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id")))
+    AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"))
+    OR (NOT coalesce((confidential), false)
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))))))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'file.edit' THEN
@@ -472,7 +597,7 @@ BEGIN
 END $f$;
 
 -- Everyone who holds a permission on an object: SELECT * FROM authz.who('folder', 3, 'view')
--- Candidates come from the data (a superset); each is checked with authz.can, as that user.
+-- Candidates come from the data (a superset); each is checked as that user (the permission itself, authz_int.can).
 CREATE OR REPLACE FUNCTION authz.who(p_type text, p_id text, p_perm text) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_c text;
@@ -496,7 +621,7 @@ BEGIN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."user__impersonate__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -516,25 +641,25 @@ BEGIN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."folder__share__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'edit' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."folder__edit__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'view' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."folder__view__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'break_glass' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."folder__break_glass__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -546,25 +671,25 @@ BEGIN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."file__share__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'comment' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."file__comment__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'edit' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."file__edit__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'view' THEN
           FOR v_c IN SELECT DISTINCT x::text FROM authz_int."file__view__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "app"."users" u WHERE u."id" = x) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
-            IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
+            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -607,7 +732,7 @@ BEGIN
     PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
     PERFORM authz_int.sign();
   END IF;
-  v_ok := authz.can(p_type, p_id, p_perm);
+  v_ok := authz_int.can(p_type, p_id, p_perm);
   RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
     || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
   <<asking>> BEGIN
@@ -951,4 +1076,4 @@ test
   user 5 can view file 16      -- erin: Joint project is linked into Company
   user 5 cannot edit file 16   -- links pass on view rights only
 $authz_policy$,
-  $authz_files${}$authz_files$::jsonb, 'BUILD', '14c3c58ea3a8323a');
+  $authz_files${}$authz_files$::jsonb, 'BUILD', '2aa8aa215fd224ad');

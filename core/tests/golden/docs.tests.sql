@@ -20,7 +20,7 @@ BEGIN
             set_config('authz.scopes', '', true);
     v_line := 'line 90'; v_text := 'user 1 can edit file 11';
     PERFORM set_config('authz.user_id', coalesce('1', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '11', 'edit');
+    v_ok := authz_int.can('file', '11', 'edit');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '11', 'edit') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -29,7 +29,7 @@ BEGIN
     END IF;
     v_line := 'line 91'; v_text := 'user 1 cannot view file 13';
     PERFORM set_config('authz.user_id', coalesce('1', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '13', 'view');
+    v_ok := authz_int.can('file', '13', 'view');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '13', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -38,7 +38,7 @@ BEGIN
     END IF;
     v_line := 'line 92'; v_text := 'user 2 can view file 12';
     PERFORM set_config('authz.user_id', coalesce('2', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '12', 'view');
+    v_ok := authz_int.can('file', '12', 'view');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '12', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -47,7 +47,7 @@ BEGIN
     END IF;
     v_line := 'line 93'; v_text := 'user 2 cannot edit file 12';
     PERFORM set_config('authz.user_id', coalesce('2', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '12', 'edit');
+    v_ok := authz_int.can('file', '12', 'edit');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '12', 'edit') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -56,7 +56,7 @@ BEGIN
     END IF;
     v_line := 'line 94'; v_text := 'user 2 can edit file 11';
     PERFORM set_config('authz.user_id', coalesce('2', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '11', 'edit');
+    v_ok := authz_int.can('file', '11', 'edit');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '11', 'edit') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -65,7 +65,7 @@ BEGIN
     END IF;
     v_line := 'line 95'; v_text := 'user 7 can view file 12';
     PERFORM set_config('authz.user_id', coalesce('7', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '12', 'view');
+    v_ok := authz_int.can('file', '12', 'view');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '12', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -74,7 +74,7 @@ BEGIN
     END IF;
     v_line := 'line 96'; v_text := 'user 7 can edit file 11';
     PERFORM set_config('authz.user_id', coalesce('7', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '11', 'edit');
+    v_ok := authz_int.can('file', '11', 'edit');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '11', 'edit') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -83,7 +83,7 @@ BEGIN
     END IF;
     v_line := 'line 97'; v_text := 'user 7 cannot view file 10';
     PERFORM set_config('authz.user_id', coalesce('7', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '10', 'view');
+    v_ok := authz_int.can('file', '10', 'view');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '10', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -92,7 +92,7 @@ BEGIN
     END IF;
     v_line := 'line 98'; v_text := 'user 5 can edit file 12';
     PERFORM set_config('authz.user_id', coalesce('5', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '12', 'edit');
+    v_ok := authz_int.can('file', '12', 'edit');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '12', 'edit') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -101,7 +101,7 @@ BEGIN
     END IF;
     v_line := 'line 99'; v_text := 'user 5 can view file 14';
     PERFORM set_config('authz.user_id', coalesce('5', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '14', 'view');
+    v_ok := authz_int.can('file', '14', 'view');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '14', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -110,7 +110,7 @@ BEGIN
     END IF;
     v_line := 'line 100'; v_text := 'user 6 cannot view folder 1';
     PERFORM set_config('authz.user_id', coalesce('6', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('folder', '1', 'view');
+    v_ok := authz_int.can('folder', '1', 'view');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('folder', '1', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -119,7 +119,7 @@ BEGIN
     END IF;
     v_line := 'line 101'; v_text := 'user 6 can view file 15';
     PERFORM set_config('authz.user_id', coalesce('6', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '15', 'view');
+    v_ok := authz_int.can('file', '15', 'view');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '15', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -128,7 +128,7 @@ BEGIN
     END IF;
     v_line := 'line 102'; v_text := 'user 6 can edit file 16';
     PERFORM set_config('authz.user_id', coalesce('6', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '16', 'edit');
+    v_ok := authz_int.can('file', '16', 'edit');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '16', 'edit') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -137,7 +137,7 @@ BEGIN
     END IF;
     v_line := 'line 103'; v_text := 'user 5 can view file 16';
     PERFORM set_config('authz.user_id', coalesce('5', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '16', 'view');
+    v_ok := authz_int.can('file', '16', 'view');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '16', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -146,7 +146,7 @@ BEGIN
     END IF;
     v_line := 'line 104'; v_text := 'user 5 cannot edit file 16';
     PERFORM set_config('authz.user_id', coalesce('5', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '16', 'edit');
+    v_ok := authz_int.can('file', '16', 'edit');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '16', 'edit') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -221,7 +221,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 12'; v_text := 'user $ann can edit file $f';
     PERFORM set_config('authz.user_id', coalesce(v2_ann, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', v2_f, 'edit');
+    v_ok := authz_int.can('file', v2_f, 'edit');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', v2_f, 'edit') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -230,7 +230,7 @@ BEGIN
     END IF;
     v_line := 'example/docs.test.authz line 13'; v_text := 'user $bo cannot view file $f';
     PERFORM set_config('authz.user_id', coalesce(v2_bo, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', v2_f, 'view');
+    v_ok := authz_int.can('file', v2_f, 'view');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', v2_f, 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -395,7 +395,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 25'; v_text := 'user $ann can view folder $top';
     PERFORM set_config('authz.user_id', coalesce(v3_ann, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('folder', v3_top, 'view');
+    v_ok := authz_int.can('folder', v3_top, 'view');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('folder', v3_top, 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -404,7 +404,7 @@ BEGIN
     END IF;
     v_line := 'example/docs.test.authz line 26'; v_text := 'user $ann cannot view folder $sub';
     PERFORM set_config('authz.user_id', coalesce(v3_ann, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('folder', v3_sub, 'view');
+    v_ok := authz_int.can('folder', v3_sub, 'view');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('folder', v3_sub, 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -469,7 +469,7 @@ BEGIN
     END IF;
     v_line := 'example/docs.test.authz line 31'; v_text := 'user 3 can view file 11';
     PERFORM set_config('authz.user_id', coalesce('3', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '11', 'view');
+    v_ok := authz_int.can('file', '11', 'view');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '11', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -478,7 +478,7 @@ BEGIN
     END IF;
     v_line := 'example/docs.test.authz line 32'; v_text := 'user 3 cannot view file 12';
     PERFORM set_config('authz.user_id', coalesce('3', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '12', 'view');
+    v_ok := authz_int.can('file', '12', 'view');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '12', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -487,7 +487,7 @@ BEGIN
     END IF;
     v_line := 'example/docs.test.authz line 33'; v_text := 'user 3 cannot view file 14';
     PERFORM set_config('authz.user_id', coalesce('3', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '14', 'view');
+    v_ok := authz_int.can('file', '14', 'view');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '14', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -496,7 +496,7 @@ BEGIN
     END IF;
     v_line := 'example/docs.test.authz line 34'; v_text := 'user 3 can view file 16';
     PERFORM set_config('authz.user_id', coalesce('3', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '16', 'view');
+    v_ok := authz_int.can('file', '16', 'view');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '16', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -505,7 +505,7 @@ BEGIN
     END IF;
     v_line := 'example/docs.test.authz line 35'; v_text := 'user 4 can view file 13';
     PERFORM set_config('authz.user_id', coalesce('4', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '13', 'view');
+    v_ok := authz_int.can('file', '13', 'view');
     IF v_ok IS DISTINCT FROM true THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '13', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;
@@ -514,7 +514,7 @@ BEGIN
     END IF;
     v_line := 'example/docs.test.authz line 36'; v_text := 'user 4 cannot view file 11';
     PERFORM set_config('authz.user_id', coalesce('4', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    v_ok := authz.can('file', '11', 'view');
+    v_ok := authz_int.can('file', '11', 'view');
     IF v_ok IS DISTINCT FROM false THEN
       v_msg := (SELECT string_agg(l, E'\n') FROM authz.explain('file', '11', 'view') l);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || coalesce(v_msg, ''))::text;

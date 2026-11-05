@@ -156,7 +156,12 @@ FEATURES: list[Feature] = [
         "Checks and lists: `authz.can`, `authz.list`, `authz.perms`, `authz.perms_of`",
         ("api.can", "api.list", "api.perms", "api.perms_of"),
         Doc(APP, "check, list, all permissions"),
-        (T("scenario.sql", "authz.can("), T("devx.sh", "authz.perms('team'"), T("capitals.sh", "run list")),
+        (
+            T("scenario.sql", "authz.can("),
+            T("devx.sh", "authz.perms('team'"),
+            T("capitals.sh", "run list"),
+            T("adversarial.sh", "authz.list names only the rows she may see"),
+        ),
         (
             T(DIFF, "authz.can("),
             T(DIFF, "authz.list("),
@@ -165,6 +170,7 @@ FEATURES: list[Feature] = [
             T("invariance.py", "the same answers"),
             T("upgrade_world.py", "answers as on a new database"),
         ),
+        hand=("answers-seen",),
     ),
     Feature(
         "api.verify",
