@@ -944,6 +944,7 @@ def test_a_composite_keys_text_is_postgres_own_and_reads_back_as_the_key() -> No
     """One spelling for a message and for authz.explain_rule, which casts it to the key's row type: as Postgres
     writes the row, and read back field for field, whatever a field holds."""
     keys = [("a b", "x,y"), ("", 'q"t'), ("b\\s", "(1)"), ("NULL", "\tx"), ("1", None)]
+    keys += [("\vv", "a\u00a0b"), ("\u2003\x1c", "\r\n\f")]  # quoted for ASCII's six spaces alone, as Postgres does
     with psycopg.connect(libpq(OWNER)) as conn:
         conn.execute("CREATE TYPE pg_temp.pair AS (a text, b text)")
         for key in keys:
