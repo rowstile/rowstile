@@ -83,6 +83,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   failing on it or leaving the app role's URL out.
 - The Rust SDK's `per_binary` names the copy in an app role's URL that names no database, and reads a name the URL
   percent-encodes; the Java SDK's `WorkerDatabase.copy` reads it too, and writes the copy's so.
+- The Elixir SDK's `database_per_partition` connects with SSL when the URL's `sslmode` asks for it, and the PHP
+  SDK's `Databases` pass the URL's settings (`?sslmode=require`) to libpq.
 - The Python SDK's `database_per_worker` keeps a URL whose host is in its settings (`postgresql:///app?host=...`)
   as it is written.
 

@@ -21,7 +21,8 @@ defmodule Rowstile.Testing do
   (fewer, not to cut a character in two), `_`, and the first 8 hex digits of the SHA-256 of the whole name. The copy
   is made by a role that may create databases (the owner), while nothing else is connected to the original. A copy
   an earlier run left is made again, unless `fresh: false`. `partition:` defaults to `MIX_TEST_PARTITION` (1 without
-  it).
+  it). The URL's `sslmode` is the connection's: `require` encrypts it, `verify-ca` and `verify-full` check the
+  server's certificate too (Postgrex's `ssl: true`).
   """
   @spec database_per_partition(String.t(), keyword()) :: String.t()
   def database_per_partition(owner_url, opts \\ []) do
@@ -102,7 +103,9 @@ defmodule Rowstile.Testing do
   end
 
   # Postgrex's settings from the URL, on the database every server has (the copy is made from outside it)
-  defp connection(uri) do
+  @doc false
+  @spec connection(URI.t()) :: keyword()
+  def connection(uri) do
     [user | password] = String.split(uri.userinfo || "", ":", parts: 2)
 
     [
@@ -111,10 +114,17 @@ defmodule Rowstile.Testing do
       username: URI.decode(user),
       password: Enum.map(password, &URI.decode/1) |> List.first(),
       database: "postgres",
+      ssl: ssl(URI.decode_query(uri.query || "")["sslmode"]),
       backoff_type: :stop
     ]
     |> Keyword.reject(fn {_, value} -> value in [nil, ""] end)
   end
+
+  # libpq's sslmode as Postgrex's ssl: require encrypts, without checking the certificate; verify-ca and verify-full
+  # check it (Postgrex checks the host's name as well)
+  defp ssl("require"), do: [verify: :verify_none]
+  defp ssl(mode) when mode in ["verify-ca", "verify-full"], do: true
+  defp ssl(_), do: nil
 
   defp ident(name), do: ~s(") <> String.replace(name, ~s("), ~s("")) <> ~s(")
 
