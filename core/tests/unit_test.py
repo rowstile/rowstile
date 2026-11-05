@@ -3450,7 +3450,14 @@ class Statements(unittest.TestCase):
             ("trigger", '"t" ON "app"."x"'),
         )
         self.assertEqual(made("CREATE TABLE IF NOT EXISTS authz.x (a int)"), ("table", "authz.x"))
-        self.assertEqual(made("CREATE INDEX IF NOT EXISTS x_a ON authz.x (a)"), ("index", "x_a"))
+        # an index is in its table's schema: its key names it, so that dropping it doesn't look for it on the path
+        self.assertEqual(made("CREATE INDEX IF NOT EXISTS x_a ON authz.x (a)"), ("index", "authz.x_a"))
+        self.assertEqual(
+            made('CREATE INDEX "t_ancestor_idx" ON authz_int."t" (ancestor)'), ("index", 'authz_int."t_ancestor_idx"')
+        )
+        self.assertEqual(made('CREATE INDEX "i" ON "app" . "x" (a)'), ("index", '"app"."i"'))
+        self.assertEqual(made("CREATE INDEX i ON x (a)"), ("index", "i"))
+        self.assertIsNone(made("CREATE INDEX ON authz.x (a)"))  # unnamed: goes with its table
         # a parenthesis in a quoted default doesn't end the arguments
         self.assertEqual(
             made("CREATE FUNCTION authz.f(p text DEFAULT ')', q int) RETURNS int AS $$ $$"),
@@ -3552,6 +3559,27 @@ class Migrations(unittest.TestCase):
         self.assertEqual((a.sql, a.lock), (b.sql, b.lock))
         self.assertEqual(self.migrate.parse_lock(a.lock).text, a.lock)
         self.assertTrue(database.migration(self.text, {}, a.lock).empty)
+
+    def test_a_trees_index_is_dropped_by_its_schema(self) -> None:
+        # by its bare name, DROP INDEX looks on the search path: another schema's index of that name would go
+        new = replaced(
+            replaced(
+                self.text,
+                "can view  = edit or viewer or (parent.view and {inherit})\n           or linked_into.view",
+                "can view  = edit or viewer or (parent.view and {inherit})",
+            ),
+            "  linked_into : folder      = app.folder_links(folder_id -> parent_id)  -- also shown inside these\n",
+            "",
+        )
+        m = database.migration(new, {}, self.lock(self.text))
+        self.assertIn('DROP INDEX IF EXISTS authz_int."folder__linked_into_parent__tree_ancestor_idx";', m.sql)
+        self.assertNotIn('DROP INDEX IF EXISTS "folder__linked_into_parent__tree_ancestor_idx";', m.sql)
+        # a lock written before keyed them so: read as the same index, it needs no migration (no tree rebuilt)
+        lock = self.lock(self.text)
+        older = re.sub(r'(?m)^index authz_int\.("[^"]+")', r"index \1", lock)
+        self.assertEqual(older.count('\nindex "'), 2, older)
+        self.assertTrue(database.migration(self.text, {}, older).empty)
+        self.assertEqual(self.migrate.parse_lock(older).objects, self.migrate.parse_lock(lock).objects)
 
     def test_the_first_is_the_whole_policy(self) -> None:
         m = database.migration(self.text, {}, "")

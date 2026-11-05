@@ -197,7 +197,7 @@ CREATE_TABLE = rf"(?i)CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?
 CREATE_TRIGGER = rf"(?is)CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\s+({NAME})\s.*?\bON\s+({QNAME})"
 CREATE_POLICY = rf"(?i)CREATE\s+POLICY\s+({NAME})\s+ON\s+({QNAME})"
 CREATE_INDEX = (
-    rf"(?i)CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?({QNAME})?\s*ON\s+({QNAME})"
+    rf"(?i)CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?({NAME})?\s*ON\s+({QNAME})"
 )
 CREATE_TYPE = rf"(?i)CREATE\s+TYPE\s+({QNAME})"
 CREATE_SCHEMA = rf"(?i)CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?({NAME})"
@@ -212,7 +212,8 @@ def _rx(source: str) -> re.Pattern[str]:
 
 def made(statement: str, comments: str = "") -> tuple[str, str] | None:
     """(kind, key) of the object a statement makes, or None: 'function' with its DROP signature, 'view',
-    'table', 'trigger' ('name ON table'), 'policy' ('name ON table'), 'index', 'type', 'schema', 'rls'.
+    'table', 'trigger' ('name ON table'), 'policy' ('name ON table'), 'index' (in its table's schema), 'type',
+    'schema', 'rls'.
     A statement that makes one indirectly (a DO block) says so in a comment: -- @object view mt.docs_visible"""
     m = _rx(MARK).search(comments)
     if m:
@@ -236,7 +237,11 @@ def made(statement: str, comments: str = "") -> tuple[str, str] | None:
         return "policy", f"{m.group(1)} ON {norm(m.group(2))}"
     m = _rx(CREATE_INDEX).match(s)
     if m:
-        return ("index", norm(m.group(1))) if m.group(1) else None  # unnamed: goes with its table
+        if not m.group(1):
+            return None  # unnamed: goes with its table
+        # an index is made in its table's schema, and DROP INDEX finds it there only if the name says so
+        table = re.findall(NAME, m.group(2))
+        return "index", f"{table[0]}.{m.group(1)}" if len(table) == 2 else m.group(1)
     m = _rx(RLS).match(s)
     if m:
         return "rls", norm(m.group(1))
