@@ -193,18 +193,19 @@ class Profile(BaseModel):
 @app.patch("/api/me")
 def edit_profile(body: Profile, user: DictRow = Depends(auth.current_user)) -> DictRow | None:
     with db.as_user(user["id"]) as tx:
-        return tx.row(
-            "UPDATE ms.users SET name = coalesce(%s, name), about = coalesce(%s, about) WHERE id = %s "
-            "RETURNING id, phone, name, about",
+        n = tx.run(
+            "UPDATE ms.users SET name = coalesce(%s, name), about = coalesce(%s, about) WHERE id = %s",
             (body.name, body.about, user["id"]),
         )
+        return tx.row("SELECT id, phone, name, about FROM ms.people WHERE id = %s", (user["id"],)) if n else None
 
 
 @app.get("/api/people")
 def find_people(phone: str, user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
-    """Someone by their phone number (to start a chat or add them to a group)."""
+    """Someone by their phone number (to start a chat or add them to a group): the one account an exact number
+    names. The app reads no one else's number but those of the people you share a chat with (ms.people)."""
     with db.as_user(user["id"]) as tx:
-        return tx.rows("SELECT id, phone, name, about FROM ms.users WHERE phone = %s", (phone_of(phone),))
+        return tx.rows("SELECT id, phone, name, about FROM ms.find_by_phone(%s)", (phone_of(phone),))
 
 
 # --- chats -------------------------------------------------------------------------------------
@@ -297,7 +298,7 @@ def chat(chat_id: int, user: DictRow = Depends(auth.current_user)) -> DictRow:
         )
         c["members"] = tx.rows(
             "SELECT m.user_id, m.role, m.last_read_seq, u.name, u.phone, u.about "
-            "FROM ms.members m JOIN ms.users u ON u.id = m.user_id WHERE m.chat_id = %s "
+            "FROM ms.members m JOIN ms.people u ON u.id = m.user_id WHERE m.chat_id = %s "
             "ORDER BY array_position(ARRAY['owner', 'admin', 'member'], m.role), u.name",
             (chat_id,),
         )
@@ -569,7 +570,7 @@ def join(token: str, chat: int | None = None, user: DictRow = Depends(auth.curre
 def blocks(user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
     with db.as_user(user["id"]) as tx:
         return tx.rows(
-            "SELECT u.id, u.name, u.phone FROM ms.blocks b JOIN ms.users u ON u.id = b.blocked_id ORDER BY u.name"
+            "SELECT u.id, u.name, u.phone FROM ms.blocks b JOIN ms.people u ON u.id = b.blocked_id ORDER BY u.name"
         )
 
 

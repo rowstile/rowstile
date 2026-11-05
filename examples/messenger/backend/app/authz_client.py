@@ -20,7 +20,8 @@ if TYPE_CHECKING:
 
 PERMISSIONS: dict[str, list[str]] = {
     "user": [
-        "edit"
+        "edit",
+        "see_phone"
     ],
     "bot": [
         "manage",
@@ -51,8 +52,8 @@ SHARED_RELATIONS: dict[str, dict[str, list[str]]] = {
 SCOPES: list[str] = []
 
 ObjectType = Literal["user", "bot", "chat", "message"]
-Permission = Literal["add_members", "edit", "invite", "join", "manage", "manage_keys", "post", "read", "remove", "setup"]
-UserPermission = Literal["edit"]
+Permission = Literal["add_members", "edit", "invite", "join", "manage", "manage_keys", "post", "read", "remove", "see_phone", "setup"]
+UserPermission = Literal["edit", "see_phone"]
 BotPermission = Literal["manage", "manage_keys"]
 ChatPermission = Literal["read", "post", "manage", "invite", "join", "setup", "add_members"]
 MessagePermission = Literal["read", "edit", "remove"]

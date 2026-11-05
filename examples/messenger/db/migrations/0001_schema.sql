@@ -190,6 +190,17 @@ CREATE FUNCTION ms.credentials_for(p_phone text) RETURNS TABLE (user_id uuid, pa
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   SELECT c.user_id, c.password_hash FROM ms.users u JOIN ms.credentials c ON c.user_id = u.id WHERE u.phone = p_phone $$;
 
+-- someone by their phone number, to start a chat or add them to a group: the one account an exact number names,
+-- for a person signed in. Whose number you may see otherwise is the policy's (mask phone : see_phone); this is
+-- the one way to find anyone else. (plpgsql: authz.uid() comes with the policy, applied after the migrations)
+CREATE FUNCTION ms.find_by_phone(p_phone text) RETURNS TABLE (id uuid, phone text, name text, about text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF authz.uid() IS NOT NULL THEN
+    RETURN QUERY SELECT u.id, u.phone, u.name, u.about FROM ms.users u WHERE u.phone = p_phone;
+  END IF;
+END $f$;
+
 -- live updates: the backend listens, and tells each connected person "chat N changed" if they may read
 -- it. A membership change names the person too ("N:user"), so someone removed hears of it.
 CREATE FUNCTION ms.announce() RETURNS trigger
@@ -221,6 +232,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ms TO ms_app;
 REVOKE ALL ON ms.direct_blocks, ms.direct_pairs, ms.credentials FROM ms_app;
 REVOKE ALL ON FUNCTION ms.number_message(), ms.announce(), ms.announce_chat(), ms.stamp_joined_seq(),
   ms.pair_direct(), ms.unpair_direct() FROM PUBLIC;
-REVOKE ALL ON FUNCTION ms.sign_up(text, text, text), ms.session_user(text), ms.credentials_for(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ms.sign_up(text, text, text), ms.session_user(text), ms.credentials_for(text),
+  ms.find_by_phone(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ms.sign_up(text, text, text), ms.session_user(text), ms.credentials_for(text),
-  ms.joined_seq(bigint) TO ms_app;
+  ms.find_by_phone(text), ms.joined_seq(bigint) TO ms_app;
