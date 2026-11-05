@@ -294,6 +294,7 @@ BEGIN
              ('groups', ARRAY['grp', 'key']::name[], ARRAY['text', 'text']::regtype[]),
              ('expanded', ARRAY['object_type', 'object_id', 'key']::name[], ARRAY['text', 'text', 'text']::regtype[]),
              ('definitions', ARRAY['name', 'hash']::name[], ARRAY['text', 'text']::regtype[]),
+             ('due', ARRAY['object_type', 'object_id', 'at']::name[], ARRAY['text', 'text', 'timestamp with time zone']::regtype[]),
              ('file__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[]),
              ('folder__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[])) w(name, cols, types) ON w.name = c.relname
            WHERE c.relnamespace = 'authz_sync'::regnamespace AND c.relkind IN ('r', 'p')
@@ -311,6 +312,7 @@ BEGIN
              ('groups', ARRAY['grp', 'key']::name[], ARRAY['text', 'text']::regtype[]),
              ('expanded', ARRAY['object_type', 'object_id', 'key']::name[], ARRAY['text', 'text', 'text']::regtype[]),
              ('definitions', ARRAY['name', 'hash']::name[], ARRAY['text', 'text']::regtype[]),
+             ('due', ARRAY['object_type', 'object_id', 'at']::name[], ARRAY['text', 'text', 'timestamp with time zone']::regtype[]),
              ('file__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[]),
              ('folder__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[])) w(name, cols, types)
        WHERE w.cols IS NOT NULL AND to_regclass(pg_catalog.format('authz_sync.%I', w.name)) IS NULL) THEN
@@ -334,6 +336,14 @@ ALTER TABLE authz_sync.expanded REPLICA IDENTITY FULL;
 -- what the rows were worked out by: an apply that changes it works them out again (by difference)
 CREATE TABLE IF NOT EXISTS authz_sync.definitions (name text PRIMARY KEY, hash text NOT NULL);
 ALTER TABLE authz_sync.definitions REPLICA IDENTITY FULL;
+-- for each object with a share that starts or ends later: the next such time after its readers were last worked out,
+-- when authz.sync_tick() works them out again
+CREATE TABLE IF NOT EXISTS authz_sync.due (object_type text NOT NULL, object_id text NOT NULL, at timestamptz NOT NULL,
+  PRIMARY KEY (object_type, object_id));
+CREATE INDEX IF NOT EXISTS due_by_at ON authz_sync.due (at);
+ALTER TABLE authz_sync.due REPLICA IDENTITY FULL;
+-- (what an earlier authz.sync_tick() kept: the end of its last run, read no more)
+DELETE FROM authz.settings WHERE key = 'sync_tick_to';
 CREATE TABLE IF NOT EXISTS authz_sync."file__readers" ("id" bigint NOT NULL, key text NOT NULL, PRIMARY KEY ("id", key));
 CREATE INDEX IF NOT EXISTS "file__readers_key" ON authz_sync."file__readers" (key);
 ALTER TABLE authz_sync."file__readers" REPLICA IDENTITY FULL;
@@ -6996,6 +7006,26 @@ BEGIN
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made UNION ALL SELECT 1 FROM gone_from
                                    UNION ALL SELECT 1 FROM made_from) z;
   END LOOP;
+  -- the next start or end of a share on what was worked out, after now(), when authz.sync_tick() works it out again
+  -- (the work reads the shares as of the transaction's start: one that starts or ends while it is open, and a tick
+  -- meanwhile, which can't see what it hasn't committed, are worked out again at the next tick)
+  v_ids := ARRAY(SELECT DISTINCT x.type FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id = '*');
+  WITH w AS MATERIALIZED (SELECT x.type, x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id <> '*'
+                          AND x.type <> ALL (v_ids)),
+  fresh AS MATERIALIZED (
+    SELECT w.type, w.id, b.at FROM w
+    CROSS JOIN LATERAL (SELECT min(v.at) AS at FROM authz.shares g CROSS JOIN LATERAL (VALUES (g.starts_at), (g.expires_at)) v(at)
+                        WHERE g.object_type = w.type AND g.object_id = w.id AND v.at > now()) b
+    WHERE b.at IS NOT NULL
+    UNION ALL
+    SELECT g.object_type, g.object_id, min(v.at) FROM authz.shares g CROSS JOIN LATERAL (VALUES (g.starts_at), (g.expires_at)) v(at)
+    WHERE g.object_type = ANY (v_ids) AND v.at > now() GROUP BY g.object_type, g.object_id),
+  gone AS (DELETE FROM authz_sync.due d USING w WHERE d.object_type = w.type AND d.object_id = w.id
+           AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.type = d.object_type AND f.id = d.object_id) RETURNING 1),
+  gone_all AS (DELETE FROM authz_sync.due d WHERE d.object_type = ANY (v_ids)
+           AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.type = d.object_type AND f.id = d.object_id) RETURNING 1)
+  INSERT INTO authz_sync.due SELECT f.type, f.id, f.at FROM fresh f
+  ON CONFLICT (object_type, object_id) DO UPDATE SET at = EXCLUDED.at WHERE authz_sync.due.at <> EXCLUDED.at;
   DELETE FROM authz_int.sync_todo x WHERE x.txid = v_tx;
 END $f$;
 -- the index worked out again where what it is worked out by changed (p_hash), or all of it (p_force); by difference
@@ -7007,6 +7037,7 @@ BEGIN
   DELETE FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) <> ALL (ARRAY['org#admin:', 'team#member:', 'org#member:']::text[]);
     DELETE FROM authz_sync.keys k WHERE k.principal_type <> ALL (ARRAY['user']::text[]);
     DELETE FROM authz_sync.expanded x WHERE x.object_type <> ALL (ARRAY['file', 'folder']::text[]);
+    DELETE FROM authz_sync.due d WHERE d.object_type <> ALL (ARRAY['file', 'folder', 'org', 'team', 'user']::text[]);
     INSERT INTO authz_int.sync_todo (txid, type, id) SELECT txid_current(), x, '*' FROM unnest(ARRAY['file', 'folder', 'org', 'team', 'user']::text[]) x ON CONFLICT DO NOTHING;
   END IF;
   PERFORM authz_int.sync_process();
@@ -7015,24 +7046,20 @@ BEGIN
   END IF;
 END $f$;
 -- Shares that start or end later change who reads their objects with no write: SELECT authz.sync_tick() works out
--- again the readers of those whose start or end passed since it last ran, and says how many shares. Schedule it
--- (pg_cron, the app's jobs) as often as a share that ends should leave the engines' clients
+-- again the readers of the objects whose next share start or end (authz_sync.due, as of when their readers were last
+-- worked out) has passed, and says how many shares. Schedule it (pg_cron, the app's jobs) as often as a share that
+-- ends should leave the engines' clients
 CREATE OR REPLACE FUNCTION authz.sync_tick() RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE
-  v_from timestamptz := coalesce((SELECT s.value::timestamptz FROM authz.settings s WHERE s.key = 'sync_tick_to'), '-infinity');
   v_to timestamptz := now();
   n bigint;
 BEGIN
-  PERFORM authz_int.sync_dirty(g.object_type, array_agg(DISTINCT g.object_id)) FROM authz.shares g
-  WHERE (g.expires_at > v_from AND g.expires_at <= v_to) OR (g.starts_at > v_from AND g.starts_at <= v_to)
-  GROUP BY g.object_type;
-  SELECT count(*) INTO n FROM authz.shares g
-  WHERE (g.expires_at > v_from AND g.expires_at <= v_to) OR (g.starts_at > v_from AND g.starts_at <= v_to);
-  -- (written in ISO 8601, which every session reads alike whatever its DateStyle)
-  INSERT INTO authz.settings VALUES ('sync_tick_to', to_char(v_to AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
-    ON CONFLICT (key) DO UPDATE SET value = to_char(greatest(authz.settings.value::timestamptz, v_to) AT TIME ZONE 'UTC',
-                                                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
+  SELECT count(*) INTO n FROM authz_sync.due d
+  JOIN authz.shares g ON g.object_type = d.object_type AND g.object_id = d.object_id
+  WHERE d.at <= v_to AND ((g.expires_at >= d.at AND g.expires_at <= v_to) OR (g.starts_at >= d.at AND g.starts_at <= v_to));
+  PERFORM authz_int.sync_dirty(d.object_type, array_agg(d.object_id)) FROM authz_sync.due d WHERE d.at <= v_to
+  GROUP BY d.object_type;
   RETURN n;
 END $f$;
 -- Admin check: the sync index matches a rebuild (false says which part differs, in a notice)
@@ -7146,7 +7173,7 @@ BEGIN
   END LOOP;
 END $ch$;
 
-SELECT authz_int.sync_refresh('4b2012304b07de25c58371671a13da92');
+SELECT authz_int.sync_refresh('851d0265f62dcb4dfc2f050e60ef1ca8');
 DO $sw$
 DECLARE n bigint; m bigint;
 BEGIN

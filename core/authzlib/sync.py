@@ -443,6 +443,9 @@ class SyncMixin(Core):
         text = "\n".join(
             [
                 "after commit" if self.pol.sync_after_commit is not None else "in the transaction",
+                # (the next start or end of each object's shares is kept, authz_sync.due: an index made before it is
+                # worked out again, which fills it)
+                "due",
                 *st.functions,
                 *(self.keys_fn_sql(t) for t in self.sync_principals()),
                 *(f"{n} {self.tree_keep[n][0] if n in self.tree_keep else trees[n]}" for n in sorted(st.trees)),
@@ -594,6 +597,7 @@ CREATE TRIGGER {readers_trig("del")} AFTER DELETE ON {self.readers_table(t)}
                 ("groups", ["grp", "key"], ["text"] * 2),
                 ("expanded", ["object_type", "object_id", "key"], ["text"] * 3),
                 ("definitions", ["name", "hash"], ["text"] * 2),
+                ("due", ["object_type", "object_id", "at"], ["text", "text", "timestamp with time zone"]),
             ]
             + (
                 [("pending", ["id", "at", "type", "ids"], ["bigint", "timestamp with time zone", "text", "text[]"])]
@@ -696,7 +700,15 @@ CREATE INDEX IF NOT EXISTS expanded_by_key ON authz_sync.expanded (key);
 ALTER TABLE authz_sync.expanded REPLICA IDENTITY FULL;
 -- what the rows were worked out by: an apply that changes it works them out again (by difference)
 CREATE TABLE IF NOT EXISTS authz_sync.definitions (name text PRIMARY KEY, hash text NOT NULL);
-ALTER TABLE authz_sync.definitions REPLICA IDENTITY FULL;{pending}{inherit}
+ALTER TABLE authz_sync.definitions REPLICA IDENTITY FULL;
+-- for each object with a share that starts or ends later: the next such time after its readers were last worked out,
+-- when authz.sync_tick() works them out again
+CREATE TABLE IF NOT EXISTS authz_sync.due (object_type text NOT NULL, object_id text NOT NULL, at timestamptz NOT NULL,
+  PRIMARY KEY (object_type, object_id));
+CREATE INDEX IF NOT EXISTS due_by_at ON authz_sync.due (at);
+ALTER TABLE authz_sync.due REPLICA IDENTITY FULL;
+-- (what an earlier authz.sync_tick() kept: the end of its last run, read no more)
+DELETE FROM authz.settings WHERE key = 'sync_tick_to';{pending}{inherit}
 {chr(10).join(tables)}{"".join(chr(10) + self.mirror_base_sql(s, t) for s, t in self.mirrored())}
 REVOKE ALL ON ALL TABLES IN SCHEMA authz_sync FROM PUBLIC;"""
 
@@ -1253,6 +1265,26 @@ BEGIN
     END IF;
   END IF;{expanded}
 {chr(10).join(readers)}
+  -- the next start or end of a share on what was worked out, after now(), when authz.sync_tick() works it out again
+  -- (the work reads the shares as of the transaction's start: one that starts or ends while it is open, and a tick
+  -- meanwhile, which can't see what it hasn't committed, are worked out again at the next tick)
+  v_ids := ARRAY(SELECT DISTINCT x.type FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id = '*');
+  WITH w AS MATERIALIZED (SELECT x.type, x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id <> '*'
+                          AND x.type <> ALL (v_ids)),
+  fresh AS MATERIALIZED (
+    SELECT w.type, w.id, b.at FROM w
+    CROSS JOIN LATERAL (SELECT min(v.at) AS at FROM authz.shares g CROSS JOIN LATERAL (VALUES (g.starts_at), (g.expires_at)) v(at)
+                        WHERE g.object_type = w.type AND g.object_id = w.id AND v.at > now()) b
+    WHERE b.at IS NOT NULL
+    UNION ALL
+    SELECT g.object_type, g.object_id, min(v.at) FROM authz.shares g CROSS JOIN LATERAL (VALUES (g.starts_at), (g.expires_at)) v(at)
+    WHERE g.object_type = ANY (v_ids) AND v.at > now() GROUP BY g.object_type, g.object_id),
+  gone AS (DELETE FROM authz_sync.due d USING w WHERE d.object_type = w.type AND d.object_id = w.id
+           AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.type = d.object_type AND f.id = d.object_id) RETURNING 1),
+  gone_all AS (DELETE FROM authz_sync.due d WHERE d.object_type = ANY (v_ids)
+           AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.type = d.object_type AND f.id = d.object_id) RETURNING 1)
+  INSERT INTO authz_sync.due SELECT f.type, f.id, f.at FROM fresh f
+  ON CONFLICT (object_type, object_id) DO UPDATE SET at = EXCLUDED.at WHERE authz_sync.due.at <> EXCLUDED.at;
   DELETE FROM authz_int.sync_todo x WHERE x.txid = v_tx;
 END $f$;"""
 
@@ -1355,6 +1387,9 @@ END $f$;"""
             + "]::text[]);\n"
             "  DELETE FROM authz_sync.expanded x WHERE x.object_type <> ALL (ARRAY["
             + ", ".join(lit(n) for n in st.tops)
+            + "]::text[]);\n"
+            "  DELETE FROM authz_sync.due d WHERE d.object_type <> ALL (ARRAY["
+            + ", ".join(lit(n) for n in self.sync_relevant())
             + "]::text[]);"
         )
         if st.keyed:
@@ -1364,12 +1399,8 @@ END $f$;"""
                     f"\n  DELETE FROM authz_sync.{table} x WHERE left(x.{col}, strpos(x.{col}, ':')) <> ALL "
                     f"(ARRAY[{heads}]::text[]);"
                 )
-        every = sorted(
-            set(self.sync_group_types())
-            | {t.name for t in self.sync_principals()}
-            | set(st.tops)
-            | set(self.sync_inherit_types())
-        )
+        # (every type whose changes may change the index: the next start or end of their shares is worked out too)
+        every = self.sync_relevant()
         marks = (
             "    INSERT INTO authz_int.sync_todo (txid, type, id) SELECT txid_current(), x, '*' FROM unnest(ARRAY["
             + ", ".join(lit(n) for n in every)
@@ -1445,24 +1476,20 @@ BEGIN
   END IF;
 END $f$;""",
                 f"""-- Shares that start or end later change who reads their objects with no write: SELECT authz.sync_tick() works out
--- again the readers of those whose start or end passed since it last ran, and says how many shares. Schedule it
--- (pg_cron, the app's jobs) as often as a share that ends should leave the engines' clients
+-- again the readers of the objects whose next share start or end (authz_sync.due, as of when their readers were last
+-- worked out) has passed, and says how many shares. Schedule it (pg_cron, the app's jobs) as often as a share that
+-- ends should leave the engines' clients
 CREATE FUNCTION authz.sync_tick() RETURNS bigint
 LANGUAGE plpgsql {DEF} AS $f$
 DECLARE
-  v_from timestamptz := coalesce((SELECT s.value::timestamptz FROM authz.settings s WHERE s.key = 'sync_tick_to'), '-infinity');
   v_to timestamptz := now();
   n bigint;
 BEGIN
-  PERFORM authz_int.sync_dirty(g.object_type, array_agg(DISTINCT g.object_id)) FROM authz.shares g
-  WHERE (g.expires_at > v_from AND g.expires_at <= v_to) OR (g.starts_at > v_from AND g.starts_at <= v_to)
-  GROUP BY g.object_type;
-  SELECT count(*) INTO n FROM authz.shares g
-  WHERE (g.expires_at > v_from AND g.expires_at <= v_to) OR (g.starts_at > v_from AND g.starts_at <= v_to);
-  -- (written in ISO 8601, which every session reads alike whatever its DateStyle)
-  INSERT INTO authz.settings VALUES ('sync_tick_to', to_char(v_to AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
-    ON CONFLICT (key) DO UPDATE SET value = to_char(greatest(authz.settings.value::timestamptz, v_to) AT TIME ZONE 'UTC',
-                                                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
+  SELECT count(*) INTO n FROM authz_sync.due d
+  JOIN authz.shares g ON g.object_type = d.object_type AND g.object_id = d.object_id
+  WHERE d.at <= v_to AND ((g.expires_at >= d.at AND g.expires_at <= v_to) OR (g.starts_at >= d.at AND g.starts_at <= v_to));
+  PERFORM authz_int.sync_dirty(d.object_type, array_agg(d.object_id)) FROM authz_sync.due d WHERE d.at <= v_to
+  GROUP BY d.object_type;
   RETURN n;
 END $f$;""",
                 f"""-- Admin check: the sync index matches a rebuild (false says which part differs, in a notice)

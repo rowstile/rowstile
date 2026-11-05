@@ -52,6 +52,7 @@ Every table there has `REPLICA IDENTITY FULL`, which Electric asks for. <!-- che
 | `groups` | `grp`, `key`: the keys that make up a group's key |
 | `expanded` | `object_type`, `object_id`, `key`: what a row's readers were worked out from, where they are principals |
 | `definitions` | what the index was worked out by, so that applying knows whether to work it out again |
+| `due` | `object_type`, `object_id`, `at`: for each object with a share that starts or ends later, the next such time after its readers were last worked out |
 | `pending` | where the policy says `sync after commit`: the objects each committed change reached, which the worker hasn't worked in yet |
 | `inherits` | keyed by folder: `key`, `source`: for each folder's key, the folders whose own keys it takes (itself, and each one above it that it inherits from) |
 | `given` | keyed by folder: `source`, `key`: the keys each folder gives itself, before what it inherits |
@@ -167,8 +168,11 @@ again when applied: its tables are kept. <!-- checked: tests/sync.sh "an index t
 - In REPEATABLE READ or SERIALIZABLE, a writer takes every lock row, and one whose snapshot is older than another's
   index write gets a serialization error (40001), to retry. <!-- checked: tests/sync.sh "REPEATABLE READ: a writer with a snapshot older than another's index write gets a serialization error" -->
 - Shares that start or end later change who reads their objects with no write. `authz.sync_tick()` works out
-  again the readers of the shares whose start or end passed since it last ran, and says how many shares. Schedule
-  it ([Operations](../operations.md)); until it runs, the index says what it said before. <!-- checked: tests/sync.sh "a second later, before the tick: the index still says so (its stated window)"; tests/sync.sh "authz.sync_tick() works out again the readers of the shares that ended or began since it last ran, and says how many"; tests/sync.sh "after the tick: file 13 is gone, file 12 is there" -->
+  again the readers of the shares whose start or end passed since their objects' readers were last worked out, and
+  says how many shares. Schedule it ([Operations](../operations.md)); until it runs, the index says what it said
+  before. <!-- checked: tests/sync.sh "a second later, before the tick: the index still says so (its stated window)"; tests/sync.sh "authz.sync_tick() works out again the readers of the shares that ended or began since it last ran, and says how many"; tests/sync.sh "after the tick: file 13 is gone, file 12 is there" -->
+  A writer's transaction works shares out as of when it began: one that starts or ends while the transaction is open
+  is worked out again by the first tick after it commits, even when a tick ran meanwhile. <!-- checked: tests/sync.sh "... and the next authz.sync_tick() works them out again: both"; tests/sync.sh "... and the next authz.sync_tick() works it out again" -->
 - Applying keeps the index's tables, so the engines keep their shapes on them, and keeps their rows when what they
   are worked out by didn't change. <!-- checked: tests/sync.sh "applying again leaves the index's rows where they are (none written again)"; tests/sync.sh "... and so does rowstile reapply" -->
   Otherwise it works them out again and writes the difference. <!-- checked: tests/sync.sh "a synced permission changed: the rows that stay are kept, the others written" -->
