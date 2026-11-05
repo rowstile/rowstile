@@ -166,6 +166,70 @@ func TestATransactionIsOnePrincipals(t *testing.T) {
 	}
 }
 
+// handOver begins on a pool, and runs then once each transaction's commit is done, before it returns: pgxpool's
+// Commit has put the connection back in the pool by then
+type handOver struct {
+	pool *pgxpool.Pool
+	then func()
+}
+
+func (h handOver) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := h.pool.Begin(ctx)
+	return thenTx{tx, h.then}, err
+}
+
+type thenTx struct {
+	pgx.Tx
+	then func()
+}
+
+func (t thenTx) Commit(ctx context.Context) error {
+	err := t.Tx.Commit(ctx)
+	t.then()
+	return err
+}
+
+func TestAConnectionBackInThePoolIsTheNextTransactions(t *testing.T) {
+	check(t, "a transaction that commits on a pool forgets its connection before the pool hands it on: the next "+
+		"transaction on it keeps its own savepoints, whenever the first one's Tx returns")
+	ctx := context.Background()
+	cfg, err := pgxpool.ParseConfig(copied.AppURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.MaxConns = 1
+	one, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer one.Close()
+	began, returned, next := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	var said []string
+	// ann's transaction commits; the pool's one connection is bo's next, signed in, before ann's Tx returns
+	err = rowstile.TxAs(ctx, handOver{one, func() {
+		go func() {
+			next <- rowstile.TxAs(ctx, one, rowstile.User("2"), func(ctx context.Context, tx pgx.Tx) error {
+				close(began)
+				<-returned
+				// ann's Tx has returned: bo's savepoint is still bo's
+				return rowstile.Tx(ctx, tx, func(ctx context.Context, inner pgx.Tx) error {
+					said = append(said, whom(ctx, inner))
+					return nil
+				})
+			})
+		}()
+		select {
+		case <-began:
+		case err := <-next:
+			next <- err
+		}
+	}}, rowstile.User("1"), func(context.Context, pgx.Tx) error { return nil })
+	close(returned)
+	if bo := <-next; err != nil || bo != nil || strings.Join(said, ", ") != "user 2" {
+		t.Errorf("%v %v %v", said, bo, err)
+	}
+}
+
 // foreign is the error for work in a transaction Tx didn't begin; noSavepoint for work on a connection in one
 const (
 	foreign = "this connection is in a transaction rowstile.Tx didn't begin: who it is signed in as can't be " +
