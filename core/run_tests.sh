@@ -295,17 +295,8 @@ unit command 540 upgrade
 else
 upgrade() {
 step "upgrading: databases the release before made (from PyPI), pushed to, applied and migrated by this version, and a world of data"
-local out rc
-out=$(tests/upgrade.sh --world 2>&1); rc=$?
-echo "$out"
-# no release to upgrade from yet (none from the beta on is older than this version): it says so and checks nothing,
-# under a name of its own, which tests/check_counts.txt gives no count. PyPI out of reach stays "upgrade", short of
-# its count
-if [ "${out##*$'\n'}" = "upgrade: skipped, nothing to upgrade from" ]; then
-  record $rc "upgrade, skipped: nothing to upgrade from"
-else
-  record $rc "upgrade"
-fi
+tests/upgrade.sh --world
+record $? "upgrade"
 }
 unit command 38 upgrade   # (with the world: 16 s before it, on CI)
 fi

@@ -15481,13 +15481,9 @@ class CheckCounts(unittest.TestCase):
             self.assertIsNone(self.c.FIXED.match(name), name)
 
     def test_an_upgrade_with_nothing_to_upgrade_from(self) -> None:
-        # until a release from the beta on is older than this version, tests/upgrade.sh says so and checks nothing:
-        # run_tests.sh records it under a name of its own, which check_counts.txt doesn't count. The upgrade it
-        # records when it runs keeps its count, and one that checks nothing under that name (PyPI out of reach) falls
-        # short of it
-        skipped = "skip  PyPI has no release ...\nupgrade: skipped, nothing to upgrade from\n"
-        log = f"{skipped}--- passed: upgrade, skipped: nothing to upgrade from (3s)\n"
-        self.assertEqual(self.c.differences(self.c.counted(log), self.c.expected()), [])
+        # the beta is out and versions only grow: a release to upgrade from is always there. One PyPI's index seems
+        # not to have fails the suite (tests/previous_release.py, exit 1), never a skip under a name of its own that
+        # nothing counts. The upgrade that checks nothing under its name (PyPI out of reach) falls short of its count
         self.assertGreater(self.c.expected()["upgrade"], 0)
         self.assertEqual(
             self.c.differences(self.c.counted("upgrade: skipped\n--- passed: upgrade (3s)\n"), self.c.expected()),
@@ -15495,10 +15491,13 @@ class CheckCounts(unittest.TestCase):
         )
         with open(os.path.join(ROOT, "run_tests.sh"), encoding="utf-8") as fh:
             run = fh.read()
-        recorded = '= "upgrade: skipped, nothing to upgrade from" ]; then\n  record $rc "upgrade, skipped: nothing to upgrade from"'
-        self.assertTrue(recorded in run, "run_tests.sh records no skipped upgrade under a name of its own")
+        self.assertEqual(
+            set(re.findall(r'record \S+ "(upgrade[^"]*)"', run)), {"upgrade", "upgrade from every release"}
+        )
         with open(os.path.join(ROOT, "tests", "upgrade.sh"), encoding="utf-8") as fh:
-            self.assertEqual(fh.read().count('echo "upgrade: skipped, nothing to upgrade from"; exit 0'), 2)
+            upgrade = fh.read()
+        self.assertNotIn("nothing to upgrade from", upgrade)
+        self.assertEqual(upgrade.count('echo "upgrade: skipped"; exit 0'), 2)  # PyPI out of reach, alone
 
 
 class Words(unittest.TestCase):
@@ -15978,16 +15977,17 @@ class PreviousRelease(unittest.TestCase):
 
     def test_the_alphas_are_never_the_release_before(self) -> None:
         # the beta started afresh: a database an alpha made is applied from scratch, so PyPI's alphas are nothing
-        # to upgrade from. Until 0.1.0b1 is out the suite says so and skips (exit 3), the nightly's list too
+        # to upgrade from. The beta is out: an index without it was misread, and the suite fails (exit 1), the
+        # nightly's list too, rather than check nothing
         alphas = ["0.1.0a2", "0.1.0a7", "0.1.0a9"]
         nothing = (
-            "PyPI has no release of rowstile from 0.1.0-beta.1 on that is older than 0.1.0-dev: there is nothing to "
-            "upgrade from (a database an alpha before 0.1.0-beta.1 made is applied from scratch, never upgraded)\n"
+            "previous_release: PyPI's index has no release of rowstile from 0.1.0-beta.1 on that is older than "
+            "0.1.0-dev, though 0.1.0-beta.1 is out: there is nothing to upgrade from\n"
         )
         self.assertEqual(self.p.FIRST, "0.1.0-beta.1")
-        self.assertEqual(self.run_on(alphas, "DIR"), (3, nothing, []))
-        self.assertEqual(self.run_on(alphas, "--list"), (3, nothing, []))
-        self.assertEqual(self.run_on([], "DIR"), (3, nothing, []))
+        self.assertEqual(self.run_on(alphas, "DIR"), (1, nothing, []))
+        self.assertEqual(self.run_on(alphas, "--list"), (1, nothing, []))
+        self.assertEqual(self.run_on([], "DIR"), (1, nothing, []))
         # once the beta is out it is the release before, and the first the nightly upgrades from
         self.assertEqual(
             self.run_on([*alphas, "0.1.0b1"], "DIR"), (0, "0.1.0-beta.1\n", ["https://files.example/0.1.0b1"])
