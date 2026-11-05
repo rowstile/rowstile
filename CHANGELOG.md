@@ -186,6 +186,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile review`'s listed small worlds keep the rows of a type whose `where` reads a relation's column
   (`where {owner_id is not null}`): they read it from the row's link, where before no such row was ever kept and
   the type was never tried.
+- `rowstile review` and `rowstile prove` give each value to the other columns a condition reads beside a
+  relation's column (`{owner_id = authz.uid() and not locked}`), in the listed worlds and in the corners, so a
+  change behind a long `and` in such a condition shows.
 
 ### Upgrading
 
