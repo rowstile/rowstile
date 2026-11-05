@@ -77,8 +77,10 @@ export function compiler(py, files) {
 /** @param {string} sql */
 const withoutPsql = (sql) => sql.split("\n").filter((line) => !line.trimStart().startsWith("\\")).join("\n");
 
+// the session as a new connection has it (what the last run SET, its temporary tables, its role), then the
+// database as a new one has it: no schemas or roles but the stock ones, and public owned and granted as Postgres
+// makes it (its owner the database's, USAGE for everyone: the app role reads tables there)
 const RESET = `
-RESET ROLE;
 DO $reset$
 DECLARE r record;
 BEGIN
@@ -92,7 +94,9 @@ BEGIN
   END LOOP;
 END $reset$;
 DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
+CREATE SCHEMA public AUTHORIZATION pg_database_owner;
+GRANT USAGE ON SCHEMA public TO PUBLIC;
+COMMENT ON SCHEMA public IS 'standard public schema';
 `;
 
 /** Where a statement failed, as the page shows it: Postgres's error fields, when it has them.
@@ -132,6 +136,7 @@ export function database(pg) {
       role = null;                                        // the reset below drops the last policy's role
       try {
         await pg.exec("ROLLBACK").catch(() => undefined);     // what a failed run left open (a policy is BEGIN ... COMMIT)
+        await pg.exec("DISCARD ALL");                         // alone: it can't run inside a transaction
         await pg.exec(RESET);
       } catch (e) {
         return failure("reset", e);

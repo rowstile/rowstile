@@ -31,6 +31,17 @@ check("the page loads the Pyodide and PGlite package.json pins",
 let t = Date.now();
 const [py, pg] = await Promise.all([loadPyodide(), PGlite.create()]);
 const loaded = Date.now() - t;
+// the schema public as a new database has it, before any run (each run's reset makes it again)
+/** @returns {Promise<unknown>} */
+const publicSchema = async () => (await pg.query(
+  "SELECT pg_get_userbyid(nspowner) AS owner, nspacl::text AS acl, obj_description(oid, 'pg_namespace') AS comment FROM pg_namespace WHERE nspname = 'public'")).rows[0];
+const freshPublic = await publicSchema();
+// and the session as it starts: settings a run may SET, and its temporary tables
+/** @returns {Promise<unknown>} */
+const session = async () => (await pg.query(`SELECT current_setting('session_replication_role') AS srr,
+  current_setting('search_path') AS path, current_setting('statement_timeout') AS timeout,
+  coalesce(current_setting('authz.user_id', true), '') AS uid, to_regclass('pg_temp.leftover') IS NULL AS no_temp`)).rows[0];
+const freshSession = await session();
 const { compiler: files, examples } = bundle();
 const c = compiler(py, files);
 const db = database(pg);
@@ -120,6 +131,33 @@ const second = await db.run(other.data, must(c.compile(other.policy, other.tests
 // the getting-started example's tables are gone (both examples use the schema app)
 const left = await pg.query("SELECT (to_regclass('app.projects') IS NULL AND to_regclass('app.notes') IS NULL) AS gone");
 check("another example after it, and nothing of the one before", second.ok && left.rows[0].gone === true, [second, left.rows]);
+
+// the tables in the schema public, as Prisma, Django or Rails put them: the app role may use it, run after run
+const inPublic = {
+  policy: "app role app_user\n\ntype user = public.users\n\ntype doc = public.docs\n  owner : user = owner_id\n\n  can view = owner\n\n"
+    + "rules public.docs\n  select : view\n",
+  data: "CREATE TABLE users (id bigint PRIMARY KEY);\nCREATE TABLE docs (id bigint PRIMARY KEY, owner_id bigint REFERENCES users);\n"
+    + "CREATE ROLE app_user NOSUPERUSER NOBYPASSRLS;\nGRANT SELECT ON users, docs TO app_user;\n"
+    + "INSERT INTO users VALUES (1), (2);\nINSERT INTO docs VALUES (10, 1), (20, 2);\n",
+};
+for (const n of [1, 2]) {
+  const run = await db.run(inPublic.data, must(c.compile(inPublic.policy)));
+  const mine = await db.ask("user:1", "SELECT id::int FROM docs");
+  check(`tables in the schema public, run ${n}: the app role reads them, its own rows only`, run.ok && mine.ok
+    && JSON.stringify(mine.rows) === "[[10]]", [run, mine]);
+}
+const publicNow = await publicSchema();
+check("... and the schema public is as a new database has it (its owner, its privileges)",
+  JSON.stringify(publicNow) === JSON.stringify(freshPublic), [freshPublic, publicNow]);
+
+// what a run's SQL sets for the session (SET, a temporary table) is gone at the next run
+const setting = "SET session_replication_role = replica;\nSET search_path = app, public;\nSET statement_timeout = '7s';\n"
+  + "SET authz.user_id = '3';\nCREATE TEMP TABLE leftover (x int);\n";
+await db.run(setting + gs.data, must(c.compile(gs.policy, gs.tests)));
+const reset = await db.run(gs.data, must(c.compile(gs.policy, gs.tests)));
+const sessionNow = await session();
+check("settings and temporary tables the run before made: gone", reset.ok
+  && JSON.stringify(sessionNow) === JSON.stringify(freshSession), [reset.ok, freshSession, sessionNow]);
 
 console.log("-- one thing at a time");
 const inLine = line();
