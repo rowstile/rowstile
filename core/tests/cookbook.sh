@@ -5,9 +5,9 @@
 # without a warning, its tests pass (with the rows there, as in the playground), and every line of policy and
 # tests the page shows is in those files, so the page can't drift. The SQL the page shows runs, and the commands
 # it shows print what it shows. Its invariants, if it states any, are proved, and ask.sql, if it has one (what
-# the playground asks first), runs as the app role. Then the steps docs/cookbook.md gives: `rowstile dev` in a
-# copy of the folder, on a database with only the tables and the rows, applies it and passes its tests. A page
-# without its folder, or a folder without its page, fails.
+# the playground asks first), runs as the app role. Then the steps docs/cookbook.md gives, run as written: in a
+# copy of the folder, on a database with only the tables and the rows, `rowstile dev` applies it and passes its
+# tests. A page without its folder, or a folder without its page, fails.
 #   PGHOST=... PGUSER=authz_owner tests/cookbook.sh
 set -u
 cd "$(dirname "$0")/.."
@@ -15,6 +15,19 @@ BOOK=../docs/cookbook
 fails=0
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
+# the steps docs/cookbook.md gives for trying a recipe: its sh block, run as written for each recipe (below), with
+# the recipe's database for owner_only and `rowstile dev --once` for `rowstile dev`
+STEPS=$(python3 - "$BOOK.md" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+part = text.split("## Trying a recipe on your own database", 1)[-1]
+m = re.search(r"^```sh\n(.*?)^```", part, re.S | re.M)
+print(m.group(1) if m else "")
+PY
+)
+case "$STEPS" in *"createdb owner_only"*"psql -d owner_only"*"DATABASE_URL=postgresql:///owner_only rowstile dev"*)
+  ok "docs/cookbook.md gives the steps for trying a recipe, all three on one connection";;
+  *) bad "docs/cookbook.md's steps for trying a recipe" "$STEPS";; esac
 
 recipe() {
   local name=$1 dir=$BOOK/$1 page=$BOOK/$1.md
@@ -116,9 +129,9 @@ PY
   copy=$(mktemp -d "/tmp/authz_cookbook_${name//-/_}.XXXXXX")
   cp -r "$dir/." "$copy/"
   dropdb --if-exists "${db}_dev" 2>/dev/null
-  createdb "${db}_dev" || { bad "$name: createdb"; rm -rf "$copy"; return; }
-  out=$(cd "$copy" && PGOPTIONS="-c client_min_messages=warning" psql -X -q -v ON_ERROR_STOP=1 -d "${db}_dev" -f schema.sql -f rows.sql >/dev/null &&
-    DATABASE_URL="dbname=${db}_dev" python3 "$here/cli/rowstile_cli.py" dev --once --no-studio 2>&1); rc=$?
+  local steps=${STEPS//owner_only/${db}_dev}
+  steps=${steps//rowstile dev/rowstile dev --once}
+  out=$(cd "$copy" && PGOPTIONS="-c client_min_messages=warning" PATH="$here/cli:$PATH" bash -e -c "$steps" 2>&1); rc=$?
   if [ $rc -eq 0 ] && echo "$out" | grep -q '^  ok   applied' && echo "$out" | grep -q '^  ok   [0-9]* check(s) pass'; then
     ok "$name: rowstile dev in a copy of its folder applies it and passes its tests"
   else

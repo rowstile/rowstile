@@ -88,8 +88,13 @@ In a copy of the folder, with [rowstile installed](installing.md):
 ```sh
 createdb owner_only
 psql -d owner_only -f schema.sql -f rows.sql
-DATABASE_URL=postgresql://localhost/owner_only rowstile dev
+DATABASE_URL=postgresql:///owner_only rowstile dev
 ```
+
+The three lines reach the same server as the same user: the one `PGHOST`, `PGPORT`, `PGUSER` and `PGPASSWORD`
+name, as for `psql`. A URL with no host or user takes them too. For the
+[guide's Docker container](getting-started.md), set them first:
+`export PGHOST=localhost PGUSER=postgres PGPASSWORD=secret`.
 
 - `schema.sql` makes the recipe's tables, in the schema `app`, and the app role, `app_user`, that the app connects as.
   Run it as a Postgres user that may create roles. That user owns the tables, and `rowstile dev` connects as
