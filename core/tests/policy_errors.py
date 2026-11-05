@@ -119,6 +119,13 @@ COMPILE = [
         11,
         "AZ210",
     ),
+    (
+        "roles under two nots",
+        "  roles : user\n  can view = owner and not not roles\n",
+        "doc.view: `not roles` would take a permission away",
+        11,
+        "AZ210",
+    ),
     ("a roles line no permission uses", "  roles : user\n", "no permission writes `roles`", 10, "AZ210"),
     (
         "roles in a type without a roles line",

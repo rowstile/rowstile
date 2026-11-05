@@ -35,6 +35,7 @@ from .parse import (
     conditions_of,
     fail,
     head,
+    leaves,
     names_roles,
     subject_spans,
     tail,
@@ -175,16 +176,6 @@ def only_on(node: Expr) -> list[str] | None:
         case ArrowOn(_, _, types):
             return list(types)
     return None
-
-
-def leaves(node: Expr) -> list[Expr]:
-    """The names, arrows and conditions of an expression, in order."""
-    match node:
-        case Or(items=items) | And(items=items):
-            return [x for item in items for x in leaves(item)]
-        case Not(item=item):
-            return leaves(item)
-    return [node]
 
 
 def renamed(node: Expr, old: str, new: str) -> Expr:
@@ -387,7 +378,7 @@ class Core:
                 )
         for t in self.types.values():
             for p in t.perms.values():
-                if any(isinstance(x, Arrow) and x.rel == ROLES for x in leaves(p.expr)):
+                if any(isinstance(x, Arrow) and x.rel == ROLES for x, _ in leaves(p.expr)):
                     fail(
                         p.loc,
                         f"{t.name}.{p.name}: `{ROLES}` gives the permission it is written in; it isn't a "
@@ -821,7 +812,7 @@ class Core:
         """`this.` names the row a condition is about; a caveat has none, and `this` is no other name."""
 
         def conds(node: Expr) -> list[str]:
-            return [x.sql for x in leaves(node) if isinstance(x, Cond)]
+            return [x.sql for x, _ in leaves(node) if isinstance(x, Cond)]
 
         written: list[tuple[str, Loc]] = []
         for t in self.types.values():
