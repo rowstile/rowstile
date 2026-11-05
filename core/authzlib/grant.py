@@ -12,7 +12,7 @@ command, not to the runtime.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -358,127 +358,121 @@ class Grants:
         return None
 
     # --- the candidate changes ----------------------------------------------------------------------
-    def direct(
-        self, t: Type, r: Relation, src: Source, st: str, sid: str, sr: str = ""
-    ) -> Callable[[str], Change | None]:
+    def direct(self, t: Type, r: Relation, src: Source, st: str, sid: str, oid: str, sr: str = "") -> Change | None:
         """The change that links oid to subject sid through this source (None when it is a link table whose `where`
         doesn't say which values make it true, or the subject's own table)."""
-
-        def make(oid: str) -> Change | None:
-            if src.kind == "shared":
-                who = f"{st}#{sr} {sid}" if sr else f"{st} {sid}"
-                obj, subj = f"authz_int.canon({lit(t.name)}, {lit(oid)})", f"authz_int.canon({lit(st)}, {lit(sid)})"
-                # the share authz.share would make (it needs someone signed in who may share; this is the owner): only
-                # one the relation's `shared if` allows, judged as someone who may share it
-                if src.shared_if and not self.shared_if(t, r, src, oid, st, sid, sr, who):
-                    return None
-                share = (
-                    f"object_type = {lit(t.name)} AND object_id = {obj} AND relation = {lit(r.name)} "
-                    f"AND subject_type = {lit(st)} AND subject_id = {subj} AND subject_relation = {lit(sr)}"
+        if src.kind == "shared":
+            who = f"{st}#{sr} {sid}" if sr else f"{st} {sid}"
+            obj, subj = f"authz_int.canon({lit(t.name)}, {lit(oid)})", f"authz_int.canon({lit(st)}, {lit(sid)})"
+            # the share authz.share would make (it needs someone signed in who may share; this is the owner): only
+            # one the relation's `shared if` allows, judged as someone who may share it
+            if src.shared_if and not self.shared_if(t, r, src, oid, st, sid, sr, who):
+                return None
+            share = (
+                f"object_type = {lit(t.name)} AND object_id = {obj} AND relation = {lit(r.name)} "
+                f"AND subject_type = {lit(st)} AND subject_id = {subj} AND subject_relation = {lit(sr)}"
+            )
+            if self.probe(
+                f"SELECT 1 AS x FROM authz.shares WHERE {share} "
+                "AND expires_at IS NULL AND starts_at IS NULL AND caveat IS NULL"
+            ):
+                return None  # there already, for good: nothing to change
+            # one there already (that expired, say) made again without an end, a start or a caveat, as
+            # authz.share makes it again
+            return Change(
+                "share",
+                f"share {r.name} on {t.name} {oid} with {who}",
+                "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, "
+                f"subject_relation) VALUES ({lit(t.name)}, {obj}, {lit(r.name)}, {lit(st)}, {subj}, {lit(sr)}) "
+                "ON CONFLICT ON CONSTRAINT shares_pkey "
+                "DO UPDATE SET expires_at = NULL, starts_at = NULL, caveat = NULL, caveat_args = NULL",
+                src.loc,
+                1,
+                ("share", t.name, r.name),
+                (st, sid, sr),
+            )
+        # a row of a link table, or a column of the object's own row (relation() never asks for a custom
+        # role's): the subject's columns, each with its value, and in a polymorphic source the one naming its type
+        assert src.kind == "table" or src.kind == "column", f"{t.name}.{r.name}: no change for a {src.kind} source"
+        on = src.subj_col if src.kind == "table" else src.column
+        subject = holding(self.c.types[st], on, sid) + ([(src.type_col, lit(st))] if src.type_col else [])
+        if src.kind == "table":
+            assert src.table and src.obj_col, f"{t.name}.{r.name}: a link table names the object's columns"
+            if src.table == self.c.types[st].table:
+                # the subject's own row says where it is (a group inside a group, a user's team): no row to add,
+                # and changing that row would move it out of where it is
+                self.notes.append(
+                    f"{t.name}.{r.name} wasn't tried: {st} {sid}'s own row of {src.table} says it, and changing "
+                    f"that row would move {st} {sid}"
                 )
-                if self.probe(
-                    f"SELECT 1 AS x FROM authz.shares WHERE {share} "
-                    "AND expires_at IS NULL AND starts_at IS NULL AND caveat IS NULL"
-                ):
-                    return None  # there already, for good: nothing to change
-                # one there already (that expired, say) made again without an end, a start or a caveat, as
-                # authz.share makes it again
-                return Change(
-                    "share",
-                    f"share {r.name} on {t.name} {oid} with {who}",
-                    "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, "
-                    f"subject_relation) VALUES ({lit(t.name)}, {obj}, {lit(r.name)}, {lit(st)}, {subj}, {lit(sr)}) "
-                    "ON CONFLICT ON CONSTRAINT shares_pkey "
-                    "DO UPDATE SET expires_at = NULL, starts_at = NULL, caveat = NULL, caveat_args = NULL",
-                    src.loc,
-                    1,
-                    ("share", t.name, r.name),
-                    (st, sid, sr),
+                return None
+            pairs = holding(t, src.obj_col, oid) + subject
+            names, vals = [c for c, _ in pairs], [v for _, v in pairs]
+            # a source with a `where`: the row must also hold what the condition asks, if it says which values
+            held = settles(src.where) if src.where else {}
+            if held is None or set(held) & set(names):
+                self.notes.append(
+                    f"{t.name}.{r.name} wasn't tried: it reads {src.table} where {{{src.where}}}, and it isn't "
+                    "known which values make that true"
                 )
-            # a row of a link table, or a column of the object's own row (relation() never asks for a custom
-            # role's): the subject's columns, each with its value, and in a polymorphic source the one naming its type
-            assert src.kind == "table" or src.kind == "column", f"{t.name}.{r.name}: no change for a {src.kind} source"
-            on = src.subj_col if src.kind == "table" else src.column
-            subject = holding(self.c.types[st], on, sid) + ([(src.type_col, lit(st))] if src.type_col else [])
-            if src.kind == "table":
-                assert src.table and src.obj_col, f"{t.name}.{r.name}: a link table names the object's columns"
-                if src.table == self.c.types[st].table:
-                    # the subject's own row says where it is (a group inside a group, a user's team): no row to add,
-                    # and changing that row would move it out of where it is
-                    self.notes.append(
-                        f"{t.name}.{r.name} wasn't tried: {st} {sid}'s own row of {src.table} says it, and changing "
-                        f"that row would move {st} {sid}"
-                    )
+                return None
+            more = ", ".join(f"{c} = {constant(v)}" for c, v in held.items())
+            same = " AND ".join(f"{q(c)} = {v}" for c, v in zip(names, vals, strict=True))
+            if self.probe(f"SELECT 1 AS x FROM {qt(src.table)} WHERE {same} LIMIT 1"):
+                # the link's row is there already: nothing to add, or (left out by the condition) its columns
+                # change, unless they hold what it asks already
+                holds = " AND ".join(f"{q(c)} IS NOT DISTINCT FROM {constant(v)}" for c, v in held.items())
+                if not held or self.probe(f"SELECT 1 AS x FROM {qt(src.table)} WHERE {same} AND {holds} LIMIT 1"):
                     return None
-                pairs = holding(t, src.obj_col, oid) + subject
-                names, vals = [c for c, _ in pairs], [v for _, v in pairs]
-                # a source with a `where`: the row must also hold what the condition asks, if it says which values
-                held = settles(src.where) if src.where else {}
-                if held is None or set(held) & set(names):
-                    self.notes.append(
-                        f"{t.name}.{r.name} wasn't tried: it reads {src.table} where {{{src.where}}}, and it isn't "
-                        "known which values make that true"
-                    )
-                    return None
-                more = ", ".join(f"{c} = {constant(v)}" for c, v in held.items())
-                same = " AND ".join(f"{q(c)} = {v}" for c, v in zip(names, vals, strict=True))
-                if self.probe(f"SELECT 1 AS x FROM {qt(src.table)} WHERE {same} LIMIT 1"):
-                    # the link's row is there already: nothing to add, or (left out by the condition) its columns
-                    # change, unless they hold what it asks already
-                    holds = " AND ".join(f"{q(c)} IS NOT DISTINCT FROM {constant(v)}" for c, v in held.items())
-                    if not held or self.probe(f"SELECT 1 AS x FROM {qt(src.table)} WHERE {same} AND {holds} LIMIT 1"):
-                        return None
-                    sets = ", ".join(f"{q(c)} = {constant(v)}" for c, v in held.items())
-                    return Change(
-                        "link",
-                        f"set {more} on {st} {sid}'s row of {src.table} for {t.name} {oid}",
-                        f"UPDATE {qt(src.table)} SET {sets} WHERE {same}",
-                        src.loc,
-                        2,
-                        ("columns", src.table, *held),
-                        (st, sid, sr),
-                    )
-                names += list(held)
-                vals += [constant(v) for v in held.values()]
+                sets = ", ".join(f"{q(c)} = {constant(v)}" for c, v in held.items())
                 return Change(
                     "link",
-                    f"add {st} {sid} to {src.table} for {t.name} {oid}" + (f", with {more}" if held else ""),
-                    f"INSERT INTO {qt(src.table)} ({', '.join(q(x) for x in names)}) VALUES ({', '.join(vals)})",
+                    f"set {more} on {st} {sid}'s row of {src.table} for {t.name} {oid}",
+                    f"UPDATE {qt(src.table)} SET {sets} WHERE {same}",
                     src.loc,
                     2,
-                    ("rows", src.table),
+                    ("columns", src.table, *held),
                     (st, sid, sr),
                 )
-            # the subjects the object's columns name now, for every relation they hold: the change unlinks them, or
-            # (the subject it would name) changes nothing
-            now = [
-                (st2, x, sr2 or "")
-                for r2 in t.relations.values()
-                for s2 in r2.sources
-                if s2.kind == "column" and set(cols(s2.column or ())) & set(cols(on))
-                for st2, sr2 in s2.subjects
-                for x in self.linked(t, r2, s2, st2, sr2, oid)
-            ]
-            if (st, sid, sr) in now:
-                return None
+            names += list(held)
+            vals += [constant(v) for v in held.values()]
             return Change(
-                "column",
-                # a pair: its type column is set too (subject), so the change names it and the type
-                (
-                    f"set {src.type_col}, {', '.join(cols(on))} of {t.name} {oid} to {st} {sid}"
-                    if src.type_col
-                    else f"set {', '.join(cols(on))} of {t.name} {oid} to {sid}"
-                ),
-                f"UPDATE {qt(t.table)} r SET {', '.join(f'{q(c)} = {v}' for c, v in subject)} "
-                f"WHERE {self.c.key_is(t, 'r', lit(oid))}",
+                "link",
+                f"add {st} {sid} to {src.table} for {t.name} {oid}" + (f", with {more}" if held else ""),
+                f"INSERT INTO {qt(src.table)} ({', '.join(q(x) for x in names)}) VALUES ({', '.join(vals)})",
                 src.loc,
-                3,
-                ("columns", t.table, *(c for c, _ in subject)),
+                2,
+                ("rows", src.table),
                 (st, sid, sr),
-                now,
             )
-
-        return make
+        # the subjects the object's columns name now, for every relation they hold: the change unlinks them, or
+        # (the subject it would name) changes nothing
+        now = [
+            (st2, x, sr2 or "")
+            for r2 in t.relations.values()
+            for s2 in r2.sources
+            if s2.kind == "column" and set(cols(s2.column or ())) & set(cols(on))
+            for st2, sr2 in s2.subjects
+            for x in self.linked(t, r2, s2, st2, sr2, oid)
+        ]
+        if (st, sid, sr) in now:
+            return None
+        return Change(
+            "column",
+            # a pair: its type column is set too (subject), so the change names it and the type
+            (
+                f"set {src.type_col}, {', '.join(cols(on))} of {t.name} {oid} to {st} {sid}"
+                if src.type_col
+                else f"set {', '.join(cols(on))} of {t.name} {oid} to {sid}"
+            ),
+            f"UPDATE {qt(t.table)} r SET {', '.join(f'{q(c)} = {v}' for c, v in subject)} "
+            f"WHERE {self.c.key_is(t, 'r', lit(oid))}",
+            src.loc,
+            3,
+            ("columns", t.table, *(c for c, _ in subject)),
+            (st, sid, sr),
+            now,
+        )
 
     def ways(
         self, t: Type, oid: str, node: Expr, depth: int, seen: frozenset[tuple[str, str, str]]
@@ -535,13 +529,13 @@ class Grants:
                 continue
             for st, sr in src.subjects:
                 if st == self.ptype and not sr:
-                    ch = self.direct(t, r, src, st, self.pid)(oid)
+                    ch = self.direct(t, r, src, st, self.pid, oid)
                     if ch:
                         out.append([ch])
                 elif sr and sr != "*":  # (every user, user:*, is no group to join: a share with it is never offered)
                     # a group the person is in already: link the object to it
                     for g in self.groups_of(st, sr):
-                        ch = self.direct(t, r, src, st, g, sr)(oid)
+                        ch = self.direct(t, r, src, st, g, oid, sr)
                         if ch:
                             out.append([ch])
                     # a group the object is linked to already: put the person in it
@@ -716,9 +710,9 @@ def how_to_grant(
     t = permission_of(c, type_name, perm)
     g = Grants(c, db, ptype, pid)
     g.sign_in(False)
-    who = pid if ptype == "user" else f"{ptype}:{pid}"
+    # (authz.explain explains for a user it is given; anyone else, signed in as them, below)
     explain = (
-        [text(x, "l") for x in db.rows("SELECT l FROM authz.explain($1, $2, $3, $4) l", [type_name, oid, perm, who])]
+        [text(x, "l") for x in db.rows("SELECT l FROM authz.explain($1, $2, $3, $4) l", [type_name, oid, perm, pid])]
         if ptype == "user"
         else []
     )
