@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, Group, Member, User } from "./api";
 
-/** Groups: everyone sees them (to share with them); owners and admins run them. */
+/** Groups: everyone sees them (to share with them); owners and admins run them, and only owners delete them. */
 export function Groups({ me }: { me: User }) {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -29,7 +29,7 @@ export function Groups({ me }: { me: User }) {
         {g.manage && <>
           <button className="link" onClick={() => create(g.id)}>Add sub-group</button>
           <button className="link" onClick={() => { const n = prompt("New name", g.name); if (n) run(() => api.renameGroup(g.id, n)); }}>Rename</button>
-          <button className="link" onClick={() => confirm(`Delete ${g.name}?`) && run(() => api.deleteGroup(g.id))}>Delete</button>
+          {g.own && <button className="link" onClick={() => confirm(`Delete ${g.name}?`) && run(() => api.deleteGroup(g.id))}>Delete</button>}
         </>}
       </td>
     </tr>,

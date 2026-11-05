@@ -14,6 +14,7 @@ type group = fm.groups (id uuid)
   parent : group        = parent_id
 
   -- who may rename it, add and remove members and sub-groups: its owner, its admins, and those of the groups above
+  -- (only its owner hands it over or deletes it: the rules of fm.groups)
   can manage = owner or admin or parent.manage
 
 type membership = fm.group_members
@@ -83,8 +84,8 @@ rules fm.groups
   insert                 : owner and ({parent_id is null} or parent.manage)
   update                 : manage
   update parent_id after : {parent_id is null} or parent.manage
-  update id, owner_id    : manage
-  delete                 : manage
+  update id, owner_id    : owner  -- an admin may not take the group from its owner
+  delete                 : owner
 
 rules fm.group_members
   select                : signed_in

@@ -409,11 +409,19 @@ def test_groups_are_run_by_their_owners_and_admins() -> None:
     # its managers rename it (an admin here)
     assert ben.patch(f"/api/groups/{g['id']}", json={"name": "Research, renamed"}).status_code == 200
     assert [x["name"] for x in dan.get("/api/groups").json() if x["id"] == g["id"]] == ["Research, renamed"]
+    # only its owner deletes it: not its admins, nor the owner of the group above (the web app offers it so)
+    r = ben.delete(f"/api/groups/{g['id']}")
+    assert (r.status_code, r.json()["detail"]) == (403, "you may not do that here"), r.text
+    assert any("owner" in line for line in r.json()["why"]), r.json()
+    assert {m["name"] for m in ann.get(f"/api/groups/{g['id']}/members").json()["members"]} == {"ben"}  # all kept
+    assert ann.delete(f"/api/groups/{sub.json()['id']}").status_code == 403
+    listed = {x["id"]: (x["manage"], x["own"]) for x in ben.get("/api/groups").json()}
+    assert (listed[g["id"]], listed[sub.json()["id"]]) == ((True, False), (True, True))
     # a group with sub-groups stays until they go
     r = ann.delete(f"/api/groups/{g['id']}")
     assert (r.status_code, r.json()) == (409, {"detail": "the group has sub-groups: delete them first"})
     assert ann.get(f"/api/groups/{g['id']}/members").status_code == 200
-    assert ann.delete(f"/api/groups/{sub.json()['id']}").status_code == 204
+    assert ben.delete(f"/api/groups/{sub.json()['id']}").status_code == 204
     # its owner deletes a group with members: the app removes them first, through the rules (no cascade does)
     assert ann.delete(f"/api/groups/{g['id']}").status_code == 204
     assert ann.get(f"/api/groups/{g['id']}/members").status_code == 404

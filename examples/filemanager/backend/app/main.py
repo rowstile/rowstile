@@ -200,10 +200,12 @@ def find_users(q: str = "", user: DictRow = Depends(auth.current_user)) -> list[
 def groups(user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
     with db.as_user(user["id"]) as tx:
         manage = set(tx.authz.list("group", "manage"))
+        # own: only its owner may delete it (the web app offers Delete only then)
         rows = tx.rows(
             "SELECT g.id, g.name, g.parent_id, EXISTS (SELECT 1 FROM fm.group_members m "
-            "WHERE m.group_id = g.id AND m.user_id = %s) AS member FROM fm.groups g ORDER BY g.name",
-            (user["id"],),
+            "WHERE m.group_id = g.id AND m.user_id = %s) AS member, coalesce(g.owner_id = %s, false) AS own "
+            "FROM fm.groups g ORDER BY g.name",
+            (user["id"], user["id"]),
         )
     return [dict(r, manage=str(r["id"]) in manage) for r in rows]
 

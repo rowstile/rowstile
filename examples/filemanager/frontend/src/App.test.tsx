@@ -200,8 +200,15 @@ test("a preview's Download that fails says so", async () => {
   expect(div.querySelector(".modal .error")?.textContent).toBe("not found");
 });
 
+test("a group's admins may run it, and only its owner is offered Delete", async () => {
+  const group = (id: string, name: string, own: boolean) => ({ id, name, parent_id: null, member: true, manage: true, own });
+  await start("#/groups", { "GET /api/groups": [group("g1", "Theirs", false), group("g2", "Mine", true)] });
+  expect(actions("Theirs")).toEqual(["Add sub-group", "Rename"]);
+  expect(actions("Mine")).toEqual(["Add sub-group", "Rename", "Delete"]);
+});
+
 test("leaving a group asks only to leave, and a refusal says so", async () => {
-  const team = { id: "g1", name: "Team", parent_id: null, member: true, manage: false };
+  const team = { id: "g1", name: "Team", parent_id: null, member: true, manage: false, own: false };
   await start("#/groups", {
     "GET /api/groups": [team],
     "GET /api/groups/g1/members": { members: [], manage: false },

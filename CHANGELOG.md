@@ -611,6 +611,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   became the file's current one while the file stayed hidden, and the maintenance job then stopped on the
   version's foreign key, leaving the file hidden for good with its name taken. The job removes a file never
   confirmed with every version it has.
+- The file manager example's policy: only a group's owner hands it over or deletes it. Its admins still run its
+  members and sub-groups, but they could make themselves its owner, which took the group from the person who made
+  it, and delete it. The web app offers Delete only to the owner.
 
 ### Upgrading
 
