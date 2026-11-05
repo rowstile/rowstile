@@ -472,11 +472,12 @@ class SyncMixin(Core):
 
     def mirror_rows_sql(self, t: Type, source: str, row: str) -> str:
         """The mirror's rows for the rows of source (as row): every column the mirror has, taken by name (so a masked
-        column, which it hasn't, is left), and the readers."""
+        column, which it hasn't, is left), and the readers. (In FROM, LATERAL: `(f(...)).*` would call f, and look the
+        readers up, once for each column.)"""
         mt = self.mirror_table(t)
         return (
-            f"SELECT (pg_catalog.jsonb_populate_record(NULL::{mt}, pg_catalog.to_jsonb({row}) || "
-            f"pg_catalog.jsonb_build_object('readers', {self.mirror_readers_sql(t, row)}))).* FROM {source} {row}"
+            f"SELECT mr.* FROM {source} {row} CROSS JOIN LATERAL pg_catalog.jsonb_populate_record(NULL::{mt}, "
+            f"pg_catalog.to_jsonb({row}) || pg_catalog.jsonb_build_object('readers', {self.mirror_readers_sql(t, row)})) mr"
         )
 
     def mirror_columns_sql(self, s: Sync, rel: str, mirror: bool = False) -> str:
