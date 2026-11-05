@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, TypeAlias, TypedDict
 
 from .connection import Db, Value, text
 from .parse import Loc, Type, cols
-from .sqlutil import OWN_SCHEMAS, POLICY_MARKS, ident, lit, q, qt
+from .sqlutil import OWN_SCHEMAS, ident, lit, q, qt
 
 if TYPE_CHECKING:
     from . import Compiler
@@ -229,15 +229,6 @@ def describe_missing(missing: list[Missing], tool: str | None) -> str:
 
 
 # --- plans ---------------------------------------------------------------------------------------------
-def app_role(db: Db) -> str | None:
-    rows = db.rows(
-        "SELECT DISTINCT r.rolname AS r FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_description d "
-        f"ON d.objoid = p.oid AND d.classoid = 'pg_catalog.pg_policy'::regclass AND d.description IN {POLICY_MARKS} "
-        "CROSS JOIN unnest(p.polroles) ro JOIN pg_catalog.pg_roles r ON r.oid = ro"
-    )
-    return text(rows[0], "r") if rows else None
-
-
 def sample_principal(db: Db, c: Compiler) -> tuple[str | None, str | None]:
     """Someone to look as: the first user (by key) in the data."""
     for t in c.types.values():
@@ -282,7 +273,7 @@ def walk(plan: dict[str, Value], out: list[str], governed: str) -> None:
 def plans(db: Db, c: Compiler, who: tuple[str, str] | None = None) -> Plans:
     """Each governed table read as someone (default: a user in the data), with EXPLAIN ANALYZE as the app
     role: how long it took, and what looks slow. Runs in the caller's transaction (roll it back)."""
-    from .database import Error, may_take, savepoint
+    from .database import Error, app_role, may_take, savepoint
 
     role = app_role(db)
     if role is None:
@@ -337,7 +328,7 @@ def pct(values: list[float], p: float) -> float | None:
 def bench(db: Db, c: Compiler, people: int = 10, rounds: int = 20, seed: int = 0) -> Bench:
     """p50 and p95 (ms) of the app's paths as several people in the data: reads of each governed table, authz.list
     per permission, authz.can on objects, and updates of visible rows (undone). Runs in the caller's transaction."""
-    from .database import Undo, may_take, savepoint
+    from .database import Undo, app_role, may_take, savepoint
 
     rng = random.Random(seed)
     role = app_role(db)

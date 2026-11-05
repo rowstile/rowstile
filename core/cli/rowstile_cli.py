@@ -157,7 +157,6 @@ import pgwire  # noqa: E402
 from authzlib import database  # noqa: E402
 from authzlib.connection import Row, Value  # noqa: E402
 from authzlib.parse import collect_includes, disk_reader, within  # noqa: E402
-from authzlib.sqlutil import POLICY_MARKS  # noqa: E402
 from authzlib.sqlutil import q as quote_ident  # noqa: E402
 
 T = TypeVar("T")
@@ -712,17 +711,6 @@ Query = Callable[..., list[tuple[Value, ...]]]
 def sign_in(q: Query, who: str) -> None:
     kind, ident = principal(who)
     q("SELECT authz.act_as($1, $2)", [kind, ident or None])
-
-
-def app_role(q: Query) -> str:
-    rows = q(
-        "SELECT DISTINCT r.rolname FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_description d ON d.objoid = p.oid "
-        f"AND d.classoid = 'pg_catalog.pg_policy'::regclass AND d.description IN {POLICY_MARKS} "
-        "CROSS JOIN unnest(p.polroles) ro JOIN pg_catalog.pg_roles r ON r.oid = ro"
-    )
-    if not rows:
-        fail("no policy with rules is applied, so there is no app role to run as", 1)
-    return str(rows[0][0])
 
 
 # --- tests ---------------------------------------------------------------------------------------
@@ -1958,7 +1946,9 @@ def migrate_cmd(
 
 def take_app_role(conn: pgwire.Connection) -> None:
     """The rest of the transaction as the app role; if this connection may not switch to it, what to grant."""
-    role = app_role(conn.query)
+    role = database.app_role(Db(conn))
+    if role is None:
+        fail("no policy with rules is applied, so there is no app role to run as", 1)
     try:
         database.may_take(Db(conn), role)
     except database.Error as e:

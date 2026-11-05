@@ -187,6 +187,18 @@ def savepoint(db: Db, name: str = "authz_sp") -> Iterator[None]:
     db.script(f"RELEASE SAVEPOINT {name}")
 
 
+def app_role(db: Db) -> str | None:
+    """The role the applied policy's rules are for (one: the policy names one app role), from the policies rowstile
+    marks as its own, not those the app wrote itself; None where no policy with rules is applied. The command,
+    Studio, plans and bench read the data as it."""
+    rows = db.rows(
+        "SELECT DISTINCT r.rolname AS r FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_description d "
+        f"ON d.objoid = p.oid AND d.classoid = 'pg_catalog.pg_policy'::regclass AND d.description IN {POLICY_MARKS} "
+        "CROSS JOIN unnest(p.polroles) ro JOIN pg_catalog.pg_roles r ON r.oid = ro ORDER BY 1"
+    )
+    return text(rows[0], "r") if rows else None
+
+
 def may_take(db: Db, role: str | None) -> None:
     """Refuses, saying what to run, when this connection may not switch to the app role (SET ROLE), which the
     commands that look at the data as the app does need. Since PostgreSQL 16 a role only administers the roles
