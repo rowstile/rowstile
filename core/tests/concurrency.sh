@@ -9,7 +9,7 @@ DB=${1:-authz_concurrency}
 T=$(mktemp -d)
 . tests/races.sh
 # whatever way the suite ends: the sessions it left running, its databases and its files
-cleanup() { stop_sessions; for d in "$DB" "${DB}_cross" "${DB}_two" "${DB}_self"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
+cleanup() { stop_sessions; for d in "$DB" "${DB}_cross" "${DB}_two" "${DB}_self" "${DB}_roles"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
 trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 fails=0
@@ -320,6 +320,65 @@ else echo "FAIL  a folder update that writes none, while a folder is moved: $got
 if [ -z "$got2" ]; then echo "ok    a box update that writes none doesn't wait for a box's move"
 else echo "FAIL  a box update that writes none, while a box is moved: $got2"; fails=$((fails + 1)); fi
 dropdb "$X"; rm -f "$T/self.authz" "$T/self.sql"
+
+echo "-- a role changed while it is given: what it gives more is weighed where it is given, whichever goes first"
+# alice (an admin of org 1, owner of folder 1) adds archive to a role given on folder 1, while bob (an editor of
+# folder 2, who doesn't hold archive) gives it on folder 2: the second waits for the first, then sees what it did
+X="${DB}_roles"
+dropdb --if-exists "$X" 2>/dev/null; createdb "$X" || exit 1
+cat > "$T/roles.authz" <<'POLICY'
+app role app_user
+type user = rr.users
+type org = rr.orgs
+  admin : user = rr.admins(org_id -> user_id)
+  can manage_roles = admin
+type folder = rr.folders
+  org    : org  = org_id
+  owner  : user = owner_id
+  editor : user shared by edit
+  roles  : user from org
+  can edit    = owner or editor or roles
+  can archive = owner or roles
+  can share   = edit
+POLICY
+AS_ALICE="SET ROLE app_user; SET authz.user_id = 1;"
+AS_BOB="SET ROLE app_user; SET authz.user_id = 2;"
+python3 compile_policy.py "$T/roles.authz" > "$T/roles.sql" &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -c "CREATE SCHEMA rr" \
+    -c "CREATE TABLE rr.users (id bigint PRIMARY KEY)" -c "CREATE TABLE rr.orgs (id bigint PRIMARY KEY)" \
+    -c "CREATE TABLE rr.admins (org_id bigint, user_id bigint)" \
+    -c "CREATE TABLE rr.folders (id bigint PRIMARY KEY, org_id bigint, owner_id bigint)" \
+    -c "INSERT INTO rr.users VALUES (1), (2), (3)" -c "INSERT INTO rr.orgs VALUES (1)" -c "INSERT INTO rr.admins VALUES (1, 1)" \
+    -c "INSERT INTO rr.folders VALUES (1, 1, 1), (2, 1, NULL)" -f "$T/roles.sql" >/dev/null &&
+  ROLE=$(psql -X -q -At -v ON_ERROR_STOP=1 -d "$X" -c "$AS_ALICE SELECT authz.create_role('org', 1, 'folder', 'r', ARRAY['edit'])") &&
+  psql -X -q -v ON_ERROR_STOP=1 -d "$X" \
+    -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', '2', 'editor', 'user', '2')" \
+    -c "$AS_ALICE SELECT authz.share('folder', 1, 'role:$ROLE', 'user', 3)" >/dev/null || { echo "setup failed (roles)"; exit 1; }
+RACE_DB=$X race
+PGAPPNAME=authz_conc_a psql -X -q -d "$X" -c "BEGIN" -c "$AS_ALICE SELECT authz.set_role_permissions($ROLE, ARRAY['edit', 'archive'])" \
+  -c "$HOLD" -c "COMMIT" > "$out" 2>&1 &
+RACE_DB=$X held authz_conc_a
+PGAPPNAME=authz_conc_b psql -X -q -d "$X" -c "$AS_BOB SELECT authz.share('folder', 2, 'role:$ROLE', 'user', 3)" > "$out.b" 2>&1 &
+RACE_DB=$X blocked authz_conc_b
+RACE_DB=$X go; wait
+if grep -q "you cannot give role r on folder 2: you do not hold archive" "$out.b"; then
+  echo "ok    a share of a role waits for a change to what it gives, then weighs what it gives then"
+else echo "FAIL  a share of a role while it is changed: $(tr '\n' ' ' < "$out.b")"; fails=$((fails + 1)); fi
+psql -X -q -v ON_ERROR_STOP=1 -d "$X" -c "DELETE FROM authz.shares WHERE object_id = '2' AND relation = 'role:$ROLE'" \
+  -c "$AS_ALICE SELECT authz.set_role_permissions($ROLE, ARRAY['edit'])" >/dev/null
+RACE_DB=$X race
+PGAPPNAME=authz_conc_a psql -X -q -d "$X" -c "BEGIN" -c "$AS_BOB SELECT authz.share('folder', 2, 'role:$ROLE', 'user', 3)" \
+  -c "$HOLD" -c "COMMIT" > "$out" 2>&1 &
+RACE_DB=$X held authz_conc_a
+PGAPPNAME=authz_conc_b psql -X -q -d "$X" -c "$AS_ALICE SELECT authz.set_role_permissions($ROLE, ARRAY['edit', 'archive'])" > "$out.b" 2>&1 &
+RACE_DB=$X blocked authz_conc_b
+RACE_DB=$X go; wait
+if grep -q "you cannot give role r on folder 2: you do not hold archive" "$out.b"; then
+  echo "ok    a change to what a role gives waits for a share of it, then weighs where it is given then"
+else echo "FAIL  a role changed while it is shared: $(tr '\n' ' ' < "$out.b")"; fails=$((fails + 1)); fi
+[ "$(psql -X -Atq -d "$X" -c "SELECT string_agg(permission, ',') FROM authz.role_permissions WHERE role_id = $ROLE")" = edit ] &&
+  echo "ok    ... and the role gives what it gave" || { echo "FAIL  the role after the race"; fails=$((fails + 1)); }
+dropdb "$X"; rm -f "$T/roles.authz" "$T/roles.sql"
 
 rm -f "$out" "$out.b"
 dropdb "$DB"

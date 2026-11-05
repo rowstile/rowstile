@@ -102,6 +102,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   object or a team they can't see, as it does when they ask for themselves, and a share's maker, end, start and
   caveat show only where they may list that object's shares (`authz.list_shares`). It says `shared with them` and
   `they are member there` of that user, not `you`.
+- `authz.set_role_permissions` refuses to add a permission the caller doesn't hold on each object the role is given
+  on, as `authz.share` refuses to give the role there (AZ705): "you cannot give role reviewer on folder 2: you do
+  not hold archive", or "on a folder you cannot see" for one they can't see. Taking a permission out still needs
+  only `manage_roles`, and a role given to nobody may still be changed freely. A share of the role made meanwhile
+  waits for the change, and weighs what the role gives then.
 
 ### Upgrading
 

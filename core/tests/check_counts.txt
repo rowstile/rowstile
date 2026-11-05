@@ -6,7 +6,7 @@ apply 169
 capitals 105
 children 122
 cli 179
-concurrency 35
+concurrency 38
 confidence 64
 cookbook 102
 cuts half way 28
@@ -15,7 +15,7 @@ cuts half way, other policies 1
 devx 150
 docs 37
 governance 272
-hand answers 366
+hand answers 370
 identity 91
 interleavings 1440
 interleavings (read committed, boxes) 10
@@ -32,7 +32,7 @@ mcp 75
 migrate vs apply 95
 migrations 79
 moves 23
-multi scenario 99
+multi scenario 114
 policy errors 286
 principals 130
 reference 31

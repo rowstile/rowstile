@@ -680,6 +680,18 @@ class Checker:
             )
             if owner_type in self.role_owners
         }
+        # what each gives now, and the objects it is given on (by a share not expired): a permission it is given
+        # more must be held on each
+        self.role_gives: dict[str, set[str]] = {}
+        for rid, perm in self.db.rows("SELECT role_id, permission FROM authz.role_permissions"):
+            self.role_gives.setdefault(rid, set()).add(perm)
+        self.role_on: dict[str, set[str]] = {}
+        for rid, i in self.db.rows(
+            "SELECT ro.id, g.object_id FROM authz.roles ro JOIN authz.shares g "
+            "ON g.relation = 'role:' || ro.id AND g.object_type = ro.object_type "
+            f"WHERE {NOT_EXPIRED}"
+        ):
+            self.role_on.setdefault(rid, set()).add(i)
         # the relations a link may be given on each type, with the permission that manages them (unsharing one, or
         # turning it off: none if the type hasn't it), as the compiled catalog says
         self.link_by: dict[tuple[str, str], str | None] = {
@@ -1323,7 +1335,13 @@ class Checker:
             elif role is None or not holds(role[0], role[1], "manage_roles"):
                 want = [cannot, cannot]
             else:
-                want = [cannot_grant(role[2], self.role_perms.get(role[2], [])) or "ok", "ok"]
+                perms = self.role_perms.get(role[2], [])
+                more = [p for p in perms if p not in self.role_gives.get(rid, set())]
+                # (which object it names, and how, the scenario says: here, that it refuses)
+                lacks = any(not holds(role[2], i, p) for i in self.role_on.get(rid, set()) for p in more)
+                want = [cannot_grant(role[2], perms) or ("42501: you cannot give role" if lacks else "ok"), "ok"]
+                if isinstance(got, list) and got and str(got[0]).startswith("42501: you cannot give role "):
+                    got = ["42501: you cannot give role", *got[1:]]
             if got != want:
                 problems.append(
                     f"user {u}: authz.set_role_permissions and delete_role of role {rid} ({role}) say {got}, "
