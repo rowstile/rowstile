@@ -1079,5 +1079,27 @@ got="$got$(psql -X -q -At -d "$CDB" -c "SELECT (SELECT string_agg(x, ',') FROM a
   bad "a permission named ext" "$out: $got"
 dropdb "$CDB"
 
+# a closure table is named for its type and link, then tree, and an arrow to a permission named tree (or tree_links,
+# a name the table's own views take) names a view the same: the table takes another. Folder 2 is in folder 1, which
+# user 1 owns; folder 3 is user 2's alone
+fresh "$CDB"
+quiet -d "$CDB" -c "CREATE SCHEMA app" -c "CREATE TABLE app.users (id bigint PRIMARY KEY)" \
+  -c "CREATE TABLE app.folders (id bigint PRIMARY KEY, parent_id bigint, owner_id bigint)" \
+  -c "GRANT USAGE ON SCHEMA app TO app_user" -c "GRANT SELECT ON ALL TABLES IN SCHEMA app TO app_user" \
+  -c "INSERT INTO app.users VALUES (1), (2)" -c "INSERT INTO app.folders VALUES (1, NULL, 1), (2, 1, NULL), (3, NULL, 2)" \
+  >/dev/null || exit 1
+printf '%s\n' "app role app_user" "type user = app.users" "type folder = app.folders" "  parent : folder = parent_id" \
+  "  owner : user = owner_id" "  can view = owner or parent.view" "  can tree = owner" "  can tree_links = owner" \
+  "  can see = parent.tree or parent.tree_links" "rules app.folders" "  select : view or see" > "$T/tree.authz"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/tree.authz" 2>&1)
+got=$(psql -X -q -At -d "$CDB" -c "SET ROLE app_user" -c "SET authz.user_id = 1" \
+  -c "SELECT string_agg(id::text, ',' ORDER BY id) FROM app.folders" \
+  -c "SELECT authz.can('folder', '2', 'see'), authz.can('folder', '2', 'tree'), authz.can('folder', '1', 'tree_links'),
+             authz.can('folder', '3', 'view')" 2>&1 | tr '\n' ' ')
+[ "$out" = "$T/tree.authz: applied" ] && [ "$got" = "1,2 t|f|t|f " ] &&
+  ok "a permission named tree is its own view, apart from the closure table: applied, and each reads what it says" ||
+  bad "a permission named tree" "$out: $got"
+dropdb "$CDB"
+
 rm -rf "$T"
 if [ $fails -eq 0 ]; then echo "apply: all passed"; else echo "apply: $fails failed"; exit 1; fi

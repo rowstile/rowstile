@@ -666,6 +666,30 @@ class Compiling(unittest.TestCase):
         self.assertIn('CREATE VIEW authz_int."doc__r:ext" AS', sql)
         self.assertIn('OR EXISTS (SELECT 1 FROM authz_int."doc__r:ext" v WHERE v.id = "docs"."id")', sql)
 
+    def test_a_closure_table_is_named_apart_from_every_view(self) -> None:
+        """A closure table is named for its types and links, then `tree`, and the views and tables made beside it
+        take its name and a suffix (`_links`): an arrow to a permission named `tree`, or `tree_links`, would name a
+        view the same. The table takes the next free word (`tree2`) instead, and each name is made once."""
+        from authzlib.statements import made, split
+
+        sql = Compiler(
+            parse_policy(
+                "app role app_user\ntype user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
+                "  owner : user = owner_id\n  can view = owner or parent.view\n  can tree = owner\n"
+                "  can tree_links = owner\n  can see = parent.tree or parent.tree_links\n"
+                "rules app.folders\n  select : view or see\n"
+            )
+        ).compile("the policy")
+        names = collections.Counter(
+            m[1] for comments, s in split(sql) if (m := made(s, comments)) and m[0] in ("view", "table", "index")
+        )
+        self.assertEqual([n for n, k in names.items() if k > 1], [])
+        self.assertIn('CREATE TABLE authz_int."folder__parent__tree2"', sql)
+        self.assertIn('CREATE VIEW authz_int."folder__parent__tree" AS', sql)
+        self.assertIn('CREATE VIEW authz_int."folder__parent__tree_links" AS', sql)
+        # a policy without such names keeps its tables' names
+        self.assertIn('CREATE TABLE authz_int."folder__linked_into_parent__tree"', compiled("docs"))
+
     def test_the_types_an_arrow_is_followed_to_name_its_view_each_apart(self) -> None:
         """An arrow followed to some of its relation's types alone (ArrowOn) names them in its view's name, joined
         with '__', which no name holds: to a and b, and to a_b, are two views."""

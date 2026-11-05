@@ -339,6 +339,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A `TRUNCATE` run directly on a partition of a watched table, or on a table that inherits from one, is in the audit
   trail, one line naming that table, and the change feed announces every object of its type. A `TRUNCATE` of the
   table above is still one line, naming it. Before, neither heard of the one below.
+- A policy with a permission or relation named `tree`, or `tree_` and more (`tree_links`), applies: the closure
+  table that an inheritance makes takes another name (`folder__parent__tree2`) where the view of an arrow to that
+  name would have had the table's.
 
 ### Upgrading
 
