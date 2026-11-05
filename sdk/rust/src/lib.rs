@@ -37,6 +37,10 @@ mod error;
 #[cfg(any(feature = "tokio-postgres", feature = "sqlx"))]
 mod queries;
 
+use std::convert::Infallible;
+use std::fmt;
+use std::str::FromStr;
+
 pub use error::{CallError, CallKind, ConnectionProblem, DbError, Error, NotFound, Problem, Refused};
 
 #[cfg(feature = "tokio-postgres")]
@@ -66,6 +70,38 @@ pub enum Principal {
         /// Its id, as text: `42`.
         id: String,
     },
+}
+
+impl fmt::Display for Principal {
+    /// As every SDK writes a principal, and as the audit trail and `created_by` name who acted: `42` for a user,
+    /// `service:3`, or `nobody`; a user whose id holds `:` or is `nobody` is `user:<id>` (`user:a:b`), so that
+    /// [`str::parse`] reads every principal back as itself.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Nobody => f.write_str("nobody"),
+            Self::Signed { principal_type, id } if principal_type != "user" => write!(f, "{principal_type}:{id}"),
+            Self::Signed { id, .. } if id.contains(':') || id == "nobody" => write!(f, "user:{id}"),
+            Self::Signed { id, .. } => f.write_str(id),
+        }
+    }
+}
+
+impl FromStr for Principal {
+    type Err = Infallible;
+
+    /// What [`Display`](fmt::Display) wrote, read back: `service:3` is service 3, `42` and `user:42` user 42,
+    /// `nobody` nobody. For text your own code wrote (a job's argument) and for who acted in the audit trail (its
+    /// `user_id`, a share's `created_by`), which the database writes the same way; not for an id that came from
+    /// outside ([`Principal::user`]).
+    fn from_str(text: &str) -> Result<Self, Infallible> {
+        if text == "nobody" {
+            return Ok(Self::Nobody);
+        }
+        match text.split_once(':') {
+            Some((kind, id)) if !kind.is_empty() && !text.starts_with('(') => Ok(Self::of(kind, id)),
+            _ => Ok(Self::user(text)),
+        }
+    }
 }
 
 impl Principal {
@@ -98,20 +134,25 @@ pub trait Permission: Copy + Sized + 'static {
     fn from_name(name: &str) -> Option<Self>;
 }
 
-/// A page of a list: the ids after `after` (none: from the first), `limit` of them.
+/// A page of a list: the ids after `after` (none: from the first), `limit` of them (none: every one after it, as a
+/// page without a size is in every SDK).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Page {
     /// The last id of the page before, as the database writes it.
     pub after: Option<String>,
     /// How many ids.
-    pub limit: i32,
+    pub limit: Option<i32>,
 }
 
 /// A key of several columns as Postgres writes a row's key, and as the `authz.*` functions read it: `(1,2)`, a
-/// field quoted only where Postgres would (empty, or holding a comma, a quote, a backslash, a parenthesis or a
-/// space), and nothing for a NULL. A key of one column is its value as text: `7`.
+/// field quoted only where Postgres would (empty, or holding a comma, a quote, a backslash, a parenthesis or one of
+/// ASCII's six spaces, and for no other character), and nothing for a NULL. A key of one column is its value as
+/// text: `7`, and so is a key given here as one field.
 #[must_use]
 pub fn composite_key(fields: &[Option<&str>]) -> String {
+    if let [field] = fields {
+        return field.unwrap_or_default().to_owned();
+    }
     let shown: Vec<String> = fields
         .iter()
         .map(|field| match field {

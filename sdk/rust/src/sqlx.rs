@@ -121,7 +121,7 @@ async fn list_named(
     perm: &str,
     page: Option<&Page>,
 ) -> Result<Vec<String>, Error> {
-    let (after, limit) = page.map_or((None, None), |p| (p.after.clone(), Some(p.limit)));
+    let (after, limit) = page.map_or((None, None), |p| (p.after.clone(), p.limit));
     let query = ::sqlx::query_scalar(LIST).bind(kind).bind(perm).bind(after).bind(limit);
     query.fetch_all(conn).await.map_err(Error::from)
 }

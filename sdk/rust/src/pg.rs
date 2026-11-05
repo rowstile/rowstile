@@ -112,7 +112,7 @@ pub async fn list<P: Permission>(tx: &Transaction<'_>, perm: P, page: Option<&Pa
 }
 
 async fn list_named(tx: &Transaction<'_>, kind: &str, perm: &str, page: Option<&Page>) -> Result<Vec<String>, Error> {
-    let (after, limit) = page.map_or((None, None), |p| (p.after.as_deref(), Some(p.limit)));
+    let (after, limit) = page.map_or((None, None), |p| (p.after.as_deref(), p.limit));
     let rows = tx.query(LIST, &[&kind, &perm, &after, &limit]).await?;
     Ok(rows.iter().map(|row| row.get(0)).collect())
 }

@@ -89,8 +89,7 @@ async fn buttons(mut tx: Tx) -> Result<Json<HashMap<String, Vec<&'static str>>>,
 
 #[derive(Deserialize)]
 struct PageQuery {
-    #[serde(default)]
-    limit: i32,
+    limit: Option<i32>,
     after: Option<String>,
 }
 
