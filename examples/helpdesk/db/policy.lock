@@ -171,7 +171,7 @@ function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | d586b995eeb5 shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | e98f52f28997 shape=1223ad2f
-function authz.lint() | 40b5f464f3f4 shape=54cb1505
+function authz.lint() | 04284fce1de7 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 998f85a26f4a shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
@@ -412,8 +412,8 @@ function authz_int."integration__col_audit_ins"() | a1e3f06dc631 shape=9956f188
 function authz_int."integration__col_audit_row"() | 129102b2fb88 shape=798b3f2b
 function authz_int."integration__col_audit_trunc"() | df5b3abd97b9 shape=1fd2164c
 function authz_int."integration__col_audit_upd"() | 27ed352d430d shape=f801b8ad
-function authz_int."integration__keys_gone"() | 8ebfd9719d44 shape=5e63d5f0
-function authz_int."integration__keys_gone_all"() | 05694e2a44ac shape=960f840e
+function authz_int."integration__keys_gone"() | b3dbd3d82434 shape=5e63d5f0
+function authz_int."integration__keys_gone_all"() | c8f5d501a46f shape=960f840e
 function authz_int."integration__keys_gone_id"() | 70602e31200f shape=ef2c5158
 function authz_int."integration__manage_keys__who"(p_id uuid) | 36fa06d2641c shape=748bd7fc
 function authz_int."integration__manage_keys__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | c71137de6905 shape=650958ce
@@ -486,8 +486,8 @@ function authz_int."team__col_audit_ins"() | 564e1dcb610f shape=af978119
 function authz_int."team__col_audit_row"() | f59c4fcfedc9 shape=ba488e96
 function authz_int."team__col_audit_trunc"() | c02683c0de8b shape=381203bc
 function authz_int."team__col_audit_upd"() | 0967d3a7187e shape=140c8259
-function authz_int."team__forget"() | f9d71ef37258 shape=8418a4fe
-function authz_int."team__forget_all"() | b305819d1ee2 shape=64a8189c
+function authz_int."team__forget"() | 3ee65c87bfe5 shape=8418a4fe
+function authz_int."team__forget_all"() | b37921254459 shape=64a8189c
 function authz_int."team__forget_id"() | 5d0b1ac42ca6 shape=3856e655
 function authz_int."team__lead__who"(p_id uuid) | 8ad402afe17b shape=dbf900b1
 function authz_int."team__lead__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | bb8a27cc5951 shape=a7e9a277
@@ -523,8 +523,8 @@ function authz_int."ticket__col_audit_ins"() | c6ce474f99f3 shape=9ca354c4
 function authz_int."ticket__col_audit_row"() | 36ca5affe68d shape=f27df45d
 function authz_int."ticket__col_audit_trunc"() | 973a0c75241e shape=6809ee0d
 function authz_int."ticket__col_audit_upd"() | 340089664079 shape=38d46fc0
-function authz_int."ticket__forget"() | cc00aade2f8e shape=1dbeb6f9
-function authz_int."ticket__forget_all"() | d82185e77252 shape=937e5e71
+function authz_int."ticket__forget"() | 3d214e378d96 shape=1dbeb6f9
+function authz_int."ticket__forget_all"() | 1bca9173f331 shape=937e5e71
 function authz_int."ticket__forget_id"() | c8bb02671513 shape=2a3eb262
 function authz_int."ticket__manage__who"(p_id uuid) | 824cadb76bd7 shape=c1109113
 function authz_int."ticket__manage__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | 0e2d6af9c912 shape=a631ab15
@@ -549,13 +549,13 @@ function authz_int."user__col_audit_ins"() | 51b037fe507a shape=dba70c6d
 function authz_int."user__col_audit_row"() | 8e7d140afa3c shape=da434128
 function authz_int."user__col_audit_trunc"() | 417be7f14246 shape=f87e3f72
 function authz_int."user__col_audit_upd"() | f77b56aca502 shape=9e749ca9
-function authz_int."user__forget"() | f9515de18e8f shape=4753fdb6
-function authz_int."user__forget_all"() | c97654019e3e shape=1ea7139a
+function authz_int."user__forget"() | 3dca5926f2d5 shape=4753fdb6
+function authz_int."user__forget_all"() | fb64375cbc74 shape=1ea7139a
 function authz_int."user__forget_id"() | ff845dd1857b shape=d0d8b00d
 function authz_int."user__impersonate__who"(p_id uuid) | a98614eb420b shape=5ad0d9d9
 function authz_int."user__impersonate__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | e6e1c8e363b6 shape=7217a486
-function authz_int."user__keys_gone"() | 105cdeea339c shape=5bf35a03
-function authz_int."user__keys_gone_all"() | 1841b43ed967 shape=8da0a478
+function authz_int."user__keys_gone"() | a3771706856e shape=5bf35a03
+function authz_int."user__keys_gone_all"() | 263c92760522 shape=8da0a478
 function authz_int."user__keys_gone_id"() | 22b32b93c393 shape=0e7cbdbc
 function authz_int."user__org__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | ef127f37ecae shape=ca4b8ad4
 function authz_int."user__org_tickets__who"(p_id uuid) | 57ec472503b4 shape=1e68610e
@@ -604,7 +604,7 @@ function authz_int.canon(p_type text, p_id text) | b53f920634eb shape=ab774d8a
 function authz_int.changed(p_type text, p_ids text[], p_cause text) | ea7f9d82be5d shape=7a5b1adc
 function authz_int.check_manage_keys(p_type text, p_id text) | 1e1b710abecd shape=391727a0
 function authz_int.check_writable() | 87ff3161cc1d shape=a16d3e7b
-function authz_int.child_triggers() | 00d9e2928aa2 shape=52e92456
+function authz_int.child_triggers() | 376787138a7e shape=52e92456
 function authz_int.dependents(p_type text, p_ids text[]) | c4c4caf986f6 shape=8a4f5a6e
 function authz_int.forget_marks(p_type text, p_ids text[]) | 2ddee1fcc0be shape=8933fd55
 function authz_int.hmac_sha256(p_key bytea, p_msg bytea) | 33edf164bad5 shape=4d6b17ae
@@ -704,7 +704,7 @@ step mask_privileges | 26af74835f67
 step share_indexes | d5864430446d
 step sweep | 720e0c5ae09f
 step sync_base | bcfc868f7650
-step sync_refresh | bf17e8404d6c
+step sync_refresh | f25732325514
 step tables | ef6cba4514a6
 table authz_gen.policy_lines | 7e497c6e8386 shape=dcfedc96
 table authz_int."team__parent__tree" | ed6220be97e0 shape=ed6220be tree=team__parent__tree
@@ -723,9 +723,9 @@ table authz_int.sync_lost | 59ba131ae3a1 shape=59ba131a
 table authz_int.sync_moved | c49c430f9bba shape=6c60da1e
 table authz_int.sync_queued | 360d686b7075 shape=360d686b
 table authz_int.sync_todo | 5530cc58dc54 shape=80f2cd19
-table authz_int.trees | 6ec52cbb3848 shape=02db6ec7
+table authz_int.trees | d60273318cdb shape=02db6ec7
 table authz_int.types | 792f565ea964 shape=b6d5b497
-tree team__parent__tree | 01127a10f748941f5e847c4b203cc8e0
+tree team__parent__tree | aa91799276d4d4594c8ae8544af23883
 trigger "authz_comment_col_audit_del" ON "hd"."comments" | acd8165d405c
 trigger "authz_comment_col_audit_ins" ON "hd"."comments" | 5413fcc0e27f
 trigger "authz_comment_col_audit_row" ON "hd"."comments" | a636a0768e9d
@@ -744,8 +744,8 @@ trigger "authz_integration_col_audit_upd" ON "hd"."integrations" | dd345b20f968
 trigger "authz_integration_keys_gone_del" ON "hd"."integrations" | 5eda49ea244b
 trigger "authz_integration_keys_gone_id" ON "hd"."integrations" | b33822b800c5
 trigger "authz_integration_keys_gone_moved" ON "hd"."integrations" | bf3f40189b71
-trigger "authz_integration_keys_gone_trunc" ON "hd"."integrations" | adf9310515f8
-trigger "authz_integration_keys_gone_trunc_first" ON "hd"."integrations" | 363383a9cce8
+trigger "authz_integration_keys_gone_trunc" ON "hd"."integrations" | 33b7e06ccba0
+trigger "authz_integration_keys_gone_trunc_first" ON "hd"."integrations" | f522ac378fd1
 trigger "authz_leadership_col_audit_del" ON "hd"."team_leads" | e4e6efd7d132
 trigger "authz_leadership_col_audit_ins" ON "hd"."team_leads" | 266c438d74a5
 trigger "authz_leadership_col_audit_row" ON "hd"."team_leads" | e9ba416ca321
@@ -783,7 +783,7 @@ trigger "authz_support_grant_col_audit_trunc" ON "hd"."support_access" | 88230a0
 trigger "authz_support_grant_col_audit_upd" ON "hd"."support_access" | a9cec30577c4
 trigger "authz_team__parent__tree_del" ON "hd"."teams" | 47203577cb11 tree=team__parent__tree
 trigger "authz_team__parent__tree_ins" ON "hd"."teams" | 82400a2c6f89 tree=team__parent__tree
-trigger "authz_team__parent__tree_trunc" ON "hd"."teams" | 61b6761b34a5 tree=team__parent__tree
+trigger "authz_team__parent__tree_trunc" ON "hd"."teams" | 83bf9571e62e tree=team__parent__tree
 trigger "authz_team__parent__tree_upd" ON "hd"."teams" | a0ca5a6326c8 tree=team__parent__tree
 trigger "authz_team_col_audit_del" ON "hd"."teams" | d27f229e2726
 trigger "authz_team_col_audit_ins" ON "hd"."teams" | 8f6db26a2618
@@ -793,8 +793,8 @@ trigger "authz_team_col_audit_upd" ON "hd"."teams" | 5755941bf12e
 trigger "authz_team_forget_del" ON "hd"."teams" | 8aee03970e54
 trigger "authz_team_forget_id" ON "hd"."teams" | 2db0bb4bac26
 trigger "authz_team_forget_moved" ON "hd"."teams" | d03662e5eab4
-trigger "authz_team_forget_trunc" ON "hd"."teams" | 030b525ba508
-trigger "authz_team_forget_trunc_first" ON "hd"."teams" | 6d6b2093f286
+trigger "authz_team_forget_trunc" ON "hd"."teams" | 887885a8215f
+trigger "authz_team_forget_trunc_first" ON "hd"."teams" | 902516c5dcd3
 trigger "authz_ticket_col_audit_del" ON "hd"."tickets" | 4991982ddd36
 trigger "authz_ticket_col_audit_ins" ON "hd"."tickets" | 5c03e86976e5
 trigger "authz_ticket_col_audit_row" ON "hd"."tickets" | a7f2fb86b978
@@ -803,8 +803,8 @@ trigger "authz_ticket_col_audit_upd" ON "hd"."tickets" | 5007191a9e36
 trigger "authz_ticket_forget_del" ON "hd"."tickets" | 97b3e4361dd3
 trigger "authz_ticket_forget_id" ON "hd"."tickets" | 4fbc7225574d
 trigger "authz_ticket_forget_moved" ON "hd"."tickets" | 3149ffdb9967
-trigger "authz_ticket_forget_trunc" ON "hd"."tickets" | 74723e776f2e
-trigger "authz_ticket_forget_trunc_first" ON "hd"."tickets" | 7d214bb4cd63
+trigger "authz_ticket_forget_trunc" ON "hd"."tickets" | 969a83c53fd5
+trigger "authz_ticket_forget_trunc_first" ON "hd"."tickets" | aca790a71c11
 trigger "authz_update customer_org_id" ON "hd"."users" | cfba3384e2c3
 trigger "authz_update id" ON "hd"."workspaces" | 4ded4375eae9
 trigger "authz_update id, workspace_id" ON "hd"."customer_orgs" | 2733785e1b6a
@@ -829,13 +829,13 @@ trigger "authz_user_col_audit_upd" ON "hd"."users" | 99fbe09fb421
 trigger "authz_user_forget_del" ON "hd"."users" | 7a0c34ec66bc
 trigger "authz_user_forget_id" ON "hd"."users" | 546c08c55ea5
 trigger "authz_user_forget_moved" ON "hd"."users" | 566078c4ce0a
-trigger "authz_user_forget_trunc" ON "hd"."users" | 1545f12afd3f
-trigger "authz_user_forget_trunc_first" ON "hd"."users" | dfcb538acf06
+trigger "authz_user_forget_trunc" ON "hd"."users" | 62a13a040c00
+trigger "authz_user_forget_trunc_first" ON "hd"."users" | 27d19547cb9e
 trigger "authz_user_keys_gone_del" ON "hd"."users" | 9e2cc65ca5d9
 trigger "authz_user_keys_gone_id" ON "hd"."users" | c594e637fa4a
 trigger "authz_user_keys_gone_moved" ON "hd"."users" | d7c0735ae4d1
-trigger "authz_user_keys_gone_trunc" ON "hd"."users" | 8f07928fdd07
-trigger "authz_user_keys_gone_trunc_first" ON "hd"."users" | 4b8b8bc9dd15
+trigger "authz_user_keys_gone_trunc" ON "hd"."users" | 9a9c1c02bb6e
+trigger "authz_user_keys_gone_trunc_first" ON "hd"."users" | 12f1642a43a4
 trigger "authz_workspace_col_audit_del" ON "hd"."workspaces" | b10f7da66ea2
 trigger "authz_workspace_col_audit_ins" ON "hd"."workspaces" | 63b6fbed8b3e
 trigger "authz_workspace_col_audit_trunc" ON "hd"."workspaces" | 8612c9f3c523

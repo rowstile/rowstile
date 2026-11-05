@@ -106,6 +106,20 @@
       "when": 1793907237024,
       "tag": "0014_authz_partitions_rls_each_migration",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793907645861,
+      "tag": "0015_authz_build_truncate_forgets_its_rows",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793907646861,
+      "tag": "0016_authz_truncate_forgets_its_rows",
+      "breakpoints": true
     }
   ]
 }

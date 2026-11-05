@@ -100,7 +100,7 @@ function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9f
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 1762a43b7ba4 shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | b916646bf293 shape=1223ad2f
-function authz.lint() | c17b4907af14 shape=54cb1505
+function authz.lint() | f1f00683f558 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | a007a1af8212 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
@@ -244,8 +244,8 @@ function authz_int."file__edit__why"(p_id bigint, p_depth int, p_seen text[], p_
 function authz_int."file__editor__who"(p_id bigint) | d0a9ca3358a3 shape=5c213770
 function authz_int."file__editor__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[]) | 511c0cf39403 shape=9cd108d0
 function authz_int."file__folder__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[]) | cfd4ada92239 shape=65b1c6c4
-function authz_int."file__forget"() | 22dee7786388 shape=1d4919e2
-function authz_int."file__forget_all"() | 0717d5e2c1dc shape=f04ac5d0
+function authz_int."file__forget"() | 4d10e7612227 shape=1d4919e2
+function authz_int."file__forget_all"() | f0a6a6d94480 shape=f04ac5d0
 function authz_int."file__forget_id"() | daeb71bb76d8 shape=e82c8006
 function authz_int."file__owner__who"(p_id bigint) | 72eef8c0bf6f shape=c1c62a4d
 function authz_int."file__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[]) | cfe460729e44 shape=292edb2c
@@ -296,8 +296,8 @@ function authz_int."folder__edit__who_base"(p_id bigint) | 2cc160849518 shape=f8
 function authz_int."folder__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[]) | 4ad18468ddaf shape=94e8517a
 function authz_int."folder__editor__who"(p_id bigint) | 7267615c9540 shape=f09b9604
 function authz_int."folder__editor__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[]) | 10eec5e6e980 shape=236afd2e
-function authz_int."folder__forget"() | 77c2f513da31 shape=9f2a83b9
-function authz_int."folder__forget_all"() | 3e22b8716730 shape=31970962
+function authz_int."folder__forget"() | 12867a13f7ad shape=9f2a83b9
+function authz_int."folder__forget_all"() | bb61e707752f shape=31970962
 function authz_int."folder__forget_id"() | c26c0004d851 shape=b6b853a6
 function authz_int."folder__owner__who"(p_id bigint) | 06c122aafdac shape=db855273
 function authz_int."folder__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[]) | 480878a79d1d shape=93f60077
@@ -329,8 +329,8 @@ function authz_int."group__col_audit_ins"() | c1f3ba3c8bbd shape=f8f3c1fd
 function authz_int."group__col_audit_row"() | b9d00c003ad1 shape=16636837
 function authz_int."group__col_audit_trunc"() | 73257eca8cf7 shape=61aec545
 function authz_int."group__col_audit_upd"() | dd6d328547ee shape=51fbef2e
-function authz_int."group__forget"() | 4e3cdced5c6e shape=caafd6db
-function authz_int."group__forget_all"() | 0fcdd7b9edea shape=b3999b8d
+function authz_int."group__forget"() | 88031eed59e8 shape=caafd6db
+function authz_int."group__forget_all"() | 374ba4880bbe shape=b3999b8d
 function authz_int."group__forget_id"() | c07321f7327e shape=1b4af2c6
 function authz_int."group__manage__has"(p_id uuid) | fc9edf829349 shape=401b7856
 function authz_int."group__manage__start"() | 6cc8e8341045 shape=fcd0aead
@@ -373,11 +373,11 @@ function authz_int."user__col_audit_del"() | 550865ecbaed shape=fc64ec43
 function authz_int."user__col_audit_ins"() | 51b037fe507a shape=dba70c6d
 function authz_int."user__col_audit_trunc"() | e8a01f21ab0e shape=f87e3f72
 function authz_int."user__col_audit_upd"() | 6c4014fc2d89 shape=9e749ca9
-function authz_int."user__forget"() | f9515de18e8f shape=4753fdb6
-function authz_int."user__forget_all"() | a9b311db3ffc shape=1ea7139a
+function authz_int."user__forget"() | 30bd8062318f shape=4753fdb6
+function authz_int."user__forget_all"() | 28187c6f0c1e shape=1ea7139a
 function authz_int."user__forget_id"() | ff845dd1857b shape=d0d8b00d
-function authz_int."user__keys_gone"() | 105cdeea339c shape=5bf35a03
-function authz_int."user__keys_gone_all"() | 65e8ee94f599 shape=8da0a478
+function authz_int."user__keys_gone"() | 86d8825b2500 shape=5bf35a03
+function authz_int."user__keys_gone_all"() | 263c92760522 shape=8da0a478
 function authz_int."user__keys_gone_id"() | 22b32b93c393 shape=0e7cbdbc
 function authz_int."version__col_audit_del"() | f0a28f12e2b5 shape=23066411
 function authz_int."version__col_audit_ins"() | 5468898aa74a shape=5a3c9906
@@ -402,7 +402,7 @@ function authz_int.canon(p_type text, p_id text) | 2a3ac59562a6 shape=ab774d8a
 function authz_int.changed(p_type text, p_ids text[], p_cause text) | a711a89ca6d9 shape=7a5b1adc
 function authz_int.check_manage_keys(p_type text, p_id text) | 1e1b710abecd shape=391727a0
 function authz_int.check_writable() | 87ff3161cc1d shape=a16d3e7b
-function authz_int.child_triggers() | 00d9e2928aa2 shape=52e92456
+function authz_int.child_triggers() | 376787138a7e shape=52e92456
 function authz_int.dependents(p_type text, p_ids text[]) | 57366c08cd8d shape=8a4f5a6e
 function authz_int.forget_marks(p_type text, p_ids text[]) | 2ddee1fcc0be shape=8933fd55
 function authz_int.hmac_sha256(p_key bytea, p_msg bytea) | 33edf164bad5 shape=4d6b17ae
@@ -489,10 +489,10 @@ table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 5eb4ea7913ff shape=c57707aa
-table authz_int.trees | 60662e5bfab3 shape=02db6ec7
+table authz_int.trees | cba01b36d38a shape=02db6ec7
 table authz_int.types | 393e14ce70e0 shape=b6d5b497
-tree folder__parent__tree | 809377dff08b5810cda19f2331f83098
-tree group__parent__tree | 75153c84c430049b4abfbf935aa77750
+tree folder__parent__tree | 7cdf18bafd7ef4ae4c47d6dd53cf8d19
+tree group__parent__tree | f4e017528cf2d18081c40e91310b33d6
 trigger "authz_file_col_audit_del" ON "fm"."files" | ad5164289d20
 trigger "authz_file_col_audit_ins" ON "fm"."files" | 6e62112b0b6f
 trigger "authz_file_col_audit_row" ON "fm"."files" | da773a9b6ca1
@@ -501,11 +501,11 @@ trigger "authz_file_col_audit_upd" ON "fm"."files" | 4efaed86bfbd
 trigger "authz_file_forget_del" ON "fm"."files" | 3fbb970b2838
 trigger "authz_file_forget_id" ON "fm"."files" | 47797204c4ed
 trigger "authz_file_forget_moved" ON "fm"."files" | f734159b3bf5
-trigger "authz_file_forget_trunc" ON "fm"."files" | 108362b10743
-trigger "authz_file_forget_trunc_first" ON "fm"."files" | 44a8b2c6c7e1
+trigger "authz_file_forget_trunc" ON "fm"."files" | 175c5ec85a72
+trigger "authz_file_forget_trunc_first" ON "fm"."files" | 253c7f6eb06f
 trigger "authz_folder__parent__tree_del" ON "fm"."folders" | e6ec45549570 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_ins" ON "fm"."folders" | 2136abc27a2c tree=folder__parent__tree
-trigger "authz_folder__parent__tree_trunc" ON "fm"."folders" | 74d0c907fbe0 tree=folder__parent__tree
+trigger "authz_folder__parent__tree_trunc" ON "fm"."folders" | 68c7dfecbf85 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_upd" ON "fm"."folders" | ed66a49cc4d6 tree=folder__parent__tree
 trigger "authz_folder_col_audit_del" ON "fm"."folders" | 64df2da56b51
 trigger "authz_folder_col_audit_ins" ON "fm"."folders" | 7bfc6724a310
@@ -515,11 +515,11 @@ trigger "authz_folder_col_audit_upd" ON "fm"."folders" | ca9d12031d12
 trigger "authz_folder_forget_del" ON "fm"."folders" | d134a030087f
 trigger "authz_folder_forget_id" ON "fm"."folders" | 8b109ee95a5d
 trigger "authz_folder_forget_moved" ON "fm"."folders" | a1e2e522ab12
-trigger "authz_folder_forget_trunc" ON "fm"."folders" | b866ff00e03f
-trigger "authz_folder_forget_trunc_first" ON "fm"."folders" | 18412cfaffcb
+trigger "authz_folder_forget_trunc" ON "fm"."folders" | 491e77db04ab
+trigger "authz_folder_forget_trunc_first" ON "fm"."folders" | 5343d9632085
 trigger "authz_group__parent__tree_del" ON "fm"."groups" | 1de86a5a2acb tree=group__parent__tree
 trigger "authz_group__parent__tree_ins" ON "fm"."groups" | 7bceb3e70b69 tree=group__parent__tree
-trigger "authz_group__parent__tree_trunc" ON "fm"."groups" | 4df92d1b1ca9 tree=group__parent__tree
+trigger "authz_group__parent__tree_trunc" ON "fm"."groups" | ea1b088e51c2 tree=group__parent__tree
 trigger "authz_group__parent__tree_upd" ON "fm"."groups" | 7764dc256dee tree=group__parent__tree
 trigger "authz_group_col_audit_del" ON "fm"."groups" | d35cbcc6a17b
 trigger "authz_group_col_audit_ins" ON "fm"."groups" | 0aa3b6183452
@@ -529,8 +529,8 @@ trigger "authz_group_col_audit_upd" ON "fm"."groups" | 83b43db1c4f1
 trigger "authz_group_forget_del" ON "fm"."groups" | 10ff5e9275c0
 trigger "authz_group_forget_id" ON "fm"."groups" | 8c36d48ef7cb
 trigger "authz_group_forget_moved" ON "fm"."groups" | f9412e294bfe
-trigger "authz_group_forget_trunc" ON "fm"."groups" | 177daf26e401
-trigger "authz_group_forget_trunc_first" ON "fm"."groups" | dbe5b83d0801
+trigger "authz_group_forget_trunc" ON "fm"."groups" | af447364b371
+trigger "authz_group_forget_trunc_first" ON "fm"."groups" | 98611635d056
 trigger "authz_membership_col_audit_del" ON "fm"."group_members" | 422525ed4a9f
 trigger "authz_membership_col_audit_ins" ON "fm"."group_members" | 4249bf4782b1
 trigger "authz_membership_col_audit_row" ON "fm"."group_members" | b91f5c047244
@@ -562,13 +562,13 @@ trigger "authz_user_col_audit_upd" ON "fm"."users" | 15f53e24ad85
 trigger "authz_user_forget_del" ON "fm"."users" | 19e58b0c744d
 trigger "authz_user_forget_id" ON "fm"."users" | c9a5492fbe73
 trigger "authz_user_forget_moved" ON "fm"."users" | 54b77d5d468f
-trigger "authz_user_forget_trunc" ON "fm"."users" | de2cf807b381
-trigger "authz_user_forget_trunc_first" ON "fm"."users" | 978b91469cbc
+trigger "authz_user_forget_trunc" ON "fm"."users" | fc61c2ec52d8
+trigger "authz_user_forget_trunc_first" ON "fm"."users" | bad5c91e59c0
 trigger "authz_user_keys_gone_del" ON "fm"."users" | d612a63bc738
 trigger "authz_user_keys_gone_id" ON "fm"."users" | 52f2478ca3bd
 trigger "authz_user_keys_gone_moved" ON "fm"."users" | 3cbdfa904a90
-trigger "authz_user_keys_gone_trunc" ON "fm"."users" | c97293c7ddf9
-trigger "authz_user_keys_gone_trunc_first" ON "fm"."users" | 1513a9931689
+trigger "authz_user_keys_gone_trunc" ON "fm"."users" | 30c9e80479d6
+trigger "authz_user_keys_gone_trunc_first" ON "fm"."users" | 90cffc01f85d
 trigger "authz_version_col_audit_del" ON "fm"."file_versions" | 7a751d265ef3
 trigger "authz_version_col_audit_ins" ON "fm"."file_versions" | 0938d3efc61c
 trigger "authz_version_col_audit_row" ON "fm"."file_versions" | cc3613b81102
