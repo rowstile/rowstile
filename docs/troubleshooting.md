@@ -158,8 +158,9 @@ of a second: its tables are kept.
 A development database that `rowstile dev` or `push` brought to the newest policy holds what the migration
 would make, so the migration stops. So does one that ran here before. Don't run it there: tell your
 migration tool it is applied (Prisma: `prisma migrate resolve --applied <its folder>`, which also clears
-the failed migration Prisma kept; Alembic: `alembic stamp head`), or make the database again from the
-migrations, or keep using `push` there and leave the migrations to the other databases.
+the failed migration Prisma kept; Alembic: `alembic stamp head`; the other tools: [AZ607](errors/AZ607.md)), or
+make the database again from the migrations, or keep using `push` there and leave the migrations to the other
+databases.
 
 ## "rowstile: this migration changes the policy the migration before it left (...), but the database has ..."
 
