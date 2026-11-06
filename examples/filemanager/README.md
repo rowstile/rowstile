@@ -12,15 +12,17 @@ that, and CI runs it against the rowstile image built from the same commit.
 
     docker compose up -d --build        # Postgres + rowstile, RustFS, the app: http://localhost:8000
 
-The migrations run first, in a service of their own (`migrate`) that ends before the app starts: it alone holds
-the database's admin password (`FM_ADMIN_URL`), and the app holds only `fm_app`'s (`FM_DATABASE_URL`), which
-row-level security applies to.
+The database's superuser does one thing: when Postgres makes the database, it runs `db/owner.sql`, which makes
+`fm_owner`, a role that isn't a superuser, and gives it the database. Everything else runs as `fm_owner`, the
+tables' owner, as rowstile's setup has it. The migrations run first, in a service of their own (`migrate`) that
+ends before the app starts: it alone holds `fm_owner`'s password (`FM_ADMIN_URL`), and the app holds only
+`fm_app`'s (`FM_DATABASE_URL`), which row-level security applies to.
 
 Create an account on the sign-in page (open sign-up is on by default: `FM_OPEN_SIGNUP=false` turns it
 off). To work on it, the services in Docker and the rest on the host:
 
-    docker compose up -d --wait db storage      # the services only (Postgres on 25432, RustFS on 29000)
-    export FM_ADMIN_URL=postgresql://postgres:postgres@localhost:25432/filemanager FM_APP_PASSWORD=fm_app
+    docker compose up -d --wait db storage      # the services only (Postgres on localhost:25432, RustFS on 29000)
+    export FM_ADMIN_URL=postgresql://fm_owner:fm_owner@localhost:25432/filemanager FM_APP_PASSWORD=fm_app
     export FM_DATABASE_URL=postgresql://fm_app:fm_app@localhost:25432/filemanager FM_S3_ENDPOINT=http://localhost:29000
     cd backend
     uv run python ../db/migrate.py --client     # the migrations, as the tables' owner, and the client
@@ -39,7 +41,7 @@ tables' owner. With compose, from this folder:
 
     docker compose run --rm maintenance    # or, on the host: cd backend && uv run python -m app.maintenance
 
-The `maintenance` service is the app's image with the admin's URL, which the app's own service doesn't have;
+The `maintenance` service is the app's image with `fm_owner`'s URL, which the app's own service doesn't have;
 `docker compose up` doesn't start it. The jobs remove uploads that never finished (their rows and objects, after a
 day: `--uploads-older-than` says otherwise), what is left in the uploads' place in storage after a day, objects no
 file has after a day (a deleted file's, when deleting them failed), and sessions that ended; and they trim
@@ -51,7 +53,7 @@ The settings, from the environment:
 | Setting | Default | |
 |---|---|---|
 | `FM_DATABASE_URL` | `postgresql://fm_app:fm_app@localhost:5432/filemanager` | the app's connection, as `fm_app`: the app refuses to start on one that skips row-level security |
-| `FM_ADMIN_URL` | none | the tables' owner, for `db/migrate.py`, the maintenance jobs and `rowstile.toml`, never for the app. `db/migrate.py` makes `fm_app` and sets its password each time, so the owner needs CREATEROLE too (and the ADMIN option on `fm_app` if another role made it), or a superuser |
+| `FM_ADMIN_URL` | none | the tables' owner (`fm_owner`, which `db/owner.sql` makes; no superuser), for `db/migrate.py`, the maintenance jobs and `rowstile.toml`, never for the app. `db/migrate.py` makes `fm_app` and sets its password each time, so the owner needs CREATEROLE too (and the ADMIN option on `fm_app` if another role made it) |
 | `FM_APP_PASSWORD` | none | `fm_app`'s password, which `db/migrate.py` sets (it makes the role if it is missing) |
 | `FM_S3_ENDPOINT` | `http://localhost:9000` | where the backend reaches the storage |
 | `FM_S3_PUBLIC_ENDPOINT` | `FM_S3_ENDPOINT` | where browsers reach it: signed links point there |
@@ -70,6 +72,7 @@ The settings, from the environment:
 
 | | |
 |---|---|
+| `db/owner.sql` | the tables' owner, `fm_owner`: made once, by the superuser, when Postgres makes the database |
 | `db/migrations/` | the tables (`fm.users`, `fm.groups`, `fm.folders`, `fm.files`, ...), the app role's grants, and the policy's migrations, which `rowstile migrate` writes from `db/policy.authz` |
 | `db/policy.authz` | who may do what: folders nest and pass access down unless a folder stops it; sharing with people and groups (nested), with expiry; editors may change a folder, but moving, deleting or sharing it, or stopping inheritance, takes the right to share it; support staff may break the glass |
 | `db/tests/` | the policy's own tests, each with its own people and folders, rolled back after it: `rowstile test` runs them |

@@ -17133,6 +17133,35 @@ class ExampleServices(unittest.TestCase):
             self.assertEqual(cmd, ['["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]'], app)
 
 
+class ExampleOwners(unittest.TestCase):
+    """An example's migrations, maintenance jobs and tests connect as the tables' owner, a role that isn't a
+    superuser (rowstile needs none): db/owner.sql makes it and gives it the database, run once by the Postgres image
+    (docker-compose.yml mounts it), and every admin URL the compose file, test.sh and the README give is the
+    owner's. The database is published on this machine only."""
+
+    APPS = (("filemanager", "fm"), ("messenger", "ms"))
+
+    def test_the_admin_is_the_owner_that_owner_sql_makes(self) -> None:
+        for app, prefix in self.APPS:
+            folder = os.path.join(os.path.dirname(ROOT), "examples", app)
+            owner = f"{prefix}_owner"
+            with open(os.path.join(folder, "db", "owner.sql"), encoding="utf-8") as fh:
+                sql = fh.read()
+            self.assertIn(f"CREATE ROLE {owner} LOGIN CREATEROLE PASSWORD '{owner}';", sql, app)
+            self.assertIn(f"OWNER TO {owner}'", sql, app)
+            self.assertNotRegex(sql, r"(?<!NO)(SUPERUSER|BYPASSRLS)", app)
+            with open(os.path.join(folder, "docker-compose.yml"), encoding="utf-8") as fh:
+                compose = fh.read()
+            self.assertIn("./db/owner.sql:/docker-entrypoint-initdb.d/owner.sql:ro", compose, app)
+            self.assertRegex(compose, r'ports: \["127\.0\.0\.1:\d+:5432"\]', app)
+            for name in ("docker-compose.yml", "test.sh", "README.md"):
+                with open(os.path.join(folder, name), encoding="utf-8") as fh:
+                    urls = re.findall(r"[A-Z]+_ADMIN_URL(?:: |=)(\S+)", fh.read())
+                self.assertNotEqual(urls, [], (app, name))
+                for url in urls:
+                    self.assertRegex(url, rf"^postgresql://{owner}:{owner}@", (app, name))
+
+
 class PublicSurface(unittest.TestCase):
     """examples/public_surface.py, which each example's check_public_surface.py runs: the app uses only rowstile's
     public surface. It reads every text file, matches names as Postgres reads them, and leaves alone only what

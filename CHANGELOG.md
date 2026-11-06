@@ -633,6 +633,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The file manager's migrations run in a service of their own in `docker-compose.yml`, which ends before the app
   starts, and its maintenance jobs in another (`docker compose run --rm maintenance`): the app no longer holds the
   database's admin password, only `fm_app`'s.
+- The file manager's migrations, maintenance jobs and tests run as `fm_owner`, the tables' owner, which isn't a
+  superuser (`db/owner.sql`, run once by the Postgres image when it makes the database), as the messenger's do;
+  they ran as the superuser. Its database is published on 127.0.0.1 only. A database compose made before has no
+  `fm_owner`: start it afresh (`docker compose down -v`).
 
 ### Upgrading
 
