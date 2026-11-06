@@ -41,7 +41,7 @@ function authz.announce_timed_shares() | d54dfc65af0d shape=73a521b1
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | ff3dc82d6ec2 shape=77f3e79f
 function authz.can(p_type text, p_id bigint, p_perm text) | 3b89f3888983 shape=a0df7b00
-function authz.can(p_type text, p_id text, p_perm text) | 78a8b596697f shape=220bc89f
+function authz.can(p_type text, p_id text, p_perm text) | d1be6c55b324 shape=220bc89f
 function authz.cancel_request(p_id bigint) | 14f17f222d45 shape=19aa0bb3
 function authz.changes_position() | 5df1d41ccaab shape=515e7531
 function authz.changes_since(p_pos bigint, p_limit int) | d421b775ac32 shape=0448ffba
@@ -86,7 +86,7 @@ function authz.set_role_permissions(p_role bigint, p_permissions text[]) | 8a2c5
 function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 432b631cd9d6 shape=38174c64
 function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 493c2d0fe148 shape=9eda2a73
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | e4efce2de16b shape=3053d63c
-function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | c565abc6deb9 shape=386e2b78
+function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | a7cccf8337e0 shape=386e2b78
 function authz.sign_out() | bfe55fe173b3 shape=95de814a
 function authz.start_review(p_type text, p_id bigint, p_closes_at timestamptz) | ede0d805b2b1 shape=c2dba351
 function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 54b5115398e4 shape=879e84e5
