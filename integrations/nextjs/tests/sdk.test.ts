@@ -689,10 +689,17 @@ describe("@rowstile/prisma", () => {
   });
 
   // Prisma's driver adapter keeps no HINT for SQLSTATE 28000: a login refused (AZ703) has no code there, and is not
-  // the not-signed-in error either. It stays Prisma's error (a 500); through pg it is a 401 (next.test.ts, 16)
-  test("a login refused, through Prisma: no code, and not NotSignedIn", async () => {
+  // the not-signed-in error either. It stays Prisma's error (a 500); through pg it is a 401 (next.test.ts, 16). So
+  // do settings changed by hand (AZ702), an error on any driver (a 500), and no NotSignedIn through Prisma either
+  test("a login refused and settings changed by hand, through Prisma: no code, and not NotSignedIn", async () => {
+    const read = (e: unknown) => [sqlstate(e), errorCode(e), notSignedIn(e), translate(e), problemOf(e)];
     const e = await actingAs("1", () => db.$queryRawUnsafe("SELECT authz.login_key('ak_nope')")).catch((err: unknown) => err);
-    expect([sqlstate(e), errorCode(e), notSignedIn(e), translate(e), problemOf(e)]).toEqual(["28000", undefined, false, null, null]);
+    expect(read(e)).toEqual(["28000", undefined, false, null, null]);
+    const changed = await actingAs("1", () => db.$transaction(async (tx) => {
+      await tx.$queryRawUnsafe("SELECT set_config('authz.user_id', '2', true)");
+      return tx.$queryRawUnsafe("SELECT count(*) FROM app.notes");
+    })).catch((err: unknown) => err);
+    expect(read(changed)).toEqual(["28000", undefined, false, null, null]);
   });
 
   test("the ids a user holds a permission on, as text or as the key's type", async () => {
