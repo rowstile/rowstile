@@ -61,8 +61,12 @@ $PYTHON check_public_surface.py && ok "only rowstile's public surface" || bad "t
 docker exec -i "$NAME" psql -q -U hd_owner -d helpdesk -v ON_ERROR_STOP=1 < db/seed.sql >/dev/null || { echo "FAIL  db/seed.sql"; exit 1; }
 (cd "$ROOT" && $BIN/tsc -b sdk/typescript) || { echo "FAIL  the SDK doesn't build"; exit 1; }
 $BIN/prisma generate >/dev/null 2>&1 || { echo "FAIL  prisma generate"; exit 1; }
+# (compared with the files as they were, in a git checkout or not)
+cp src/authz_client.ts src/shapes.gen.ts "$LOG/"
 $ROWSTILE client >/dev/null || exit 1
-git diff --quiet -- src/authz_client.ts 2>/dev/null && ok "src/authz_client.ts is the policy's" || bad "src/authz_client.ts is out of date: rowstile client"
+cmp -s src/authz_client.ts "$LOG/authz_client.ts" && cmp -s src/shapes.gen.ts "$LOG/shapes.gen.ts" &&
+  ok "the clients (src/authz_client.ts, src/shapes.gen.ts) are the policy's" ||
+  bad "src/authz_client.ts or src/shapes.gen.ts is out of date: rowstile client"
 export HD_APP_URL="postgresql://hd_app:hd_app@localhost:$PORT/helpdesk"
 export HD_SESSION_SECRET=${HD_SESSION_SECRET:-test-only-secret-of-thirty-two-characters}
 WEB=${HELPDESK_WEB_PORT:-8002}
