@@ -225,9 +225,11 @@ class ThisRow(unittest.TestCase):
         return [text[max(0, m.start() - 60) : m.end() + 20] for m in THIS.finditer(text)]
 
     def test_no_this_is_left_in_the_sql(self) -> None:
-        for name in ("alt", "multi", "composite"):
+        # every policy that writes `this.` (docs: beside a subquery; cross: beside a quoted alias)
+        using = [name for name in POLICIES if "this." in read(POLICIES[name])]
+        self.assertEqual(using, ["docs", "alt", "multi", "composite", "cross"])
+        for name in using:
             text = read(POLICIES[name])
-            self.assertIn("this.", text, name)
             c = Compiler(parse_policy(text, POLICIES[name]))
             sql = c.compile(POLICIES[name]) + c.tests_function_sql()
             sql += "".join(n["build"] + n["catch_up"] for n in c.tree_next.values())
@@ -976,11 +978,19 @@ class ColumnRules(unittest.TestCase):
         self.assertEqual(compile_(text), compile_(spelt))
         self.assertIn("checked on the row after the change", compile_(text))
 
-    # a function whose body is a string, without SECURITY DEFINER: Postgres reads the body when it runs, as the caller
-    AS_CALLER = re.compile(
-        r"CREATE (?:OR REPLACE )?FUNCTION ((?:authz|authz_gen|authz_int)\.(?:\"[^\"]+\"|\w+))\(.*?\)(.*?)AS \$(\w*)\$(.*?)\$\3\$;",
-        re.S,
-    )
+    # a function whose body is a string, without SECURITY DEFINER: Postgres reads the body when it runs, as the caller.
+    # Read one statement at a time: a body written `AS` then a line break, or a BEGIN ATOMIC one, never runs on into
+    # the next function's
+    FUNCTION = re.compile(r"CREATE (?:OR REPLACE )?FUNCTION ((?:authz|authz_gen|authz_int)\.(?:\"[^\"]+\"|\w+))\(")
+    STRING_BODY = re.compile(r"\bAS\s+\$(\w*)\$(.*?)\$\1\$", re.S)
+
+    @classmethod
+    def as_caller(cls, sql: str) -> Iterator[tuple[str, str]]:
+        """(name, body) of each function of `sql` whose body is a string read as its caller (no SECURITY DEFINER)."""
+        for _, st in statements.split(sql):
+            head, body = cls.FUNCTION.match(st), cls.STRING_BODY.search(st)
+            if head and body and "SECURITY DEFINER" not in st:
+                yield head.group(1), body.group(2)
 
     def test_what_runs_as_the_app_role_names_nothing_in_authz_int(self) -> None:
         # The app role may not use authz_int by name. A policy or a BEGIN ATOMIC body names it once, when the owner
@@ -992,14 +1002,18 @@ class ColumnRules(unittest.TestCase):
             "  update folder_id after : folder.edit\n  update name : uploader\n",
         )
         self.assertNotEqual(ruled, read(POLICIES["composite"]))
-        # (these two run as the owner whoever calls: their callers are definer functions)
-        owners = {"authz_int.session_ok", "authz_int.shares_canon"}
-        for sql in [Compiler(parse_policy(ruled)).compile("x"), *(compiled(name) for name in POLICIES)]:
-            for m in self.AS_CALLER.finditer(sql):
-                name, head, body = m.group(1), m.group(2), m.group(4)
-                if "SECURITY DEFINER" in head or name in owners:
-                    continue
-                self.assertNotRegex(body, r"\bauthz_int\.", f"{name} runs as its caller and names authz_int")
+        # (these two run as the owner whoever calls: their callers are definer functions; and authz.verify is for
+        # administrators alone, the app role may not call it)
+        owners = {"authz_int.session_ok", "authz_int.shares_canon", "authz.verify"}
+        compiler = Compiler(parse_policy(ruled))
+        self.assertFalse([s for s in compiler.api_signatures() if s.startswith("authz.verify(")])
+        for sql in [compiler.compile("x"), *(compiled(name) for name in POLICIES)]:
+            bodies = list(self.as_caller(sql))
+            # the share wrappers and the typed overloads (`AS` then a line break) are among those read
+            self.assertLessEqual({"authz.can", "authz.perms", "authz.share", "authz.who_among"}, {n for n, _ in bodies})
+            for name, body in bodies:
+                if name not in owners:
+                    self.assertNotRegex(body, r"\bauthz_int\.", f"{name} runs as its caller and names authz_int")
         sql = Compiler(parse_policy(ruled)).compile("x")
         holds = re.findall(r'CREATE FUNCTION authz_int\."cx\.\w+:column [\w, ]+:holds".*?END;', sql, re.S)
         self.assertEqual(len(holds), len(re.findall(r'AND NOT authz_int\."cx\.\w+:column [\w, ]+:holds"\(', sql)))
@@ -12751,8 +12765,8 @@ class ErrorCodes(unittest.TestCase):
 
 class RuntimeAnswers(unittest.TestCase):
     """Each code the runtime raises (rowstile help AZ7xx) comes with one SQLSTATE and one HTTP answer, both named on
-    its page, and the SDKs answer it so: the same mistake looks the same whichever check found it, and an app
-    answers it as the page says."""
+    its page, and the SDKs answer it so (all nine, each from its own map, read from its sources): the same mistake looks
+    the same whichever check found it, and an app answers it as the page says."""
 
     # the ERRCODE names the runtime raises with, and their SQLSTATEs (no ERRCODE: P0001, raise_exception)
     STATES: ClassVar[dict[str, str]] = {
@@ -12794,26 +12808,98 @@ class RuntimeAnswers(unittest.TestCase):
         self.assertEqual(len(answers), 1, f"{code}'s page names one answer (an HTTP status): {sorted(answers)}")
         return states.pop(), answers.pop()
 
-    def sdks(self) -> tuple[dict[str, tuple[str, str, int]], dict[str, tuple[str, str, int]]]:
-        """The codes each SDK answers as a problem that is no refusal: (type, title, status), Python's and
-        TypeScript's."""
-        repo = os.path.dirname(ROOT)
-        with open(os.path.join(repo, "sdk", "python", "rowstile", "__init__.py"), encoding="utf-8") as fh:
-            py = fh.read()
-        with open(os.path.join(repo, "sdk", "typescript", "client", "src", "index.ts"), encoding="utf-8") as fh:
-            ts = fh.read()
-        py_map = py[py.index("_CALL_PROBLEMS: dict") : py.index("}", py.index("_CALL_PROBLEMS: dict"))]
-        ts_map = ts[ts.index("const CALL_PROBLEMS") : ts.index("]);", ts.index("const CALL_PROBLEMS"))]
-        python = {
-            c: (t, ti, int(s)) for c, t, ti, s in re.findall(r'"(AZ\d{3})": \("([^"]+)", "([^"]+)", (\d{3})\)', py_map)
+    # each SDK's sources (no tests), by folder and extension
+    SDKS: ClassVar[dict[str, tuple[str, str]]] = {
+        "python": ("sdk/python/rowstile", ".py"),
+        "typescript": ("sdk/typescript", ".ts"),
+        "go": ("sdk/go", ".go"),
+        "java": ("sdk/java", ".java"),
+        "dotnet": ("sdk/dotnet", ".cs"),
+        "ruby": ("sdk/ruby/lib", ".rb"),
+        "rust": ("sdk/rust/src", ".rs"),
+        "elixir": ("sdk/elixir/lib", ".ex"),
+        "php": ("sdk/php/src", ".php"),
+    }
+    # a problem's type (its last part, or the whole URL) and then its title: `"refused", "Forbidden"`,
+    # `type: type("refused"),\n title: "Forbidden"`, `"type" => "https://.../refused", "title" => "Forbidden"`
+    TYPE_TITLE = re.compile(
+        r"""["'](?:https://rowstile\.dev/problems/)?([a-z]+(?:-[a-z]+)*)["']\)?,\s*(?:["']?\w+["']?\s*(?::|=>)\s*)?"""
+        r"""["'](Forbidden|Unauthorized|Not Found|Bad Request|Conflict)["']"""
+    )
+
+    def source(self, sdk: str) -> str:
+        """An SDK's sources, its tests and what is built or fetched left out."""
+        folder, ext = self.SDKS[sdk]
+        skip = {"node_modules", "dist", "test", "tests", "bin", "obj", "target", "vendor", "_build", "deps"}
+        texts: list[str] = []
+        for top, dirs, files in os.walk(os.path.join(os.path.dirname(ROOT), folder)):
+            dirs[:] = sorted(d for d in dirs if d not in skip)
+            for name in sorted(files):
+                if name.endswith(ext) and "test" not in name.lower():
+                    with open(os.path.join(top, name), encoding="utf-8") as fh:
+                        texts.append(fh.read())
+        return "\n".join(texts)
+
+    def sdks(self) -> dict[str, dict[str, tuple[str, str, int]]]:
+        """The codes each SDK answers as a problem that is no refusal: (type, title, status), the type its last part,
+        by SDK. Each keeps its own map: a code to the three, or a code to a status and a status to the type and
+        title."""
+        src = {sdk: self.source(sdk) for sdk in self.SDKS}
+
+        def between(text: str, start: str, end: str) -> str:
+            at = text.index(start)
+            return text[at : text.index(end, at)]
+
+        def joined(codes: dict[str, int], kinds: dict[int, tuple[str, str]]) -> dict[str, tuple[str, str, int]]:
+            return {c: (*kinds[s], s) for c, s in codes.items()}
+
+        def triples(pattern: str, text: str) -> dict[str, tuple[str, str, int]]:
+            return {c: (t.rsplit("/", 1)[-1], ti, int(s)) for c, t, ti, s in re.findall(pattern, text)}
+
+        go_kinds = between(src["go"], "var callProblem", "}\n}")
+        rust_of = between(src["rust"], "fn of(code: &str)", "_ => None")
+        rust_answer = between(src["rust"], "pub fn answer(self)", "}\n    }")
+        rust_kind = {
+            k: (int(s), t, ti)
+            for k, s, t, ti in re.findall(r'Self::(\w+) => \((\d{3}), "([^"]+)", "([^"]+)"\)', rust_answer)
         }
-        typescript = {
-            c: (t, ti, int(s))
-            for c, t, ti, s in re.findall(
-                r'\["(AZ\d{3})", \{ type: "([^"]+)", title: "([^"]+)", status: (\d{3}) \}\]', ts_map
-            )
+        out = {
+            "python": triples(
+                r'"(AZ\d{3})": \("([^"]+)", "([^"]+)", (\d{3})\)', between(src["python"], "_CALL_PROBLEMS: dict", "}")
+            ),
+            "typescript": triples(
+                r'\["(AZ\d{3})", \{ type: "([^"]+)", title: "([^"]+)", status: (\d{3}) \}\]',
+                between(src["typescript"], "const CALL_PROBLEMS", "]);"),
+            ),
+            "go": joined(
+                {c: int(s) for c, s in re.findall(r'"(AZ\d{3})": (\d{3})', between(src["go"], "var callStatus", "}"))},
+                {int(s): (t, ti) for s, t, ti in re.findall(r'(\d{3}): \{"([^"]+)", "([^"]+)"\}', go_kinds)},
+            ),
+            "java": triples(
+                r'"(AZ\d{3})", new Call\("([^"]+)", "([^"]+)", (\d{3})\)',
+                between(src["java"], "Map<String, Call> CALLS", ";"),
+            ),
+            "dotnet": triples(
+                r'\["(AZ\d{3})"\] = \("([^"]+)", "([^"]+)", (\d{3})\)', between(src["dotnet"], '["AZ7', "};")
+            ),
+            "ruby": triples(r'"(AZ\d{3})" => \["([^"]+)", "([^"]+)", (\d{3})\]', src["ruby"]),
+            "rust": {
+                c: (rust_kind[k][1], rust_kind[k][2], rust_kind[k][0])
+                for codes, k in re.findall(r'((?:"AZ\d{3}"(?: \| )?)+) => Some\(Self::(\w+)\)', rust_of)
+                for c in re.findall(r"AZ\d{3}", codes)
+            },
+            "elixir": joined(
+                {
+                    c: int(s)
+                    for c, s in re.findall(r'"(AZ\d{3})" => (\d{3})', between(src["elixir"], "@call_status", "}"))
+                },
+                {int(s): (t, ti) for s, t, ti in re.findall(r'(\d{3}) => \{"([^"]+)", "([^"]+)"\}', src["elixir"])},
+            ),
+            "php": triples(r"'(AZ\d{3})' => \['([^']+)', '([^']+)', (\d{3})\]", between(src["php"], "CODES = [", "];")),
         }
-        return python, typescript
+        for sdk, answers in out.items():
+            self.assertIn("AZ713", answers, f"{sdk}: the reading found its map")
+        return out
 
     def test_each_code_is_raised_with_its_pages_sqlstate(self) -> None:
         from authzlib.errors import CODES
@@ -12825,28 +12911,33 @@ class RuntimeAnswers(unittest.TestCase):
             self.assertEqual(raised[code], {self.page(code)[0]}, f"{code}: the SQLSTATEs it is raised with")
 
     def test_each_problem_type_the_sdks_write_is_a_page_of_the_site(self) -> None:
-        # every type URL, not only the codes' map: Refused's (each refused write) and NotFound's are written apart
+        # every type each SDK writes, not only the codes' map: Refused's (each refused write) and NotFound's are
+        # written apart, as a whole URL or its last part beside the title
         repo = os.path.dirname(ROOT)
-        kinds: list[set[str]] = []
-        for path in (("sdk", "python", "rowstile", "__init__.py"), ("sdk", "typescript", "client", "src", "index.ts")):
-            with open(os.path.join(repo, *path), encoding="utf-8") as fh:
-                kinds.append(set(re.findall(r"https://rowstile\.dev/problems/([a-z-]+)", fh.read())))
-        python, typescript = kinds
-        self.assertEqual(python, typescript, "the two SDKs write the same problem types")
-        self.assertIn("refused", python)  # the reading found Refused's
         with open(os.path.join(repo, "site", "pages.mjs"), encoding="utf-8") as fh:
             pages = set(re.findall(r'"site/problems/([a-z-]+)\.md": "problems/\1\.md"', fh.read()))
         files = {f.removesuffix(".md") for f in os.listdir(os.path.join(repo, "site", "problems")) if f.endswith(".md")}
-        self.assertEqual(sorted(python - files), [], "each problem type has its page, site/problems/<kind>.md")
-        self.assertEqual(sorted(python - pages), [], "each problem type's page is in the site's PAGES (site/pages.mjs)")
-        self.assertEqual(sorted((files | pages) - python), [], "each problem page is a type the SDKs write")
+        self.assertEqual(pages, files, "each problem page is in the site's PAGES (site/pages.mjs), and only those")
+        titles: dict[str, set[tuple[str, str]]] = {}
+        for sdk in self.SDKS:
+            text = self.source(sdk)
+            titles[sdk] = set(self.TYPE_TITLE.findall(text))
+            kinds = set(re.findall(r"https://rowstile\.dev/problems/([a-z-]+)", text)) | {k for k, _ in titles[sdk]}
+            self.assertIn("refused", kinds, f"{sdk}: the reading found Refused's")
+            self.assertEqual(
+                sorted(kinds - files), [], f"{sdk}: each problem type has its page, site/problems/<kind>.md"
+            )
+            self.assertEqual(sorted(files - kinds), [], f"{sdk}: each problem page is a type the SDK writes")
+        for sdk, pairs in titles.items():
+            self.assertEqual(pairs, titles["python"], f"{sdk} and Python give each problem type the same title")
 
     def test_the_sdks_answer_each_code_as_its_page_says(self) -> None:
         from authzlib.errors import CODES
 
-        python, typescript = self.sdks()
-        self.assertEqual(python, typescript, "the two SDKs answer the same codes the same way")
-        self.assertIn("AZ713", python)  # the reading found the entries
+        answers = self.sdks()
+        python = answers["python"]
+        for sdk, theirs in answers.items():
+            self.assertEqual(theirs, python, f"{sdk} and Python answer the same codes the same way")
         site = os.path.join(os.path.dirname(ROOT), "site", "problems")
         for code in sorted(c for c, v in CODES.items() if v.when == "runtime"):
             state, answer = self.page(code)
@@ -12857,7 +12948,7 @@ class RuntimeAnswers(unittest.TestCase):
                 self.assertNotIn(code, python, code)
             else:
                 self.assertEqual(python.get(code, ("", "", 0))[2], int(answer), f"{code}: the SDKs answer {answer}")
-                page = os.path.join(site, python[code][0].rsplit("/", 1)[1] + ".md")
+                page = os.path.join(site, python[code][0] + ".md")
                 self.assertTrue(os.path.exists(page), f"{code}: its problem type has a page, {page}")
                 with open(page, encoding="utf-8") as fh:
                     self.assertIn(code, fh.read(), f"{code}: its problem page names it")
