@@ -20043,6 +20043,16 @@ class Executable(unittest.TestCase):
                         missing.append(path)
         self.assertEqual(missing, [])
 
+    def test_every_file_is_lf_in_the_index(self) -> None:
+        # .gitattributes: everything LF, a batch file too (CRLF only when checked out): none CRLF in git itself
+        try:
+            out = subprocess.run(
+                ["git", "ls-files", "--eol"], cwd=self.REPO, capture_output=True, text=True, check=True
+            ).stdout
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("not a git checkout")
+        self.assertEqual([line.split("\t", 1)[1] for line in out.splitlines() if "i/crlf" in line.split()[0]], [])
+
 
 class Private(unittest.TestCase):
     """Decisions and plans are kept out of this repository: no file points at them, so no reader meets a link
@@ -20200,7 +20210,7 @@ class Version(unittest.TestCase):
         import shutil
 
         with tempfile.TemporaryDirectory() as d:
-            for path, _ in [*version.places(), *version.places(version.EXAMPLES)]:
+            for path, _ in [*version.places(), *version.places(version.EXAMPLES), *version.places(version.GEMS)]:
                 os.makedirs(os.path.dirname(os.path.join(d, path)), exist_ok=True)
                 shutil.copyfile(os.path.join(self.REPO, path), os.path.join(d, path))
             with mock.patch.object(version, "ROOT", d):
@@ -20209,6 +20219,9 @@ class Version(unittest.TestCase):
                 self.assertEqual(version.found(version.EXAMPLES), shown)
                 version.set_version("9.0.0-rc.1")
                 self.assertEqual(list(version.found(version.EXAMPLES)), ["9.0.0-rc.1"])
+                # the Rails app's lock file, as RubyGems spells the gem's version
+                with open(os.path.join(d, "integrations", "rails", "Gemfile.lock"), encoding="utf-8") as fh:
+                    self.assertEqual(re.findall(r"^ +rowstile \(([^)]+)\)$", fh.read(), re.M), ["9.0.0.pre.rc.1"] * 2)
 
     def test_npms_latest_follows_next_until_a_release(self) -> None:
         # while only alphas and candidates are published, a plain `npm i rowstile` gets the newest: each release
@@ -20293,6 +20306,28 @@ class Version(unittest.TestCase):
             )
         )
         self.assertEqual(len(slept), 3)
+        # a read the registry doesn't answer (a timeout, E429) is asked again, not the end of the run
+        flaky: list[tuple[dict[str, str], list[str]] | Exception] = [
+            npm_latest.Unread("npm view rowstile: npm error code ETIMEDOUT"),
+            stale,
+            fresh,
+        ]
+        slept.clear()
+
+        def reading(_: str) -> tuple[dict[str, str], list[str]]:
+            got = flaky.pop(0)
+            if isinstance(got, Exception):
+                raise got
+            return got
+
+        told = io.StringIO()  # what the release's log says of it, kept out of the tests' own output
+        with contextlib.redirect_stdout(told):
+            found = npm_latest.shown(
+                "rowstile", "0.1.0-alpha.7", 100.0, reading, slept.append, lambda: float(sum(slept))
+            )
+        self.assertEqual(found, fresh)
+        self.assertEqual(len(slept), 2)
+        self.assertEqual(told.getvalue(), "rowstile: npm view rowstile: npm error code ETIMEDOUT (asked again)\n")
         # a package npm doesn't have yet (its first version goes out by hand) is passed over, not a failure: the
         # others still move, and the npm job publishes the rest without it unless a token is set
         said = subprocess.CompletedProcess

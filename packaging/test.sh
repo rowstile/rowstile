@@ -77,14 +77,14 @@ docker run --rm -v "$REPO:/repo" "$NODE_FLOOR" bash -c "
   ! command -v python3 >/dev/null && ! command -v python >/dev/null || { echo 'python is here'; exit 1; }
   echo node \$(node --version)
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
-  npm i --no-audit --no-fund --engine-strict /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  npm i --offline --no-audit --no-fund --engine-strict /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/tmp/npm-i.log 2>&1 || { cat /tmp/npm-i.log; exit 1; }
   ${SCRIPT//PGA/npx rowstile}" >"$OUT/npm.log" 2>&1 && grep -q "Python 3.13" "$OUT/npm.log" \
   && ok "npm: runs where there is no Python, on its own ($(grep -o 'Python [0-9.]*' "$OUT/npm.log")), on $(grep -o '^node v[0-9.]*' "$OUT/npm.log")" \
   || { cat "$OUT/npm.log"; bad "npm"; }
 # a command that is stopped (SIGTERM, Ctrl-C, a hang-up, a kill) never looks finished to what started it
 docker run --rm -v "$REPO:/repo" "$NODE_SLIM" bash -c "
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
-  npm i --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  npm i --offline --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/tmp/npm-i.log 2>&1 || { cat /tmp/npm-i.log; exit 1; }
   node /repo/packaging/npm/signals_test.mjs node_modules/rowstile/bin/rowstile.js" >"$OUT/npm-signals.log" 2>&1 \
   && ok "npm: a command stopped by a signal ends the launcher by it ($(grep -c '^ok' "$OUT/npm-signals.log") signals)" \
   || { cat "$OUT/npm-signals.log"; bad "npm: a stopped command"; }
@@ -92,17 +92,18 @@ docker run --rm -v "$REPO:/repo" "$NODE_SLIM" bash -c "
 docker run --rm -v "$REPO:/repo" "$NODE_ALPINE" sh -c "
   ! command -v python3 >/dev/null && ! command -v python >/dev/null || { echo 'python is here'; exit 1; }
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
-  npm i --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-musl-*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  npm i --offline --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-musl-*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/tmp/npm-i.log 2>&1 || { cat /tmp/npm-i.log; exit 1; }
   ${SCRIPT//PGA/npx rowstile}" >"$OUT/npm-musl.log" 2>&1 && grep -q "Python 3.13" "$OUT/npm-musl.log" \
   && ok "npm on Alpine (musl): runs on the Python of @rowstile/cli-linux-x64-musl" \
   || { cat "$OUT/npm-musl.log"; bad "npm on Alpine (musl)"; }
 # the glibc package alone on Alpine (an npm that doesn't read libc, the wrong package copied): a sentence, not ENOENT
 docker run --rm -v "$REPO:/repo" "$NODE_ALPINE" sh -c "
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
-  npm i --no-audit --no-fund --force /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
-  npx rowstile --version" >"$OUT/npm-musl-wrong.log" 2>&1; \
+  npm i --offline --no-audit --no-fund --force /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/tmp/npm-i.log 2>&1 || { cat /tmp/npm-i.log; exit 1; }
+  npx rowstile --version; echo \"exit \$?\"" >"$OUT/npm-musl-wrong.log" 2>&1; \
   grep -q "no Python to run on" "$OUT/npm-musl-wrong.log" && ! grep -q ENOENT "$OUT/npm-musl-wrong.log" \
-  && ok "npm on Alpine with glibc's package only: says there is no Python to run on" \
+  && grep -qx "exit 2" "$OUT/npm-musl-wrong.log" \
+  && ok "npm on Alpine with glibc's package only: says there is no Python to run on, exit 2" \
   || { cat "$OUT/npm-musl-wrong.log"; bad "npm on Alpine with glibc's package only"; }
 # Linux arm64, glibc and musl: the same steps, on an arm64 machine or one that emulates it (CI registers QEMU's
 # emulator first: there it is required)
@@ -114,7 +115,7 @@ if [ "$(uname -m)" = aarch64 ] || [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; 
       [ \"\$(uname -m)\" = aarch64 ] || { echo \"not arm64: \$(uname -m)\"; exit 1; }
       ! command -v python3 >/dev/null && ! command -v python >/dev/null || { echo 'python is here'; exit 1; }
       mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
-      npm i --no-audit --no-fund /repo/$OUT/$tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+      npm i --offline --no-audit --no-fund /repo/$OUT/$tgz /repo/$OUT/rowstile-[0-9]*.tgz >/tmp/npm-i.log 2>&1 || { cat /tmp/npm-i.log; exit 1; }
       ${SCRIPT//PGA/npx rowstile}" >"$OUT/npm-$pkg.log" 2>&1 && grep -q "Python 3.13" "$OUT/npm-$pkg.log" \
       && ok "npm on Linux arm64 ($libc): runs on the Python of @rowstile/cli-$pkg" \
       || { cat "$OUT/npm-$pkg.log"; bad "npm on Linux arm64 ($libc)"; }
@@ -129,7 +130,7 @@ fi
 docker run --rm -v "$REPO:/repo" "$NODE" bash -c "
   echo \"on PATH: \$(python3 --version)\"
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
-  npm i --no-audit --no-fund --omit=optional /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  npm i --offline --no-audit --no-fund --omit=optional /repo/$OUT/rowstile-[0-9]*.tgz >/tmp/npm-i.log 2>&1 || { cat /tmp/npm-i.log; exit 1; }
   [ ! -e node_modules/@rowstile ] || { echo 'a platform package is installed'; exit 1; }
   ${SCRIPT//PGA/npx rowstile}" >"$OUT/npm-path.log" 2>&1 \
   && grep -qF "(Python $(sed -n 's/^on PATH: Python //p' "$OUT/npm-path.log"))" "$OUT/npm-path.log" \
@@ -140,7 +141,7 @@ docker run --rm -v "$REPO:/repo" "$NODE" bash -c "
 docker run --rm -v "$REPO:/repo" "$NODE" bash -c "
   echo \"on PATH: \$(python3 --version)\"
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
-  npm i --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  npm i --offline --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/tmp/npm-i.log 2>&1 || { cat /tmp/npm-i.log; exit 1; }
   ROWSTILE_PYTHON=\$(command -v python3) npx rowstile --version || exit 1
   printf '#!/bin/sh\necho 3.10.12\n' > /tmp/python3.10 && chmod +x /tmp/python3.10
   for p in /tmp/python3.10 /bin/echo /nowhere/python; do ROWSTILE_PYTHON=\$p npx rowstile --version; echo \"exit \$?\"; done" \
@@ -149,14 +150,14 @@ docker run --rm -v "$REPO:/repo" "$NODE" bash -c "
   && grep -qF "rowstile: ROWSTILE_PYTHON is /tmp/python3.10, which is Python 3.10.12: name a Python 3.11 or later" "$OUT/npm-chosen.log" \
   && grep -qF "rowstile: ROWSTILE_PYTHON is /bin/echo, which isn't a Python: name" "$OUT/npm-chosen.log" \
   && grep -qF "rowstile: ROWSTILE_PYTHON is /nowhere/python, which can't be run (spawnSync /nowhere/python ENOENT): name" "$OUT/npm-chosen.log" \
-  && [ "$(grep -c '^exit 1$' "$OUT/npm-chosen.log")" = 3 ] \
+  && [ "$(grep -c '^exit 2$' "$OUT/npm-chosen.log")" = 3 ] \
   && ok "npm: ROWSTILE_PYTHON runs it on that Python, and refuses one older than 3.11, or none, saying why" \
   || { cat "$OUT/npm-chosen.log"; bad "npm with ROWSTILE_PYTHON"; }
 # the bundled Python not executable, and this user can't change that (a node_modules another user installed): said
 # as such, not as a package that isn't installed
 docker run --rm -v "$REPO:/repo" "$NODE_SLIM" bash -c "
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
-  npm i --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  npm i --offline --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/tmp/npm-i.log 2>&1 || { cat /tmp/npm-i.log; exit 1; }
   chmod -x node_modules/@rowstile/cli-linux-x64/python/bin/python3.*
   su node -s /bin/sh -c 'node /tmp/app/node_modules/rowstile/bin/rowstile.js --version'" >"$OUT/npm-mode.log" 2>&1; \
   grep -q "^rowstile: no Python to run on. The Python of @rowstile/cli-linux-x64 (.*python3\.[0-9]*) isn't executable, and can't be made so (EPERM" "$OUT/npm-mode.log" \
@@ -189,37 +190,21 @@ docker run --rm -v "$REPO:/repo" "$PYTHON" bash -c "
   && ok "PyPI: each extra of the stack pages, then the SDK's module for it, in a clean environment" \
   || { cat "$OUT/pypi-extras.log"; bad "PyPI: an extra doesn't bring what its module imports"; }
 
-# every module of the command is in every package (a new one needs no list kept up to date)
-python3 - "$OUT" <<'EOF' && ok "every module of core/cli, and Studio's page, is in the npm package and the wheel" || bad "a module is missing"
-import glob, os, sys, tarfile, zipfile
-want = {os.path.relpath(f, "core/cli").replace(os.sep, "/") for f in glob.glob("core/cli/*.py") + glob.glob("core/cli/studio/*")}
-npm = {n.split("/command/cli/", 1)[1] for n in tarfile.open(glob.glob(sys.argv[1] + "/rowstile-[0-9]*.tgz")[0]).getnames() if "/command/cli/" in n}
-whl = {n.split("/_command/cli/", 1)[1] for n in zipfile.ZipFile(glob.glob(sys.argv[1] + "/rowstile-*.whl")[0]).namelist() if "/_command/cli/" in n}
-missing = {"npm": want - npm, "wheel": want - whl}
-print(missing) if any(missing.values()) else None
-sys.exit(1 if any(missing.values()) else 0)
-EOF
-
-# ... and nothing else of the tree they are built from: the build above put bytecode, a backup and notes beside them
-python3 - "$OUT" <<'EOF' && ok "the wheel and the sdist hold the command's files, and no other file of the tree" || bad "the wheel or the sdist holds another file of the tree"
+# every module of the command is in every package (a new one needs no list kept up to date), and nothing else of the
+# tree they are built from: the builds above put bytecode, a backup and notes beside them
+python3 - "$OUT" <<'EOF' && ok "the npm package, the wheel and the sdist hold the command's files, and no other file of the tree" || bad "a package lacks a file of the command, or holds another"
 import glob, sys, tarfile, zipfile
 want = {f[len("core/"):] for f in glob.glob("core/authzlib/*.py") + glob.glob("core/cli/*.py") + glob.glob("core/cli/studio/*")}
-whl = zipfile.ZipFile(glob.glob(sys.argv[1] + "/rowstile-*.whl")[0]).namelist()
-sdist = tarfile.open(glob.glob(sys.argv[1] + "/rowstile-*.tar.gz")[0]).getnames()
-got = {kind: {n.split("/_command/", 1)[1] for n in names if "/_command/" in n} for kind, names in (("wheel", whl), ("sdist", sdist))}
+out = sys.argv[1]
+names = {
+    "npm": (tarfile.open(glob.glob(out + "/rowstile-[0-9]*.tgz")[0]).getnames(), "/command/"),
+    "wheel": (zipfile.ZipFile(glob.glob(out + "/rowstile-*.whl")[0]).namelist(), "/_command/"),
+    "sdist": (tarfile.open(glob.glob(out + "/rowstile-*.tar.gz")[0]).getnames(), "/_command/"),
+}
+got = {kind: {n.split(at, 1)[1] for n in listed if at in n} for kind, (listed, at) in names.items()}
 wrong = {kind: (sorted(want - files), sorted(files - want)) for kind, files in got.items() if files != want}
 print("(missing, not the command's):", wrong) if wrong else None
 sys.exit(1 if wrong else 0)
-EOF
-
-# ... and nothing else of the tree it is built from: the npm build above put bytecode, a backup and notes beside them
-python3 - "$OUT" <<'EOF' && ok "the npm package holds the command's files, and no other file of the tree" || bad "the npm package holds another file of the tree"
-import glob, sys, tarfile
-want = {f[len("core/"):] for f in glob.glob("core/authzlib/*.py") + glob.glob("core/cli/*.py") + glob.glob("core/cli/studio/*")}
-names = tarfile.open(glob.glob(sys.argv[1] + "/rowstile-[0-9]*.tgz")[0]).getnames()
-got = {n.split("/command/", 1)[1] for n in names if "/command/" in n}
-print("missing:", sorted(want - got), "not the command's:", sorted(got - want)) if got != want else None
-sys.exit(1 if got != want else 0)
 EOF
 
 # each package carries the licence it names

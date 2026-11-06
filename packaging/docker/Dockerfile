@@ -11,7 +11,9 @@ COPY sdk/python /src/sdk/python
 ARG VERSION
 RUN v=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' /src/core/authzlib/__init__.py) \
  && if [ -z "$v" ] || [ "$VERSION" != "$v" ]; then echo "the image is labelled with the package's version: --build-arg VERSION=$v (it is '$VERSION')" >&2; exit 1; fi
-RUN pip wheel --no-cache-dir --no-deps -w /wheels /src/sdk/python
+# the build's own packages (hatchling and what it needs) by their hashes, as everything else here is pinned
+RUN pip install --no-cache-dir --require-hashes -r /src/sdk/python/build-requirements.txt \
+ && pip wheel --no-cache-dir --no-deps --no-build-isolation -w /wheels /src/sdk/python
 
 FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
 # what the image's page shows: `source` ties it to the repository, whose README the registry then shows

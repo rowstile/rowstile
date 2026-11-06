@@ -19,13 +19,15 @@ import re
 import sys
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.join(ROOT, "core"))
+from authzlib.versions import STAGES, VERSION, stage  # noqa: E402  (the one grammar of a version)
 
 # the parts of a release's section, in this order, each once at most (RELEASING.md)
 PARTS = ("Added", "Changed", "Removed", "Fixed", "Upgrading")
 # the section after the releases', which no release reads
 HISTORY = "Before the beta"
-RELEASE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))? \(\d{4}-\d{2}-\d{2}\)")
-STAGES = ("alpha", "beta", "rc", None)  # a version's alphas come before its betas, its candidates, then itself
+# a release's heading: its version (versions.VERSION: a -dev one is no release), then its date
+RELEASE = re.compile(VERSION.pattern + r" \(\d{4}-\d{2}-\d{2}\)")
 REPOSITORY = "https://github.com/rowstile/rowstile"
 # code (inline or fenced), which is left as it is, or a link's target: [text](target)
 LINK = re.compile(r"(`+)[\s\S]*?\1|\]\(([^)\s]+)\)")
@@ -36,19 +38,24 @@ def read() -> str:
         return fh.read()
 
 
+def heading_at(version: str, text: str) -> re.Match[str] | None:
+    """Where the heading line of this version's own section is (`## 0.2.0-beta.1 (2026-11-02)`, with or without
+    its date), or None. Another version's, `## 0.2.0` for 0.2.0-beta.1, is not it."""
+    return re.search(rf"^## {re.escape(version)}(?: \([^)\n]*\))?$", text, re.M)
+
+
 def heading(version: str, text: str) -> str | None:
-    """The heading line of this version's own section (`## 0.2.0-beta.1 (2026-11-02)`, with or without its date),
-    or None. Another version's, `## 0.2.0` for 0.2.0-beta.1, is not it."""
-    m = re.search(rf"^## {re.escape(version)}(?: \([^)\n]*\))?$", text, re.M)
+    """The heading line of this version's own section, or None."""
+    m = heading_at(version, text)
     return m.group(0) if m else None
 
 
 def section(version: str, text: str) -> str:
     """What the release's section says, headings of its parts included; empty if it has none."""
-    line = heading(version, text)
-    if not line:
+    m = heading_at(version, text)  # (from where it is: a line above that quotes it is not it)
+    if not m:
         return ""
-    body = text[text.index(line) + len(line) :]
+    body = text[m.end() :]
     end = re.search(r"^## ", body, re.M)
     return (body[: end.start()] if end else body).strip() + "\n"
 
@@ -95,13 +102,14 @@ def layout(text: str) -> list[str]:
     for n, line in enumerate(text.splitlines(), 1):
         if line.startswith("## "):
             name, release = line[3:], RELEASE.fullmatch(line[3:])
+            release = release if release and not release.group(6) else None  # (a -dev version is no release)
             if not (name in ("Unreleased", HISTORY) or release):
                 problems.append(f"line {n}: {line} is no release's heading: ## X.Y.Z[-beta.N] (YYYY-MM-DD)")
             elif name in sections or (sections[-1:] == [HISTORY]):
                 problems.append(f"line {n}: {line} comes after the history, or twice")
             elif release:
-                x, y, z, stage, count = release.groups()
-                version = (int(x), int(y), int(z), STAGES.index(stage), int(count or 0))
+                x, y, z, at, count, _ = release.groups()
+                version = (int(x), int(y), int(z), stage(at) if at else len(STAGES), int(count or 0))
                 if newer and version >= newer:
                     problems.append(f"line {n}: {line} is below an older release's section: newest first")
                 newer = version

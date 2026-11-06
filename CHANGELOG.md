@@ -106,6 +106,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The playground serves Pyodide and PGlite from its own site, at the versions its `package.json` pins, instead of
   loading them from jsDelivr. Mermaid still comes from jsDelivr, checked against its hash as Studio checks it, and
   the page's Content-Security-Policy lets scripts run from the site and that file alone.
+- The npm package's launcher exits 2 when it can't run the command (no Python to run on, a `ROWSTILE_PYTHON` that
+  isn't one, a path too long for Windows), as the command's own exit codes say of what it couldn't do; it exited 1.
 
 ### Removed
 
@@ -670,6 +672,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A mistake on a line that goes on over several (a quote left open in braces, AZ106 and AZ114) is underlined in
   the editor up to the last character of its last line. Before, the language server's range ended one character
   past the end of that line.
+- The npm package's launcher passes Ctrl-C and a hang-up on to the command only when none of its streams is a
+  terminal: `npx rowstile ... < file` in a terminal no longer gives the command each one twice.
+- The command's image and the Python package are built with the build's own packages (hatchling and what it needs)
+  pinned by hash, as everything else they fetch is.
 
 ### Upgrading
 
