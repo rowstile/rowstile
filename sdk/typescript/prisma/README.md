@@ -47,12 +47,15 @@ and a query by permission is one call:
 
 - Use the client `$extends(authz())` returns, and only that one.
 - `$transaction([...])` is refused: Prisma starts an array's transaction from whichever request came first.
-  Use `$transaction(async (tx) => ...)`. Inside it, why a write was refused is asked through the transaction:
-  it needs no second connection.
+  Use `$transaction(async (tx) => ...)`. Inside it, why a write was refused is asked through the transaction,
+  and so is what `db.$authz` (or `tx.$authz`) asks for its principal: it sees what the transaction wrote, and
+  needs no second connection.
 - A transaction is one principal's: inside `$transaction(async (tx) => ...)`, a query through `db` (not `tx`) for
-  anyone else (after `actingAs`, in a job, nobody), or a `$transaction` inside it, throws an `Error` before a
-  connection is asked for, and the transaction goes on as its own principal. Run that work after it, or in a
-  transaction of its own on another connection.
+  anyone else (after `actingAs`, in a job, nobody), or a `db.$transaction` inside it for anyone else, throws an
+  `Error` before a connection is asked for, and the transaction goes on as its own principal. Run that work after
+  it, or in a transaction of its own on another connection. A `db.$transaction` inside it for the same principal
+  is Prisma's: another transaction, on another connection, which doesn't see what the first one wrote. For a
+  savepoint of it, use Prisma's own `tx.$transaction(async (t) => ...)`.
 - A nested write whose target isn't there, or is hidden from the user (a `connect`), is `NotFound` naming that
   target's table.
 - A `create` reads its row back, so it needs the select rule too. A refusal there is `Refused` naming it.

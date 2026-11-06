@@ -64,17 +64,19 @@ function clientOf(tx: unknown): Listens | undefined {
   return typeof client?.on === "function" && typeof client.removeListener === "function" ? client as Listens : undefined;
 }
 
-export function withAuthz<Tx extends Executes>(db: Transacts<Tx>, options: Options = {}) {
+export function withAuthz<Tx extends Executes & Transacts<Tx>>(db: Transacts<Tx>, options: Options = {}) {
   const scope = transactionScope<Tx>();
   const transaction = async <R>(fn: (tx: Tx) => Promise<R>, who?: Who): Promise<R> => {
     const p = await signingIn(options.user, who);
-    scope.enter(p);                                // inside a transaction of this object's, as no one else
+    // inside a transaction of this object's: as no one else, and as p Drizzle's own nested one, a savepoint of it
+    const open = scope.enter(p);
     // node-postgres listens for a lost connection only on idle clients, and Drizzle doesn't listen on the one it
     // checks out: while the transaction holds it, an error with nobody listening would stop the process. The
     // transaction fails at its next query instead. (Taken off once Drizzle has given the client back.)
     let held: Listens | undefined;
     const lost = () => undefined;
     try {
+      if (open) return await open.transaction((tx) => scope.run(tx, p, () => fn(tx)));
       return await db.transaction(async (tx) => {
         held = clientOf(tx);
         held?.on("error", lost);
@@ -97,7 +99,8 @@ export function withAuthz<Tx extends Executes>(db: Transacts<Tx>, options: Optio
   };
   return {
     /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). fn acts for them too:
-     *  this object's own calls made inside it (can, permsOf, ...) run in the same transaction.
+     *  this object's own calls made inside it (can, permsOf, ...) run in the same transaction, and so does a
+     *  transaction(fn) of theirs, as a savepoint of it (Drizzle's own nested transaction).
      *  A transaction is one principal's: inside it, this object's work for anyone else throws before it is sent. */
     transaction,
     /** The runtime's functions (can, permsOf, list, share, ...): inside transaction(fn), in that transaction;

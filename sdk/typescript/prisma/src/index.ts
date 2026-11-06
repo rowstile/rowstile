@@ -21,7 +21,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Prisma } from "@prisma/client/extension";
 import {
-  actAs, calls, idShown, idText, NotFound, signedInAlready, signingIn, translate,
+  actAs, calls, current, idShown, idText, NotFound, signedInAlready, signingIn, translate,
   type AuthzCalls, type Id, type ObjectType, type Permission, type Principal, type Queryable, type UserResolver,
 } from "@rowstile/client";
 
@@ -79,9 +79,10 @@ function mustBeExtended(): void {
 
 // The interactive transactions the code running now is in ($transaction(async (tx) => ...) on a client authz()
 // returned): whom each adapter's signed in as, and whether it has ended (work it started may run after: then it
-// signs in on its own). `mine` is the one this $transaction began. One store for the process, as above.
+// signs in on its own). `mine` is the one this $transaction began, `itx` Prisma's own for it, once the app's
+// callback runs. One store for the process, as above.
 interface Signed { p: Principal; ended: boolean }
-interface Began { signed: Map<object, Signed>; started: boolean; mine?: Signed }
+interface Began { signed: Map<object, Signed>; started: boolean; mine?: Signed; itx?: { kind?: string } }
 const BEGAN = Symbol.for("rowstile.prisma.transaction");
 const began: AsyncLocalStorage<Began> = ((globalThis as Record<symbol, unknown>)[BEGAN] as AsyncLocalStorage<Began> | undefined) ??
   ((globalThis as Record<symbol, unknown>)[BEGAN] = new AsyncLocalStorage<Began>()) as AsyncLocalStorage<Began>;
@@ -246,8 +247,17 @@ export function authz(options: ExtensionOptions = {}) {
     };
     // through the client this returns (set below), whose last hook lets the query through
     let self: RawClient = raw;
+    // db.$authz inside the app's interactive transaction, for whom it signed in as (or for whom the adapter's
+    // user() says, as the transaction did, when the code sets no one): in it, as the other packages ask in theirs.
+    // It sees what the transaction wrote, and waits for no connection of its own
     const q: Queryable = {
-      query: async (text, values = []) => ({ rows: await self.$queryRawUnsafe(text, ...values) }),
+      query: async (text, values = []) => {
+        const b = began.getStore();
+        const now = current();
+        const inside = b?.itx && b.mine?.ended === false && (!now || (now.type === b.mine.p.type && now.id === b.mine.p.id));
+        const asked = self.$queryRawUnsafe(text, ...values);
+        return { rows: await (inside ? (asked as unknown as InTransaction).requestTransaction(b.itx) : asked) };
+      },
     };
     const c = calls(q);
     // The runtime's functions asked inside the app's interactive transaction, for a call made in one: an update or a
@@ -334,10 +344,13 @@ export function authz(options: ExtensionOptions = {}) {
       $transaction(this: unknown, ...args: unknown[]) {
         const parent = (Prisma.getExtensionContext(this) as unknown as { $parent: { $transaction(...a: unknown[]): Promise<unknown> } }).$parent;
         const [fn, ...rest] = args;
-        const app = typeof fn === "function"
-          ? (tx: unknown) => through.exit(async () => await (fn as (tx: unknown) => unknown)(tx)) : fn;
-        // (awaited inside: the transaction begins, and signs in, in the store's scope)
         const b: Began = { signed: new Map(began.getStore()?.signed), started: false };   // (and those it is inside)
+        const app = typeof fn === "function"
+          ? (tx: unknown) => through.exit(async () => {
+            b.itx = await transactionOf(tx);                                   // what db.$authz asks in, inside it
+            return await (fn as (tx: unknown) => unknown)(tx);
+          }) : fn;
+        // (awaited inside: the transaction begins, and signs in, in the store's scope)
         return extended(() => began.run(b, async () => {
           try {
             return await parent.$transaction(app, ...rest);

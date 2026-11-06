@@ -23,7 +23,9 @@ needs its own connection to Postgres: [Behind a pooler](../operations.md#behind-
 A transaction is one principal's: a sign-in lasts the database transaction. Inside `transaction(fn)`, the same
 object's work for anyone else (code in `fn` that calls `actingAs` or a job, a `who` given, or nobody) throws an
 `Error` before anything is sent for it, and the transaction goes on as its own principal. Run that work after it,
-or in a transaction of its own on another connection.
+or in a transaction of its own on another connection. A transaction inside it for the same principal
+(`transaction(fn)` again, or `begin(fn)` on postgres.js) is a savepoint of it, on its connection: it sees what the
+outer one wrote, and if it fails, it is rolled back to the savepoint and the outer one goes on.
 
 ```sh
 # @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
@@ -138,6 +140,8 @@ import { authz as postgresAuthz } from "@rowstile/postgres";
       const projects = await actingAs(["service", 1], () => a.begin(async (tx) => tx`SELECT id FROM app.projects ORDER BY id`));
       expect(await a.permsOf("project", [1, 3])).toEqual({ "1": [], "3": ["view"] });   // signed out
 ```
+
+`begin(fn)` takes postgres.js's own forms: `fn` may return an array of queries, and each runs, in the transaction.
 
 ## Drizzle
 

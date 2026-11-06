@@ -54,7 +54,8 @@ every principal reads back as itself. The audit trail and `created_by` name who 
 `parsePrincipal` reads them too. Whoever the code acts for (`actingAs`, a `job`)
 comes first, else the `user` function, else nobody; a `who` given to one call (`transaction(fn, who)`) comes
 before all, and `null` there is nobody. The code in `fn` acts for that transaction's principal too: the
-package's own calls made there (`a.expect`, `a.can`) run in the same transaction. A transaction is one
+package's own calls made there (`a.expect`, `a.can`, Prisma's `db.$authz`) run in the same transaction, and so
+does a transaction of theirs begun there (`a.transaction(fn)`), as a savepoint of it. A transaction is one
 principal's, since a sign-in lasts the database transaction: inside it, the package's work for anyone else (code
 in `fn` that calls `actingAs`, a `who` given, nobody) throws an `Error` before anything is sent for it, and the
 transaction goes on as its own principal. Run that work after it, or in a transaction of its own on another

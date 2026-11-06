@@ -150,11 +150,12 @@ export function job<A extends unknown[], R>(who: Who, fn: (...args: A) => R): (.
  *  the code running now still acts for p: the package's own calls made inside fn (`a.expect`, `a.can`) run in
  *  it, as p, see what it wrote, and wait for no second connection. `enter(p)`, before a transaction of the
  *  package's signs in as p: inside fn, while its transaction is open, a sign-in as anyone else throws
- *  (signedInAlready), and nothing is sent. */
+ *  (signedInAlready), and nothing is sent; one as p gives that transaction, for the package to run the new one in
+ *  (a savepoint of it), as it does p's other work there. */
 export function transactionScope<T>(): {
   run<R>(tx: T, p: Principal, fn: () => Promise<R>): Promise<R>;
   open(): T | undefined;
-  enter(p: Principal): void;
+  enter(p: Principal): T | undefined;
 } {
   const store = new AsyncLocalStorage<{ tx: T; p: Principal; ended: boolean }>();
   return {
@@ -177,7 +178,9 @@ export function transactionScope<T>(): {
     enter: (p) => {
       const t = store.getStore();
       // (once the transaction has ended, work it started signs in on its own)
-      if (t && !t.ended && !same(t.p, p)) throw signedInAlready(t.p, p);
+      if (!t || t.ended) return undefined;
+      if (!same(t.p, p)) throw signedInAlready(t.p, p);
+      return t.tx;
     },
   };
 }

@@ -61,6 +61,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   a refusal of the update rule, where it passed.
 - `authzRoutes()` (`@rowstile/next`) answers 400 to a request that names no type, and to a body that isn't a JSON
   object, instead of an error, a 500.
+- In the TypeScript SDK, a transaction begun inside another for the same principal (`transaction(fn)` in
+  `@rowstile/pg` and `@rowstile/drizzle`, `begin(fn)` in `@rowstile/postgres`) is a savepoint of it, on its
+  connection, as in the Python and Go SDKs: it sees what the outer one wrote, and one that fails is rolled back to its
+  savepoint. Before, it took another connection, and on a pool of one it waited forever. Through Prisma,
+  `db.$authz` (and `tx.$authz`) inside `$transaction(async (tx) => ...)` asks in that transaction, as the other
+  packages' calls do in theirs; before, it asked on another connection.
 
 ### Removed
 
@@ -464,6 +470,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `@rowstile/prisma` reads a nested write whose target isn't there, or is hidden from the user (a `connect`), as
   `NotFound` naming that target's table. Before, an update named the row it updated, and a create stayed Prisma's
   error.
+- `@rowstile/postgres`'s `begin(fn)` runs the queries of an array `fn` returns, as postgres.js's own `begin` does.
+  Before, it ran none of them and committed an empty transaction.
 
 ### Upgrading
 

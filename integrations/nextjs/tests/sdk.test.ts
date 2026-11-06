@@ -3,7 +3,7 @@
 // of the SDK (sdk/typescript/*/src), and fails unless they run every line, branch and function of it.
 import { EventEmitter } from "node:events";
 import pg from "pg";
-import postgres from "postgres";
+import postgres, { type TransactionSql } from "postgres";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql as sqlTag } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
@@ -138,6 +138,29 @@ describe("the runtime's functions over pg", () => {
       }));
     } finally {
       await p.end();
+    }
+  });
+
+  // a transaction inside one for the same principal is a savepoint of it: it sees what the outer one wrote and needs
+  // no second connection (a pool of one here); one that fails is rolled back to its savepoint, and the outer one goes on
+  test("a transaction inside another for the same principal is a savepoint of it", async () => {
+    const one = new pg.Pool({ connectionString: APP, max: 1, connectionTimeoutMillis: 2000 });
+    const a = rowstile(one);
+    const body = async (c: pg.PoolClient) => (await c.query("SELECT body FROM app.notes WHERE id = 4")).rows[0].body;
+    try {
+      const seen = await actingAs("3", () => a.transaction(async (c) => {
+        await c.query("UPDATE app.notes SET body = 'outer' WHERE id = 4");
+        const inner = await a.transaction(async (d) => [d === c, await body(d), current()]);
+        const failed = await a.transaction(async (d) => {
+          await d.query("UPDATE app.notes SET body = 'inner' WHERE id = 4");
+          await d.query("SELECT 1/0");
+        }, "3").catch((e: { code?: string }) => e.code);
+        return [inner, failed, await body(c)];
+      }));
+      expect(seen).toEqual([[true, "outer", { type: "user", id: "3" }], "22012", "outer"]);
+      expect((await actingAs("3", () => a.query("SELECT body FROM app.notes WHERE id = 4"))).rows[0].body).toBe("outer");
+    } finally {
+      await one.end();
     }
   });
 
@@ -407,6 +430,61 @@ describe("postgres.js and Drizzle", () => {
     }
   });
 
+  // postgres.js's own form: a callback that returns an array of queries, which begin runs, each in the transaction
+  test("postgres.js: begin runs the queries of an array the callback returns", async () => {
+    const sql = postgres(APP, { max: 1 });
+    try {
+      const a = postgresAuthz(sql);
+      const insert = (tx: TransactionSql, body: string) =>
+        tx`INSERT INTO app.notes (project_id, author_id, body) VALUES (1, 1, ${body}) RETURNING body`;
+      const made = await actingAs("1", () => a.begin(((tx: TransactionSql) => [insert(tx, "one"), insert(tx, "two")]) as never));
+      expect((made as { body: string }[][]).map((rows) => rows[0].body)).toEqual(["one", "two"]);
+      // ... and inside another for the same principal, in its savepoint
+      const inner = await actingAs("1", () => a.begin(async () => a.begin(((tx: TransactionSql) => [insert(tx, "three")]) as never)));
+      expect((inner as { body: string }[][])[0][0].body).toBe("three");
+      const bodies = await actingAs("1", () => a.begin(async (tx) => tx`SELECT body FROM app.notes WHERE id > 100 ORDER BY id`));
+      expect(bodies.map((r) => r.body)).toEqual(["one", "two", "three"]);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  // as with pg: inside a transaction, another for the same principal is a savepoint of it (here on one connection)
+  test("postgres.js and Drizzle: a transaction inside another for the same principal is a savepoint of it", async () => {
+    const sql = postgres(APP, { max: 1 });
+    const one = new pg.Pool({ connectionString: APP, max: 1, connectionTimeoutMillis: 2000 });
+    try {
+      const a = postgresAuthz(sql);
+      const body = async (tx: TransactionSql) => (await tx`SELECT body FROM app.notes WHERE id = 4`)[0].body;
+      const seen = await actingAs("3", () => a.begin(async (tx) => {
+        await tx`UPDATE app.notes SET body = 'outer' WHERE id = 4`;
+        const inner = await a.begin(async (t) => body(t));
+        const failed = await a.begin(async (t) => {
+          await t`UPDATE app.notes SET body = 'inner' WHERE id = 4`;
+          await t`SELECT 1/0`;
+        }, "3").catch((e: { code?: string }) => e.code);
+        return [inner, failed, await body(tx)];
+      }));
+      expect(seen).toEqual(["outer", "22012", "outer"]);
+      const d = withAuthz(drizzle(one));
+      const read = async (tx: { execute(q: unknown): Promise<{ rows: { body: string }[] }> }) =>
+        (await tx.execute(sqlTag`SELECT body FROM app.notes WHERE id = 4`)).rows[0].body;
+      const drizzled = await actingAs("3", () => d.transaction(async (tx) => {
+        await tx.execute(sqlTag`UPDATE app.notes SET body = 'drizzle' WHERE id = 4`);
+        const inner = await d.transaction(async (t) => read(t));
+        const failed = await d.transaction(async (t) => {
+          await t.execute(sqlTag`UPDATE app.notes SET body = 'inner' WHERE id = 4`);
+          await t.execute(sqlTag`SELECT 1/0`);
+        }).catch((e: { cause?: { code?: string } }) => e.cause?.code);
+        return [inner, failed, await read(tx)];
+      }));
+      expect(drizzled).toEqual(["drizzle", "22012", "drizzle"]);
+    } finally {
+      await sql.end();
+      await one.end();
+    }
+  }, 30_000);
+
   test("a Drizzle driver whose result holds neither rows nor a count", async () => {
     const q = drizzleQueryable({ execute: async () => ({}) });
     expect(await q.query("SELECT 1")).toEqual({ rows: [], rowCount: 0 });
@@ -557,6 +635,33 @@ describe("@rowstile/prisma", () => {
     } finally {
       await plain.$disconnect();
       await own.end();
+    }
+  });
+
+  // the runtime's functions (db.$authz, tx.$authz) asked inside an interactive transaction, for whom it signed in as,
+  // run in it: they see what it wrote, and wait for no second connection (a pool of one here). For anyone else they
+  // are refused, as before; once it has ended, they ask in a transaction of their own
+  test("db.$authz inside an interactive transaction asks in it", async () => {
+    const one = new pg.Pool({ connectionString: APP, max: 1, connectionTimeoutMillis: 2000 });
+    const client = new PrismaClient({ adapter: signedIn(new PrismaPg(one), { user: () => "1" }) }).$extends(authz());
+    const subjects = (shares: { subject_id: string }[]) => shares.map((s) => s.subject_id);
+    try {
+      let later!: () => Promise<boolean>;
+      const seen = await actingAs("1", () => client.$transaction(async (tx) => {
+        await client.$authz.share("project", 1, "viewer", "user", 2);
+        await tx.$authz.share("project", 1, "viewer", "user", 3);
+        later = () => client.$authz.can("project", 1, "view");
+        // Prisma's own nested transaction, a savepoint of it: there too
+        const nested = await tx.$transaction(async (t) => subjects(await t.$authz.listShares("project", 1)));
+        return [subjects(await client.$authz.listShares("project", 1)), await tx.$authz.can("project", 1, "edit"), nested];
+      }));
+      expect(seen).toEqual([["2", "3"], true, ["2", "3"]]);
+      expect(await actingAs("1", later)).toBe(true);                          // ended: a transaction of its own
+      // code that set no one acts for whom the adapter's user() says, as the transaction does
+      expect(await client.$transaction(async () => subjects(await client.$authz.listShares("project", 1)))).toEqual(["2", "3"]);
+    } finally {
+      await client.$disconnect();
+      await one.end();
     }
   });
 
