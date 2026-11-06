@@ -679,6 +679,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile review` and `rowstile prove` read a condition on a type's key column (`{id = 2}`) as the row's own
   id, as the database does. Before, their small worlds gave that column a value of its own, beside the id, so a
   refactor could be said to change what it doesn't, or a counterexample be one no database can hold.
+- `rowstile migrate` writes a migration when a policy's lines only moved (a comment added above a rule): it writes
+  where each line is now, and nothing else, and `rowstile migrate --check` asks for it. Before, there was none, and
+  a migrated database's messages named a rule's old line until the next migration.
 
 ### Upgrading
 

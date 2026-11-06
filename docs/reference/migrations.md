@@ -40,7 +40,8 @@ already. <!-- checked: tests/migration_tools.sh "numbered after them" -->
   that changes is replaced in place (emptied first, then defined again), so what the app built on a masked
   view stays. <!-- checked: tests/migrate_test.py "a mask that changes, under a view of the app's"; tests/migrate_test.py "a permission the masked view reads changes, under a view of the app's" -->
   The same policy always gives the same bytes. <!-- checked: tests/unit_test.py "test_the_same_policy_gives_the_same_bytes" -->
-  Lines that only moved need no migration. <!-- checked: tests/unit_test.py "test_lines_that_only_move_need_no_migration"; tests/migrate_test.py "lines that only move" -->
+  Lines that only moved (a comment added above a rule) make a small migration: it writes where each line is now,
+  which the messages name, and makes nothing. <!-- checked: tests/unit_test.py "test_lines_that_only_move_are_written_again"; tests/migrate_test.py "lines that only move" -->
 - **Each migration checks where it starts**: the lock's hash is recorded in `authz.policy_versions`, and
   a migration applied out of order, twice, or to a database changed since with `push` or `apply` stops
   with a message naming both. <!-- checked: tests/migrations.sh "the same migration again is refused: the database holds it already"; tests/migrations.sh "and so is one without the migrations before it"; tests/migrations.sh "but not to the pushed one, which holds it already" -->

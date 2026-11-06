@@ -3879,12 +3879,22 @@ class Migrations(unittest.TestCase):
         )
         self.assertEqual(m.summary, ["- type org = app.orgs", "+ type org = app.orgs (id int)"])
 
-    def test_lines_that_only_move_need_no_migration(self) -> None:
+    def test_lines_that_only_move_are_written_again(self) -> None:
+        # the messages name a rule's line as authz_gen.policy_lines holds it: lines that moved are a migration, which
+        # writes where they are now and makes nothing
         moved = replaced(self.text, "app role app_user\n", "app role app_user\n\n-- a note\n")
-        self.assertTrue(one_migration(moved, self.lock(self.text)).empty)
+        m = one_migration(moved, self.lock(self.text))
+        self.assertIn("DELETE FROM authz_gen.policy_lines;\nINSERT INTO authz_gen.policy_lines VALUES", m.sql)
+        self.assertNotRegex(m.sql, r"(?m)^\s*(CREATE|DROP|ALTER)\b")
+        self.assertEqual(
+            m.summary, ["the same policy, its lines moved: where the messages say each one is, written again"]
+        )
+        self.assertNotEqual(m.lock, self.lock(self.text))
         sql, comp, _ = database.migratable(moved, {})
         pushed = self.migrate.migration(sql, comp, self.migrate.parse_lock(self.lock(self.text)), lines=True)
-        self.assertIn("DELETE FROM authz_gen.policy_lines", pushed.sql)
+        self.assertEqual(pushed.sql, m.sql)
+        # a comment that moves no line changes nothing the database holds
+        self.assertTrue(one_migration(self.text + "\n-- the end\n", self.lock(self.text)).empty)
 
     def test_a_body_that_calls_what_goes_is_not_made_again(self) -> None:
         # a PL/pgSQL or SQL body looks up what it calls when it runs: rebuilding a tree (the views and functions
@@ -4421,9 +4431,15 @@ class Review(unittest.TestCase):
         )
 
     def test_comments_only(self) -> None:
-        r = self.run_review(replaced(self.text, "app role app_user\n", "app role app_user   -- the app's role\n\n"))
+        r = self.run_review(replaced(self.text, "app role app_user\n", "app role app_user   -- the app's role\n"))
         self.assertEqual(r["meaning"]["equivalent"], "text")
         self.assertEqual(r["deploy"]["migrations"], [])
+        self.assertIn("**Meaning**: unchanged", self.review.markdown(r))
+        # lines that move: a migration all the same, which writes where they are (it locks no table, rebuilds nothing)
+        r = self.run_review(replaced(self.text, "app role app_user\n", "app role app_user   -- the app's role\n\n"))
+        self.assertEqual(r["meaning"]["equivalent"], "text")
+        [m] = r["deploy"]["migrations"]
+        self.assertEqual((m["locks"], m["rebuilds"], m["builds_beside"]), ({}, [], []))
         self.assertIn("**Meaning**: unchanged", self.review.markdown(r))
 
     def test_a_refactor_is_checked_in_small_worlds(self) -> None:
@@ -14979,7 +14995,7 @@ class LlmsTxt(unittest.TestCase):
             self.assertIn(f"<!-- {link} -->", full)
         # without the notes for the repository's checks, which the pages don't show: after a sentence, or a line
         self.assertNotRegex(full, llms_full.NOTE)
-        self.assertIn("Lines that only moved need no migration.\n", full)
+        self.assertIn("Lines that only moved (a comment added above a rule) make a small migration", full)
         self.assertEqual(
             llms_full.without_notes(
                 '<!-- tested: x -->\nA promise. <!-- checked: tests/x.sh "y" --> `<!-- kept -->`\n'

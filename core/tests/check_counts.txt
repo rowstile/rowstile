@@ -30,7 +30,7 @@ language server 148
 masks 39
 mcp 79
 migrate vs apply 97
-migrations 85
+migrations 87
 moves 23
 multi scenario 119
 policy errors 293

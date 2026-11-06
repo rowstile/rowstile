@@ -17,7 +17,7 @@ T=$(mktemp -d)
 # whatever way the suite ends: the sessions it left running, its databases, its files
 cleanup() {
   stop_sessions
-  for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8" "${DB}_9" "${DB}_10" "${DB}_11" "${DB}_12"; do dropdb --force --if-exists "$db" 2>/dev/null; done
+  for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8" "${DB}_9" "${DB}_10" "${DB}_11" "${DB}_12" "${DB}_13" "${DB}_14"; do dropdb --force --if-exists "$db" 2>/dev/null; done
   rm -rf "$T"
 }
 trap cleanup EXIT
@@ -58,6 +58,23 @@ fresh "${DB}_10"
 out=$( (cd "$T/end" && python3 "$OLDPWD/cli/rowstile_cli.py" migrate 2>&1) ) && out=$(migrate_db "${DB}_10" "$T/end/db/migrations") &&
   [ "$(psql -X -At -d "${DB}_10" -c "SELECT right(policy, 25) FROM authz.policy_versions ORDER BY id DESC LIMIT 1")" = '-- the end: $authz_policy' ] &&
   ok "... and one whose policy ends in the tag of the quote its text is recorded in" || bad "a policy ending in the quote's tag" "$out"
+# lines that only moved (a comment above a rule): a migration of their own, which writes where each line is now (what
+# the messages name), as applying the policy whole does
+mkdir -p "$T/moved/db" && cp "$P/rowstile.toml" "$T/moved/" && cp "$P/db/policy.authz" "$T/moved/db/"
+MCLI() { ( cd "$T/moved" && python3 "$OLDPWD/cli/rowstile_cli.py" "$@" ); }
+fresh "${DB}_13"; fresh "${DB}_14"
+out=$(MCLI migrate 2>&1) && out=$(migrate_db "${DB}_13" "$T/moved/db/migrations") &&
+  sed -i 's/^rules app.files$/-- what the app may do with files\nrules app.files/' "$T/moved/db/policy.authz" &&
+  out=$(MCLI migrate --check 2>&1); rc=$?
+case "$out" in *"has changes no migration has"*"the same policy, its lines moved: where the messages say each one is, written again"*)
+  [ $rc -eq 1 ] && ok "--check: exit 1 when lines only moved" || bad "--check on lines that moved: exit $rc";;
+  *) bad "--check on lines that moved" "$out";; esac
+out=$(MCLI migrate 2>&1) && out=$(migrate_db "${DB}_13" "$T/moved/db/migrations") &&
+  out=$(MCLI --db "dbname=${DB}_14" apply --force 2>&1) && lines="SELECT what || ' ' || loc FROM authz_gen.policy_lines ORDER BY 1" &&
+  [ "$(PSQL -d "${DB}_13" -c "$lines")" = "$(PSQL -d "${DB}_14" -c "$lines")" ] &&
+  [ "$(PSQL -d "${DB}_13" -c "SELECT loc FROM authz_gen.policy_lines WHERE what = 'rule app.files delete'")" = "line $(grep -n '^  delete  *: edit$' "$T/moved/db/policy.authz" | cut -d: -f1)" ] &&
+  [ "$(ls "$T/moved/db/migrations" | wc -l)" = 2 ] && ! grep -Eq '^(CREATE|DROP|ALTER) ' "$(ls "$T/moved/db/migrations"/*.sql | sort | tail -n 1)" &&
+  ok "... and the migration writes where each line is now, as applying whole does, and makes nothing" || bad "the migration of lines that moved" "$out"
 out=$(CLI migrate 2>&1); case "$out" in "nothing to migrate"*) ok "again: nothing to migrate";; *) bad "migrate again" "$out";; esac
 out=$(CLI migrate --check 2>&1); rc=$?; [ $rc -eq 0 ] && ok "--check: exit 0 when the lock is up to date" || bad "--check up to date" "$out"
 # a lock another version wrote: upgrading rowstile is no migration while it makes the same

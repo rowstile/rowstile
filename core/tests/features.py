@@ -697,7 +697,7 @@ FEATURES: list[Feature] = [
             T("migrations.sh", "the second swaps it in, with what the app wrote meanwhile"),
             T("migrations.sh", "a migration run a statement at a time is refused (AZ615), and changes nothing"),
             T("migrations.sh", "the same migration again is refused: the database holds it already"),
-            T("unit_test.py", "test_lines_that_only_move_need_no_migration"),
+            T("unit_test.py", "test_lines_that_only_move_are_written_again"),
             T("unit_test.py", "test_file_names"),
             T("migration_tools.sh", "numbered after them"),
         ),
