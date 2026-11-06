@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 
-// The checks run one after the other: they share one database, one zero-cache and the app test.sh started.
+// The checks run one after the other: they share one database, one PowerSync service and the app test.sh started.
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],

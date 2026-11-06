@@ -113,16 +113,28 @@ the index holds what each principal may read, without scopes. The token names th
 `principal_type` its type.
 
 ```ts
-    const who = await signedIn(headersOf(req));
-    if (who.id === null) {
-      res.status(401).json({ error: "Unauthorized", detail: "sign in to sync" });
-      return;
-    }
-    if (who.limited) {
-      res.status(403).json({ error: "Forbidden", detail: "a session limited by scopes, or viewing as someone, can't sync" });
-      return;
-    }
-    res.json({ token: token({ type: who.type, id: who.id }) });
+app.post("/api/powersync/token", async (req, res) => {
+  const who = await signedIn(headersOf(req));
+  if (who.id === null) {
+    res.status(401).json({ error: "Unauthorized", detail: "sign in to sync" });
+    return;
+  }
+  if (who.limited) {
+    res.status(403).json({ error: "Forbidden", detail: "a session limited by scopes, or viewing as someone, can't sync" });
+    return;
+  }
+  res.json({ token: token({ type: who.type, id: who.id }) });
+});
+```
+
+The token lasts five minutes. The service believes it until it ends, so a key revoked or a session ended since goes
+on syncing that long; PowerSync's client then asks the app for another, and the app asks the database again. The
+app doesn't start without the key it signs tokens with, of 32 characters at least: with an empty one, anyone could
+make a token for anyone.
+
+```ts
+export const TOKEN_SECRET = process.env.POWERSYNC_TOKEN_SECRET ?? "";
+if (TOKEN_SECRET.length < 32) throw new Error("POWERSYNC_TOKEN_SECRET is unset or shorter than 32 characters: no token is signed with it");
 ```
 
 The clients' writes come back through the app's own routes, signed in as the request's user, so the database refuses
@@ -134,6 +146,7 @@ what they may not write: a refused one is the app's 403, with the rule and why.
   delivery, and the row leaves the client once it is in none of its buckets.
 - The window after a change is the service's replication lag, and for a share that ends, until the next
   `authz.sync_tick()` too.
+- A key revoked, or a session ended, goes on syncing until the token the app gave for it ends (five minutes here).
 - A mirrored line can't be keyed by folder (AZ811): a move rewrites the readers of what is below it.
 - The service is trusted: it holds BYPASSRLS and every row of what it publishes. rowstile can't check what it
   serves; the conformance suite checks it end to end.
