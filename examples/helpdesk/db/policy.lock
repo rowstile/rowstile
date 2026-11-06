@@ -81,6 +81,7 @@
 > rules hd.users: update notes : see_notes
 > rules hd.users: update role, active : workspace.manage
 > rules hd.users: update customer_org_id : workspace.work
+> rules hd.users: update name : self or workspace.manage
 > rules hd.users: update email : workspace.manage
 > rules hd.users: update id, workspace_id, kind : nobody
 > rules hd.users: mask notes : see_notes
@@ -147,7 +148,7 @@
 > invariants: never comment: view and not ticket.view
 > invariants: never user: view and not self and not workspace.member and not workspace.connected
 
-always | 29dc9ff5a9ee
+always | 0147d470630d
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | d54dfc65af0d shape=73a521b1
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | ff3dc82d6ec2 shape=77f3e79f
@@ -170,7 +171,7 @@ function authz.delete_role(p_role bigint) | b4c64d8168eb shape=7c823e86
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 8689b2108a84 shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | e98f52f28997 shape=1223ad2f
-function authz.lint() | 40f768d09d1c shape=54cb1505
+function authz.lint() | e74e87d21120 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | ada360afe39f shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
@@ -319,6 +320,8 @@ function authz_gen."hd.users:column email:items"(p_row "hd"."users") | 82618fb99
 function authz_gen."hd.users:column email:why"(p_row "hd"."users") | 94bc954e9c77 shape=80aae0c6
 function authz_gen."hd.users:column id, workspace_id, kind:items"(p_row "hd"."users") | 1d49f1dc0e64 shape=bdc33331 atomic
 function authz_gen."hd.users:column id, workspace_id, kind:why"(p_row "hd"."users") | 7e268cb89ef2 shape=d3d207e2
+function authz_gen."hd.users:column name:items"(p_row "hd"."users") | 7cefed95e83a shape=ef451edb atomic
+function authz_gen."hd.users:column name:why"(p_row "hd"."users") | bc04425d03b1 shape=f144c465
 function authz_gen."hd.users:column notes:items"(p_row "hd"."users") | fce40d022a23 shape=7db24ac1 atomic
 function authz_gen."hd.users:column notes:why"(p_row "hd"."users") | b8356fc875d6 shape=0f5e57bd
 function authz_gen."hd.users:column role, active:items"(p_row "hd"."users") | 8348087d88fc shape=036b9fcf atomic
@@ -388,6 +391,8 @@ function authz_int."hd.users:column email"() | acdc200bc3af shape=0203b15f
 function authz_int."hd.users:column email:holds"(p_row "hd"."users") | e2801fddae29 shape=08852fc6 atomic
 function authz_int."hd.users:column id, workspace_id, kind"() | e98141fc88c7 shape=47bd37c6
 function authz_int."hd.users:column id, workspace_id, kind:holds"(p_row "hd"."users") | 48c81a57fd4e shape=4e9f9870 atomic
+function authz_int."hd.users:column name"() | 7a1987477f00 shape=caa0038a
+function authz_int."hd.users:column name:holds"(p_row "hd"."users") | 7b498b98d848 shape=f705ce6a atomic
 function authz_int."hd.users:column notes"() | aae7f2acba75 shape=8466634d
 function authz_int."hd.users:column notes:holds"(p_row "hd"."users") | 3ba63fdd4652 shape=d3867805 atomic
 function authz_int."hd.users:column role, active"() | 0638f0ad68d9 shape=64fb1365
@@ -672,15 +677,15 @@ schema authz_int | 985712437937
 step base | bf512c1cc69c
 step cascades | a8260bb56332
 step grant_api | 032f588abd80
-step grant_functions | 55c3e0abc734
+step grant_functions | ffef243c6ae3
 step grant_views | 9c9c28017ad5
 step mask_privileges | 26af74835f67
 step share_indexes | 7b6abf1f960f
 step sweep | 720e0c5ae09f
 step sync_base | d56d2648ef0a
 step sync_refresh | f25732325514
-step tables | 825a2ad22e1b
-table authz_gen.policy_lines | f3b7d02ac8b7 shape=dcfedc96
+step tables | 43cfbd6fb7c7
+table authz_gen.policy_lines | 7c09872a2861 shape=dcfedc96
 table authz_int."team__parent__tree" | ed6220be97e0 shape=ed6220be tree=team__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | a2f979053d93 shape=1779df2c
@@ -802,6 +807,7 @@ trigger "authz_update id, workspace_id" ON "hd"."integrations" | e66a6fad9541
 trigger "authz_update id, workspace_id" ON "hd"."teams" | 01f872076364
 trigger "authz_update id, workspace_id, kind" ON "hd"."users" | 0dbacd3963ef
 trigger "authz_update id, workspace_id, requester_id" ON "hd"."tickets" | 467b103d2c58
+trigger "authz_update name" ON "hd"."users" | 07fcc2d8dd26
 trigger "authz_update notes" ON "hd"."users" | 70ad50bb2059
 trigger "authz_update role, active" ON "hd"."users" | a382e9f15f25
 trigger "authz_update status" ON "hd"."tickets" | 49c1d79d892f

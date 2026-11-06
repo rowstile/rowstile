@@ -116,7 +116,8 @@ rules hd.workspaces
   update    : manage
   update id : nobody
 
--- a person's email is how the email intake knows who sent a mail: only an admin changes it
+-- a person's name is theirs or an admin's to change; their email is how the email intake knows who sent a mail:
+-- only an admin changes it
 rules hd.users view hd.users_visible
   select                        : view
   insert                        : workspace.manage or ((workspace.work or workspace.connected) and {kind = 'customer'})
@@ -124,6 +125,7 @@ rules hd.users view hd.users_visible
   update notes                  : see_notes
   update role, active           : workspace.manage
   update customer_org_id        : workspace.work
+  update name                   : self or workspace.manage
   update email                  : workspace.manage
   update id, workspace_id, kind : nobody
   mask notes                    : see_notes
