@@ -13680,6 +13680,19 @@ class CoverageReport(unittest.TestCase):
 
         self.report = coverage_report
 
+    def test_a_rule_on_columns_is_one_kind_whatever_its_columns(self) -> None:
+        # the columns are the policy's own names, as its tables are: two policies' rules on columns are one kind
+        kind = self.report.kind
+        self.assertEqual(
+            kind("authz_gen", "app.notes:column owner_id, title:why", ""), "authz_gen.<table>:column <columns>:why"
+        )
+        self.assertEqual(kind("authz_gen", "x.t:column a after", ""), "authz_gen.<table>:column <columns> after")
+        self.assertEqual(
+            kind("authz_gen", "x.t:column b after:why", ""), "authz_gen.<table>:column <columns> after:why"
+        )
+        self.assertEqual(kind("authz_gen", "x.t:column_3:why", ""), "authz_gen.<table>:column_<n>:why")
+        self.assertEqual(kind("authz_gen", "x.t:update:refuse", ""), "authz_gen.<table>:update:refuse")
+
     def test_runs_of_lines(self) -> None:
         ranges = self.report.ranges
         # a run goes on over lines that aren't statements, and stops at one that ran

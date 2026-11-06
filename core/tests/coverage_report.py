@@ -122,7 +122,10 @@ def kind(schema: str, name: str, args: str) -> str:
     authz_int.<type>__<name>__why, a tree's <tree>_refresh); rowstile's own functions as they are, and the API's
     with their arguments (authz.share has three)."""
     if ":" in name and "__" not in name.split(":", 1)[0]:
-        return f"{schema}.<table>:" + re.sub(r"column_\d+", "column_<n>", name.split(":", 1)[1])
+        rest = re.sub(r"column_\d+", "column_<n>", name.split(":", 1)[1])
+        # a rule on columns: the columns are the policy's own names too (column owner_id, title after:why)
+        rest = re.sub(r"^column (?!_<n>)[^:]+?(?=( after| before)?(:|$))", "column <columns>", rest)
+        return f"{schema}.<table>:" + rest
     name = re.sub(r"__roles:[^_]+(?:_[^_]+)*__", "__roles:<name>__", name)  # a custom role's: doc__roles:view__who
     if re.fullmatch(r".+__t_[0-9a-f]{8,}", name):  # a tree whose name was too long, shortened to a hash
         return f"{schema}.<tree>_<hash>"
