@@ -12860,6 +12860,28 @@ class RuntimeAnswers(unittest.TestCase):
                     self.assertIn(code, fh.read(), f"{code}: its problem page names it")
 
 
+class SyncEngineApps(unittest.TestCase):
+    """The sync engines' conformance apps (integrations/electric, zero and powersync) each read as an example of
+    its own, so each keeps its copy of the files they share: the same, byte for byte, so that a fix to one is made
+    to all (the worker's own check runs in Electric's suite alone)."""
+
+    REPO = os.path.dirname(ROOT)
+    SAME: ClassVar[dict[str, tuple[str, ...]]] = {
+        "src/worker.ts": ("electric", "zero", "powersync"),
+        "src/db.ts": ("electric", "zero", "powersync"),
+        "src/auth.ts": ("electric", "powersync"),
+        "src/server.ts": ("electric", "powersync"),
+    }
+
+    def test_the_files_they_share_are_the_same(self) -> None:
+        for rel, apps in self.SAME.items():
+            texts: dict[str, str] = {}
+            for app in apps:
+                with open(os.path.join(self.REPO, "integrations", app, *rel.split("/")), encoding="utf-8") as fh:
+                    texts[app] = fh.read()
+            self.assertEqual(len(set(texts.values())), 1, f"{rel} isn't the same in integrations/{{{','.join(apps)}}}")
+
+
 class StackPages(unittest.TestCase):
     """docs/stacks/: every line of code a page shows is in the tested app it comes from, so it can't drift."""
 
