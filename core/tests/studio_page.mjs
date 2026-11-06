@@ -18,7 +18,7 @@ const CORE = fileURLToPath(new URL("../", import.meta.url));
 const CLI = join(CORE, "cli", "rowstile_cli.py");
 const DB = "authz_studio_page";
 /** @typedef {any} Answer  the browser's answer (the DevTools protocol's JSON): its shape is what the checks check */
-const BROWSERS = /** @type {string[]} */ ([process.argv[2], process.env.CHROME, "/usr/bin/google-chrome", "/usr/bin/chromium",
+const BROWSERS = /** @type {string[]} */ ([process.argv[2], process.env.CHROME, "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/microsoft-edge",
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].filter(Boolean));
 let fails = 0;
 /** @param {string} what @param {unknown} ok @param {unknown} [got] */
@@ -54,9 +54,15 @@ function command(...args) {
   if (r.status !== 0) throw new Error(`rowstile ${args.join(" ")}: ${r.stdout}${r.stderr}`);
   return r.stdout;
 }
+// what the run made, undone when it ends however it ends (a step that throws before the checks too), the last made
+// first
+/** @type {(() => unknown)[]} */
+const undo = [];
+try {
 // the docs app's policy, with what the shares tab shows besides: a link, a custom role, a caveat; and a column of the
 // files masked, past the eighth the grid shows (the files get four more columns)
 const dir = mkdtempSync(join(tmpdir(), "rowstile-studio-page-policy-"));
+undo.push(() => rmSync(dir, { recursive: true, force: true }));
 const policy = join(dir, "docs.authz");
 const docs = readFileSync(join(CORE, "example", "docs.authz"), "utf8");
 const withShares = [
@@ -72,6 +78,13 @@ const withShares = [
 writeFileSync(policy, withShares);
 sql("postgres", `DROP DATABASE IF EXISTS ${DB}`);
 sql("postgres", `CREATE DATABASE ${DB}`);
+undo.push(() => {
+  try {
+    sql("postgres", `DROP DATABASE IF EXISTS ${DB}`);
+  } catch (e) {
+    check("the database dropped", false, e instanceof Error ? e.message : String(e));
+  }
+});
 // psql's own lines (\set) are psql's: the rest is SQL
 sql(DB, readFileSync(join(CORE, "example", "app_schema.sql"), "utf8").replace(/^\\.*$/gm, ""));
 sql(DB, "ALTER TABLE app.files ADD COLUMN size bigint, ADD COLUMN kind text, ADD COLUMN tag text, ADD COLUMN note text");
@@ -97,6 +110,13 @@ const port = await new Promise((resolve) => {
   });
 });
 const studio = spawn("python3", [CLI, "--db", `dbname=${DB}`, "studio", "--write", "--port", String(port)], { stdio: ["ignore", "pipe", "pipe"] });
+// stopped, and waited for while it runs (one that has ended already sends no exit again)
+undo.push(async () => {
+  if (studio.exitCode !== null || studio.signalCode !== null) return;
+  const ended = new Promise((r) => studio.once("exit", r));
+  studio.kill("SIGINT");
+  await ended;
+});
 let said = "";
 /** @type {string | null} */
 const address = await new Promise((resolve) => {
@@ -111,12 +131,19 @@ const address = await new Promise((resolve) => {
   setTimeout(() => resolve(null), 30000);
 });
 if (address === null) {
-  studio.kill();
   throw new Error(`Studio didn't start: ${said}`);
 }
 
 // --- the browser ---------------------------------------------------------------------------------------------
+// each try's profile folder, removed once the browser is gone (it writes there as it ends)
+/** @type {string[]} */
+const profiles = [];
+undo.push(async () => {
+  await new Promise((r) => setTimeout(r, 500));
+  for (const p of profiles) rmSync(p, { recursive: true, force: true });
+});
 const profile = mkdtempSync(join(tmpdir(), "rowstile-studio-page-"));
+profiles.push(profile);
 /** Starts the browser and waits for its DevTools address; null when it says nothing within the wait (it is
  *  stopped then). On a shared runner a first start now and then hangs: it is tried again, not failed. */
 async function start(/** @type {string} */ exe, /** @type {string} */ dir, /** @type {number} */ wait) {
@@ -138,16 +165,19 @@ async function start(/** @type {string} */ exe, /** @type {string} */ dir, /** @
 let started = await start(browser, profile, 30000);
 for (let attempt = 2; started.url === null && attempt <= 3; attempt += 1) {
   console.log(`the browser didn't start within 30 s: attempt ${attempt}`);
-  started = await start(browser, mkdtempSync(join(tmpdir(), "rowstile-studio-page-")), 30000);
+  const again = mkdtempSync(join(tmpdir(), "rowstile-studio-page-"));
+  profiles.push(again);
+  started = await start(browser, again, 30000);
 }
 if (started.url === null) {
-  studio.kill();
   throw new Error(`the browser didn't start, three times: ${started.err.slice(0, 300)}`);
 }
 const chrome = started.child;
+undo.push(() => chrome.kill());
 
 // the DevTools protocol, over the WebSocket Node has built in
 const ws = new WebSocket(started.url);
+undo.push(() => ws.close());
 await new Promise((r) => ws.addEventListener("open", r, { once: true }));
 let next = 0;
 /** @type {Map<number, (msg: Answer) => void>} */
@@ -381,18 +411,9 @@ try {
   check("... and once a tab is opened: the graph's detail of one added since", /^can glimpse = viewer {3}\(line \d+\)$/.test(String(glimpse)), glimpse);
 } catch (e) {
   check("the page", false, e instanceof Error ? e.message : String(e));
+}
 } finally {
-  ws.close();
-  chrome.kill();
-  studio.kill("SIGINT");
-  await new Promise((r) => studio.once("exit", r));
-  setTimeout(() => rmSync(profile, { recursive: true, force: true }), 500);
-  rmSync(dir, { recursive: true, force: true });
-  try {
-    sql("postgres", `DROP DATABASE IF EXISTS ${DB}`);
-  } catch (e) {
-    check("the database dropped", false, e instanceof Error ? e.message : String(e));
-  }
+  for (const step of undo.reverse()) await step();
 }
 console.log(`Studio's page in a browser: ${fails ? `${fails} failed` : "all passed"}`);
 process.exitCode = fails ? 1 : 0;
