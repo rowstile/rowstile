@@ -36,7 +36,8 @@ export const digest = job(["service", 1], async () => ({ count: await db.project
 - `translate(e)`: any driver's error as one of those, or `null`. `problemOf(e)` and `problemResponse(e)`: the
   status and an RFC 9457 body for an HTTP answer (and 404 for what a call names that isn't there, AZ708; 400
   for a missing or wrong argument, AZ710; 401 for a call that needs someone signed in or a login refused,
-  AZ714 and AZ703; 409 for a move inside itself, AZ713).
+  AZ714 and AZ703; 409 for a move inside itself, AZ713). Through Prisma, a login refused has no code: Prisma's
+  driver adapter keeps no HINT for its SQLSTATE, 28000, so it stays Prisma's error.
 - `errorCode(e)`: rowstile's code for an error (`AZ709`; `rowstile help AZ709` explains it).
 - `notSignedIn(e)`: whether an error is the not-signed-in one (AZ701: a query in a transaction nobody signed
   in to). A login refused (AZ703) and settings changed by hand (AZ702) have its SQLSTATE, 28000, but are not it.

@@ -460,7 +460,8 @@ const CALL_PROBLEMS = new Map<string, Pick<Problem, "type" | "title" | "status">
  *  no refusal answers as its code's page says, with the database's words: a login refused or a call that needs
  *  someone signed in 401 (AZ703, AZ714), something it names that isn't there 404 (AZ708: a share with someone who
  *  doesn't exist), an argument missing or wrong 400 (AZ710: a negative page size), a move inside itself 409
- *  (AZ713). */
+ *  (AZ713). The code is read from the HINT: Prisma's driver adapter keeps none for SQLSTATE 28000, so through Prisma
+ *  a login refused (AZ703) has none, and is null here. */
 export function problemOf(e: unknown): Problem | null {
   const t = translate(e);
   if (t instanceof Refused || t instanceof NotFound) return t.problem();

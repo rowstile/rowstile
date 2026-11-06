@@ -4,7 +4,8 @@
  * Importing it keeps signed-in reads out of caches: before a transaction signs in as someone, it calls
  * Next's connection(), which makes the render dynamic, and throws inside "use cache" and unstable_cache, so
  * what one user may see is never cached for another. (Reads as nobody may be cached: they are the same for
- * everyone.)
+ * everyone.) A route with `export const dynamic = "force-static"` is outside this: Next renders it once, and
+ * connection() lets it be. rowstile's reads must never be in one.
  *
  *     export const PATCH = route(async (req, { params }) => { ... });   // Refused: 403, NotFound: 404
  *     export const rename = action(async (id: number, name: string) => { ... });   // { ok, value } or { ok: false, problem }

@@ -9,7 +9,8 @@ import { sql as sqlTag } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   actAsSql, actingAs, beforeSignIn, changed, current, dbError, describe as describePrincipal, errorCode, idShown, idText,
-  literal, NOBODY, NotFound, notSignedIn, parsePrincipal, principal, problemOf, problemResponse, Refused, refusal, verdict,
+  literal, NOBODY, NotFound, notSignedIn, parsePrincipal, principal, problemOf, problemResponse, Refused, refusal, sqlstate,
+  translate, verdict,
 } from "@rowstile/client";
 import { authz as rowstile, calls, changes } from "@rowstile/pg";
 import { authz as postgresAuthz, queryable as postgresQueryable } from "@rowstile/postgres";
@@ -685,6 +686,13 @@ describe("@rowstile/prisma", () => {
       await related.$disconnect();
       await own.end();
     }
+  });
+
+  // Prisma's driver adapter keeps no HINT for SQLSTATE 28000: a login refused (AZ703) has no code there, and is not
+  // the not-signed-in error either. It stays Prisma's error (a 500); through pg it is a 401 (next.test.ts, 16)
+  test("a login refused, through Prisma: no code, and not NotSignedIn", async () => {
+    const e = await actingAs("1", () => db.$queryRawUnsafe("SELECT authz.login_key('ak_nope')")).catch((err: unknown) => err);
+    expect([sqlstate(e), errorCode(e), notSignedIn(e), translate(e), problemOf(e)]).toEqual(["28000", undefined, false, null, null]);
   });
 
   test("the ids a user holds a permission on, as text or as the key's type", async () => {
