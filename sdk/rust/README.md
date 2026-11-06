@@ -32,7 +32,8 @@ tx.commit().await?;
 - `expect`: an UPDATE or DELETE that changed no row, asked about: `Error::NotFound` or `Error::Refused`, with the
   reason.
 - `Error`: `Refused`, `NotFound`, `Call` (the codes a call can meet, each with its status), `NotSignedIn`,
-  `Connection`, `Database`; `code()` is rowstile's code (`rowstile help AZ709`), `problem()` the problem body.
+  `Connection`, `Database`, `Other` (the driver's and the pool's: a closed pool, a pool's timeout); `code()` is
+  rowstile's code (`rowstile help AZ709`), `problem()` the problem body.
 - `check`: at start-up, refuse a connection that skips row-level security.
 - `can`, `perms_of`, `list`: take only the policy's names, which `rowstile client rust` writes.
 - `axum` (feature `axum`): `Tx`, an extractor that begins each request's transaction signed in as whoever the
