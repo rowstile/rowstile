@@ -667,6 +667,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The review for CI on GitHub: when GitHub can't be reached, or doesn't answer within 30 seconds, the comment step
   fails with an error that says so and that the review is in the run's summary. Before, it ended with a traceback,
   or waited for the job's timeout.
+- A mistake on a line that goes on over several (a quote left open in braces, AZ106 and AZ114) is underlined in
+  the editor up to the last character of its last line. Before, the language server's range ended one character
+  past the end of that line.
 
 ### Upgrading
 
