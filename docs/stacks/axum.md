@@ -86,7 +86,7 @@ pub async fn digest(pool: &PgPool) -> Result<i64, Error> {
 ```
 
 On tokio-postgres, `rowstile::pg::begin(&mut client, &who)` begins the transaction, signed in, on a client (a
-pooled one derefs to it).
+pooled one, deadpool's or bb8's, derefs to it).
 
 A transaction is one principal's, and neither `begin` runs inside another. `rowstile::sqlx::begin` takes a connection
 of its own from the pool: a job begun while a request's transaction is open is a transaction apart, on another

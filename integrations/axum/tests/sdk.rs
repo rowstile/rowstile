@@ -117,6 +117,24 @@ async fn tokio_postgres_errors() {
 }
 
 #[tokio::test]
+async fn tokio_postgres_pools_clients_begin() {
+    let _check = Check("tokio-postgres through deadpool and bb8: a pooled client begins a transaction signed in");
+    let config: tokio_postgres::Config = copied().app_url.as_deref().unwrap().parse().unwrap();
+    let manager = deadpool_postgres::Manager::new(config.clone(), NoTls);
+    let deadpool = deadpool_postgres::Pool::builder(manager).max_size(1).build().unwrap();
+    let mut pooled = deadpool.get().await.unwrap();
+    let tx = rowstile::pg::begin(&mut pooled, &Principal::user("2")).await.unwrap();
+    assert_eq!(whom(&tx).await, "user 2");
+    assert!(rowstile::pg::can(&tx, NotePermission::Edit, 2).await.unwrap());
+    let manager = bb8_postgres::PostgresConnectionManager::new(config, NoTls);
+    let bb8 = bb8_postgres::bb8::Pool::builder().max_size(1).build(manager).await.unwrap();
+    let mut pooled = bb8.get().await.unwrap();
+    let tx = rowstile::pg::begin(&mut pooled, &Principal::user("3")).await.unwrap();
+    assert_eq!(whom(&tx).await, "user 3");
+    assert!(rowstile::pg::can(&tx, NotePermission::Edit, 4).await.unwrap());
+}
+
+#[tokio::test]
 async fn sqlx_paths_the_app_doesnt_take() {
     let _check =
         Check("sqlx: nobody signed in, a page, Expect's other answers, a closed pool, a type that doesn't sign in");
