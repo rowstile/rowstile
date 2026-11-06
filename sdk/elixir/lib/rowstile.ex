@@ -73,9 +73,10 @@ defmodule Rowstile do
   defp canon(%Principal{} = who), do: who
 
   @doc """
-  Makes the calling process act for `who`: every transaction `transact/3` begins in it signs in as them.
-  `Rowstile.Plug` calls it for each request. A process the request starts (a `Task`) acts for no one: give it
-  `as:` or call this in it.
+  Makes the calling process act for `who`, until it is called again: every transaction `transact/3` begins in it
+  signs in as them. `Rowstile.Plug` calls it for each request. A process the request starts (a `Task`) acts for no
+  one: give it `as:` or call this in it. So does a LiveView's own process: call this in its `mount/3` or an
+  `on_mount` hook.
   """
   @spec put_principal(Principal.t()) :: :ok
   def put_principal(%Principal{} = who) do

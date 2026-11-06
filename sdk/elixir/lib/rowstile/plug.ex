@@ -10,6 +10,13 @@ if Code.ensure_loaded?(Plug) do
     (`Rowstile.user(id)`, `Rowstile.principal("service", id)`, or `Rowstile.nobody()`: only what `anyone` may
     see), or `{:error, reason}` for a request it refuses (a bad token), which is answered as rowstile's error when
     it is one (a login the database refused: 401), else 401, and halted.
+
+    The principal lasts the process (`Rowstile.put_principal/1`), which on a server is the request's: Cowboy serves
+    each request in a process of its own, and Bandit clears the process dictionary between the requests of one
+    connection (unless `clear_process_dict: false`). In `Phoenix.ConnTest` each request runs in the test's process:
+    after one, the test acts for its principal until something sets another. A LiveView's connected mount and its
+    events run in the LiveView's process, which the plug never saw: `Rowstile.put_principal/1` there, in `mount/3`
+    or an `on_mount` hook, or its `transact` signs in as nobody.
     """
 
     @behaviour Plug
