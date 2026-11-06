@@ -155,6 +155,13 @@
       "when": 1793913572386,
       "tag": "0021_authz_trim_txid_and_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793964967884,
+      "tag": "0022_authz_anyone_shares_and_key_types",
+      "breakpoints": true
     }
   ]
 }
