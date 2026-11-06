@@ -85,7 +85,11 @@ if [ $? = 1 ] && grep -q "an owner skips row-level security" "$LOG/server-owner.
 else cat "$LOG/server-owner.log"; bad "the app started on the owner's connection"; fi
 $NEXT start -p "$WEB" >"$LOG/server.log" 2>&1 &
 server=$!
-trap 'kill $server 2>/dev/null; cleanup' EXIT
+# the sync index's clock (jobs/sync-tick.ts), as the tables' owner: every second here, so that a break glass that
+# ends leaves the live shapes while the tests wait
+HD_TICK_SECONDS=1 node jobs/sync-tick.ts >"$LOG/tick.log" 2>&1 &
+ticker=$!
+trap 'kill $server $ticker 2>/dev/null; cleanup' EXIT
 for _ in $(seq 60); do curl -sf -o /dev/null "$HELPDESK_SERVER/" && break; sleep 1; done
-$BIN/vitest run || { rc=1; echo "(the server's log: $LOG/server.log)"; }
+$BIN/vitest run || { rc=1; echo "(the server's log: $LOG/server.log; the sync tick's: $LOG/tick.log)"; }
 exit $rc

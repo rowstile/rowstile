@@ -90,4 +90,21 @@ describe("live", () => {
     expect((await sam.send("POST", `/api/tickets/${tickets.printer}/break-glass`, { reason: "case 9" })).status).toBe(204);
     await live.has(tickets.printer);
   });
+
+  test("the vendor's staff: when break glass ends, the ticket and its internal notes leave", async () => {
+    const sam = await as("sam@vendor.test");
+    const live = follow(sam, "tickets");
+    const notes = follow(sam, "comments");
+    await live.until(() => true, "the start");
+    expect(live.rows.ids()).not.toContain(tickets.invoice);
+    // (the support access the test above gave)
+    expect((await sam.send("POST", `/api/tickets/${tickets.invoice}/break-glass`, { reason: "case 10", seconds: 5 })).status).toBe(204);
+    await live.has(tickets.invoice);
+    const note: string = (await sam.get(`/api/tickets/${tickets.invoice}`)).json.comments.find((c: { internal: boolean }) => c.internal).id;
+    await notes.has(note);
+    // the share ends with no write: the sync index learns of it at the next authz.sync_tick() (jobs/sync-tick.ts)
+    await live.lacks(tickets.invoice);
+    await notes.lacks(note);
+    expect((await sam.get(`/api/tickets/${tickets.invoice}`)).status).toBe(404);
+  });
 });

@@ -27,6 +27,7 @@ export DATABASE_URL=postgresql://hd_owner:hd_owner@localhost:25434/helpdesk     
 export HD_APP_URL=postgresql://hd_app:hd_app@localhost:25434/helpdesk          # the app: row-level security applies
 export HD_SESSION_SECRET=a-secret-of-thirty-two-characters-or-more
 npm run dev                    # http://localhost:8002: sign in as any of the demo's people (db/seed.sql)
+npm run tick                   # beside it, as the owner (DATABASE_URL): the sync index's clock (Live, below)
 ```
 
 While changing the policy, `rowstile dev` applies it on every save, runs its tests and rewrites the client
@@ -93,9 +94,18 @@ not what a limited session may). When a share ends or a ticket is handed on, Ele
 than a delete, which its own client doesn't apply: [`src/live.ts`](src/live.ts) does. Electric's role and its
 publication are in [`db/electric.sql`](db/electric.sql) and the migration `electric_publication`.
 
+A share that ends with time, as break glass's does after its hour, changes who may read the ticket with no write,
+so nothing tells the index. The database refuses the staff at once; the index learns of it at the next
+`authz.sync_tick()`, and Electric then sends the move-out. That function is an administrator's, which the app role
+can't call: [`jobs/sync-tick.ts`](jobs/sync-tick.ts) runs it every minute, as the tables' owner, in a process of
+its own beside the app (`npm run tick`), so the web server never holds the owner's password. Until it runs, the
+staff member's shapes keep the ticket, its internal notes and its changes: run it as often as break glass should
+end live.
+
 [`tests/live.test.ts`](tests/live.test.ts) follows the shapes as the demo's people: a ticket someone is copied in
 on arrives, and leaves when the share does; an internal note reaches those who work the ticket and never the
-customer; a ticket arrives for the vendor's staff when they break the glass.
+customer; a ticket arrives for the vendor's staff when they break the glass, and leaves with its internal notes
+when the break glass ends (test.sh ticks every second).
 
 What it costs: every agent of a workspace sees its tickets, so each ticket's readers are one key a person (51 for
 a workspace of 50 agents), and inserting a ticket keeps them (about 19 ms a ticket there, on a development
