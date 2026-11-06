@@ -22,9 +22,11 @@ nothing uses a session-level `SET`, so pools and poolers in transaction mode are
 prepared statements, turn the driver's off: [Behind a pooler](../operations.md#behind-a-pooler)).
 
 A sign-in lasts the database transaction, so a transaction is one principal's: `acting_as` decides for the ones
-begun inside it. A statement in a transaction while the code acts for someone else, or for no one, raises a
-`RuntimeError` before it is sent, and the transaction goes on as its principal's. Run that work after the
-transaction, or in one of its own (another session or connection).
+begun inside it. SQLAlchemy's engine checks each statement: one in a transaction while the code acts for someone
+else, or for no one, raises a `RuntimeError` before it is sent, and the transaction goes on as its principal's.
+psycopg's and asyncpg's `transaction()` check each block: one for someone else inside an open block raises the
+`RuntimeError` before anything is sent, but a statement inside a block runs as the block's principal, whoever the
+code acts for then. Run that work after the transaction, or in one of its own (another session or connection).
 
 ## SQLAlchemy (sync) and SQLModel
 
