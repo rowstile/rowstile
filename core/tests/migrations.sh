@@ -424,10 +424,16 @@ printf '\nwrite_after = 2\n' >> "$P/rowstile.toml"
 sed -i 's/^  can print = edit$/  can print = edit\n  can copy = view/' "$P/db/policy.authz"
 # exec: the job is timeout itself, so kill %1 stops it. Otherwise it outlives the subshell, and in a container
 # where Postgres is PID 1 the postmaster reaps it: exit code 124, taken for a crashed backend, restarts everything
-( cd "$P" && exec timeout 20 python3 "$OLDPWD/cli/rowstile_cli.py" dev > "$T/dev.log" 2>&1 ) &
-for _ in $(seq 15); do sleep 1; grep -q "watching" "$T/dev.log" 2>/dev/null && break; done
-sed -i 's/^  can copy = view$/  can copy = edit/' "$P/db/policy.authz"
-for _ in $(seq 15); do sleep 1; [ "$(grep -c "stopped editing" "$T/dev.log")" -ge 1 ] && grep -q "authz_file_copy_edit.sql" "$T/dev.log" && break; done
+# (each step waited for on dev's log, a minute at most, as devx.sh waits; the timeout only bounds a run that hangs)
+( cd "$P" && exec timeout 300 python3 "$OLDPWD/cli/rowstile_cli.py" dev > "$T/dev.log" 2>&1 ) &
+dev_said() {  # $1: words dev's log must hold: true once it does, false (saying where) after a minute
+  local _
+  for _ in $(seq 240); do grep -q -- "$1" "$T/dev.log" 2>/dev/null && return 0; sleep 0.25; done
+  echo "  (rowstile dev said nothing of '$1' for a minute)"
+  return 1
+}
+dev_said "watching" && sed -i 's/^  can copy = view$/  can copy = edit/' "$P/db/policy.authz" &&
+  dev_said "stopped editing" && dev_said "authz_file_copy_edit.sql"
 kill %1 2>/dev/null; wait 2>/dev/null
 case "$(cat "$T/dev.log")" in *"db/policy.authz saved"*"applied in"*"stopped editing"*"wrote db/migrations/"*"_authz_file_copy_edit.sql"*)
   ok "a save, then quiet: the migration is written, named after what changed";; *) bad "dev writes the migration" "$(cat "$T/dev.log")";; esac

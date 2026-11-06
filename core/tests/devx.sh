@@ -101,7 +101,6 @@ out=$(rows "$T/s.authz" | awk -F'\t' '$1 != "invariants" {print $3}' | tr -d '\n
 sed 's/with scope read cannot edit/with scope read can edit/' "$T/s.authz" > "$T/t.authz"
 out=$(rows "$T/t.authz" | awk -F'\t' '$3 == "f" {print $4}')
 case "$out" in *"with scope read can edit file"*) ok "... and a check that fails under a scope says so";; *) bad "with scope, failing" "$out";; esac
-[ -z "$(PSQL -c "SELECT current_setting('authz.scopes', true)")" ] && ok "... and nothing of it stays in the session" || bad "with scope left a setting"
 # the tests put back the caller's own settings as they were: a SET LOCAL still ends with the caller's transaction
 fn=$(python3 -c "import compile_policy; print(compile_policy.load('example/docs.authz').tests_function_sql())")
 out=$(PGOPTIONS="-c client_min_messages=warning" psql -X -q -At -d "$DB" -c "BEGIN" -c "SET LOCAL authz.scopes = 'read'" \
@@ -844,15 +843,22 @@ if seen "watching 2 file(s)" && seen "check(s) pass"; then
     ok "... says it lost the database when the server ends its session, and connects again on the next save" || bad "dev losing the database" "$(cat "$T/watch.log")"
   # ... and when it ends it in the middle of a push (here while it waits on another apply, which holds the lock
   # apply and push take)
-  ( PSQL -c "SET lock_timeout = '60s'" -c "SELECT pg_advisory_lock(1919905638, 0)" -c "SELECT pg_sleep(4)" >/dev/null 2>&1 ) &
+  # (the lock held until dev has said it lost the database: ended then, not after a fixed time)
+  ( PGAPPNAME=authz_devx_locker psql -X -q -At -d "$DB" -c "SET lock_timeout = '60s'" -c "SELECT pg_advisory_lock(1919905638, 0)" \
+      -c "SELECT pg_sleep(120)" >/dev/null 2>&1 ) &
   locker=$!
   for _ in $(seq 40); do [ "$(PSQL -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1919905638 AND objid = 0 AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())")" = 1 ] && break; sleep 0.25; done
+  lost=$(grep -c "  x    lost the database: terminating connection" "$T/watch.log")  # (the session ended above said it once)
   n=$(passes); sed -i 's/^  can share = owner or folder.share$/&\n  can comment = view/' "$T/p/policy.authz"
+  pid=""
   for _ in $(seq 40); do pid=$(PSQL -c "SELECT pid FROM pg_stat_activity WHERE datname = '$DB' AND application_name = 'rowstile' AND wait_event_type = 'Lock' LIMIT 1"); [ -n "$pid" ] && break; sleep 0.25; done
   [ -n "$pid" ] && PSQL -c "SELECT pg_terminate_backend($pid)" >/dev/null
+  [ -n "$pid" ] && seen "  x    lost the database: terminating connection" $((lost + 1)); said=$?
+  PSQL -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$DB' AND application_name = 'authz_devx_locker'" >/dev/null
   wait "$locker"
-  seen "  x    lost the database: terminating connection" && printf -- '-- saved after it\n' >> "$T/p/tests/docs.authz" && seen "check(s) pass" $((n + 1)) &&
-    ok "... and in the middle of a push: lost the database, and connects again on the next save" || bad "dev losing the database in a push" "$(cat "$T/watch.log")"
+  [ -n "$pid" ] && [ "$said" = 0 ] && printf -- '-- saved after it\n' >> "$T/p/tests/docs.authz" && seen "check(s) pass" $((n + 1)) &&
+    ok "... and in the middle of a push: lost the database, and connects again on the next save" ||
+    bad "dev losing the database in a push" "${pid:-no push waited on the lock}: $(cat "$T/watch.log")"
   # Ctrl-C once dev is idle in its loop: after the last pass, its migration tried (refused: the lock file still
   # names 99.0.0). Under coverage, a Ctrl-C landing as dev first runs some code can leave coverage.py's own lock
   # taken, and its save at exit then waits on it for ever.

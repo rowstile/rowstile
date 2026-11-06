@@ -183,7 +183,7 @@ versions=$(PSQL -c "SELECT count(*) FROM authz.policy_versions")
 waiting() { PSQL -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()"; }
 PSQL -c "BEGIN" -c "LOCK TABLE app.files IN ACCESS EXCLUSIVE MODE" -c "SELECT pg_sleep(31)" > /dev/null 2>&1 &
 holder=$!
-for _ in $(seq 60); do [ "$(PSQL -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = 'files' AND l.mode = 'AccessExclusiveLock' AND l.granted")" = 1 ] && break; sleep 0.2; done
+for _ in $(seq 60); do [ "$(PSQL -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = 'files' AND l.mode = 'AccessExclusiveLock' AND l.granted AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())")" = 1 ] && break; sleep 0.2; done
 set -m
 python3 cli/rowstile_cli.py --db "dbname=$DB" apply "$T/changed.authz" > "$T/apply.out" 2>&1 &
 applier=$!
@@ -553,7 +553,7 @@ case "$out" in *Traceback*) bad "a lost connection gives a traceback" "${out: -3
 # going back to the savepoint finds the connection gone
 ( PSQL -c "BEGIN" -c "LOCK TABLE app.folders IN ACCESS EXCLUSIVE MODE" -c "SELECT pg_sleep(6)" -c "COMMIT" >/dev/null 2>&1 ) &
 locker=$!
-for _ in $(seq 40); do [ "$(PSQL -c "SELECT count(*) FROM pg_locks WHERE relation = 'app.folders'::regclass AND mode = 'AccessExclusiveLock' AND granted")" = 1 ] && break; sleep 0.25; done
+for _ in $(seq 40); do [ "$(PSQL -c "SELECT count(*) FROM pg_locks WHERE relation = 'app.folders'::regclass AND mode = 'AccessExclusiveLock' AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())")" = 1 ] && break; sleep 0.25; done
 ( CLI diff "$T/main.authz" > "$T/diff.out" 2>&1; echo $? > "$T/diff.rc" ) &
 differ=$!
 for _ in $(seq 40); do w=$(PSQL -c "SELECT pid FROM pg_stat_activity WHERE datname = '$DB' AND application_name = 'rowstile' AND wait_event_type = 'Lock' LIMIT 1"); [ -n "$w" ] && break; sleep 0.25; done
@@ -583,7 +583,7 @@ race
 PGAPPNAME=authz_cli_holder psql -X -q -d "$DB" -c "SELECT pg_advisory_lock(1919905638, 0)" -c "$HOLD" >/dev/null 2>&1 &
 held authz_cli_holder
 ( CLI diff "$T/main.authz" > "$T/d1.out" 2>&1; echo $? > "$T/d1.rc" ) &
-waits_on rowstile advisory && waited=yes || waited=no
+until_waits rowstile advisory && waited=yes || waited=no  # (the check below says so: not counted twice)
 go; wait
 [ "$waited" = yes ] && [ "$(cat "$T/d1.rc")" = 0 ] && [ "$(cat "$T/d1.out")" = "$T/main.authz: 0 changes (nobody gains or loses anything)" ] &&
   ok "diff waits for the lock apply takes, then answers" || bad "diff and the lock" "waited: $waited; $(cat "$T/d1.out")"

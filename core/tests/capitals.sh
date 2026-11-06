@@ -69,14 +69,19 @@ PSQL -c 'DROP VIEW "FolderView"'
 if [ -n "${PGSUPERUSER:-}" ]; then
   PSQL -c 'CREATE VIEW "LookupView" AS SELECT id FROM "Lookup"' -c 'GRANT SELECT ON "LookupView" TO app_user'
   RULE="(SELECT oid FROM pg_rewrite WHERE ev_class = 'public.\"LookupView\"'::regclass)"
+  DEPS="SELECT count(*) FROM pg_depend WHERE refobjid = 'public.\"Folder\"'::regclass"
+  deps=$(PSQL -c "$DEPS")
   psql -X -q -At -U "$PGSUPERUSER" -d "$DB" -v ON_ERROR_STOP=1 \
     -c "INSERT INTO pg_depend VALUES ('pg_constraint'::regclass, $RULE, 0, 'pg_class'::regclass, 'public.\"Folder\"'::regclass, 0, 'n')" \
     -c "INSERT INTO pg_depend VALUES ('pg_rewrite'::regclass, $RULE, 0, 'pg_proc'::regclass, 'public.\"Folder\"'::regclass, 0, 'n')"
   got=$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object LIKE '%LookupView%'")
-  psql -X -q -At -U "$PGSUPERUSER" -d "$DB" -c "DELETE FROM pg_depend WHERE refobjid = 'public.\"Folder\"'::regclass AND deptype = 'n'
-    AND (classid = 'pg_constraint'::regclass OR refclassid = 'pg_proc'::regclass)"
+  psql -X -q -At -U "$PGSUPERUSER" -d "$DB" -c "DELETE FROM pg_depend WHERE objid = $RULE AND refobjid = 'public.\"Folder\"'::regclass AND deptype = 'n'
+    AND (classid, refclassid) IN (('pg_constraint'::regclass, 'pg_class'::regclass), ('pg_rewrite'::regclass, 'pg_proc'::regclass))"
   [ "$got" = 0 ] && ok "lint: an oid another catalog's dependency shares with a view's rule, or with Folder, names no view" ||
     bad "lint, oids of other catalogs" "$got"
+  # (and the two rows made up for it are all the cleanup took: Folder's own, its foreign keys', stay)
+  [ "$(PSQL -c "$DEPS")" = "$deps" ] && ok "... and the rows made up for it are gone, Folder's own left" ||
+    bad "pg_depend after the made-up rows" "$deps before, $(PSQL -c "$DEPS") after"
   PSQL -c 'DROP VIEW "LookupView"'
 else
   echo "skip  lint on oids another catalog shares: only a superuser may write pg_depend (PGSUPERUSER)"
