@@ -1087,6 +1087,9 @@ async def test_the_helpers_say_what_was_expected(
 
     with rowstile.acting_as(3):
         assert assert_refused(lambda: touch(1)).command == "update"  # any rule's refusal
+        assert assert_refused(lambda: touch(1), command="update").command == "update"
+        with pytest.raises(AssertionError, match="expected the up rule to refuse it, but: update: "):
+            assert_refused(lambda: touch(1), command="up")  # a rule is named whole
         with pytest.raises(Refused):  # a refusal where a hidden row was expected: the test fails with it
             assert_not_found(lambda: touch(1))
         with pytest.raises(AssertionError, match="expected a refusal, got None"):

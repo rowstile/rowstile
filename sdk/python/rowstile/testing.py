@@ -233,8 +233,9 @@ def assert_refused() -> Iterator[AssertRefused]:
     ) -> Refused | Awaitable[Refused]:
         def the_rule(err: Refused) -> None:
             if command:
-                named = err.command is not None and err.command.startswith(command)
-                assert named, f"expected the {command} rule to refuse it, but: {err.command}: {err.message}"
+                assert err.command == command, (
+                    f"expected the {command} rule to refuse it, but: {err.command}: {err.message}"
+                )
             if table:
                 assert err.table == table, err.table
 
