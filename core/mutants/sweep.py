@@ -408,10 +408,10 @@ def run(args: argparse.Namespace) -> None:
     name = args.name or f"rowstile-mutants-{os.getpid()}"
     box = Container(args.root, args.image, name)
     print(f"shard {i} of {n}: {len(mine)} mutants, at {queue['commit']}; container {name}", flush=True)
-    box.start()
     shard = Shard(args, box, stats)
     t0 = time.time()
     try:
+        box.start()  # in here: a container that started but failed its setup is removed too
         for k, q in enumerate(mine, 1):
             m = by_id[q["id"]]
             if time.time() - t0 > args.budget * 60:
