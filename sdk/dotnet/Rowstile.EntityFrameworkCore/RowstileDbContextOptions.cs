@@ -1,4 +1,5 @@
 using System;
+using System.Data.Common;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -28,14 +29,15 @@ public static class RowstileDbContextOptions
     /// Signs every transaction, and every command outside one, in (see <see cref="RowstileDbContextOptions"/>). A
     /// connection string given before it (<c>UseNpgsql(connectionString).UseRowstile()</c>) gets Npgsql's
     /// <c>Include Error Detail</c>, so a refused write says why; a data source or a connection the app built is its own,
-    /// and keeps what it was built with.
+    /// and keeps what it was built with, and so does a named one (<c>Name=ConnectionStrings:Db</c>), which EF Core
+    /// reads from the configuration when it connects: put <c>Include Error Detail=true</c> in the string it names.
     /// </summary>
     /// <param name="builder">The context's options, on Npgsql.</param>
     /// <param name="user">Who the code acts for when nothing set it with <see cref="Acting"/> (null: nobody).</param>
     public static DbContextOptionsBuilder UseRowstile(this DbContextOptionsBuilder builder, Func<Principal?>? user = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        var given = builder.Options.Extensions.OfType<RelationalOptionsExtension>().Where(r => r.ConnectionString is not null);
+        var given = builder.Options.Extensions.OfType<RelationalOptionsExtension>().Where(r => r.ConnectionString is not null && !Named(r.ConnectionString));
         foreach (var relational in given.ToList())
         {
             var withDetail = new NpgsqlConnectionStringBuilder(relational.ConnectionString) { IncludeErrorDetail = true };
@@ -45,6 +47,10 @@ public static class RowstileDbContextOptions
         var saves = new SaveChangesInTransaction();
         return builder.AddInterceptors(new TransactionSignIn(signIn, saves), new CommandSignIn(signIn), saves);
     }
+
+    /// <summary>Whether a connection string names one in the configuration (<c>Name=...</c>), which no string Npgsql reads does.</summary>
+    private static bool Named(string connectionString) =>
+        new DbConnectionStringBuilder { ConnectionString = connectionString }.ContainsKey("name");
 
     /// <summary>The same, for a context's typed options (<c>new DbContextOptionsBuilder&lt;AppDb&gt;()</c>).</summary>
     public static DbContextOptionsBuilder<TContext> UseRowstile<TContext>(

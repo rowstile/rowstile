@@ -25,7 +25,7 @@ internal sealed class TransactionSignIn(SignIn signIn, SaveChangesInTransaction 
     {
         if (saves.TakeStale(eventData.Context!) is { } stale)
         {
-            Asking.Stale((NpgsqlConnection)transaction.Connection!, stale, CancellationToken.None).GetAwaiter().GetResult();
+            Asking.Stale((NpgsqlConnection)transaction.Connection!, stale);
         }
         return result;
     }
@@ -39,7 +39,7 @@ internal sealed class TransactionSignIn(SignIn signIn, SaveChangesInTransaction 
     {
         if (saves.TakeStale(eventData.Context!) is { } stale)
         {
-            await Asking.Stale((NpgsqlConnection)transaction.Connection!, stale, cancellationToken).ConfigureAwait(false);
+            await Asking.StaleAsync((NpgsqlConnection)transaction.Connection!, stale, cancellationToken).ConfigureAwait(false);
         }
         return result;
     }
@@ -51,8 +51,16 @@ internal sealed class TransactionSignIn(SignIn signIn, SaveChangesInTransaction 
     )
     {
         var who = signIn.Who();
-        using var cmd = Command(connection, result, who);
-        cmd.ExecuteNonQuery();
+        try
+        {
+            using var cmd = Command(connection, result, who);
+            cmd.ExecuteNonQuery();
+        }
+        catch
+        {
+            result.Dispose(); // rolled back: the context goes on without it, and the error is the sign-in's
+            throw;
+        }
         SignedIn.Record(result, who, signIn);
         return result;
     }
@@ -65,8 +73,16 @@ internal sealed class TransactionSignIn(SignIn signIn, SaveChangesInTransaction 
     )
     {
         var who = signIn.Who();
-        await using var cmd = Command(connection, result, who);
-        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var cmd = Command(connection, result, who);
+            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await result.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
         SignedIn.Record(result, who, signIn);
         return result;
     }
@@ -145,8 +161,10 @@ internal static class SignedIn
 /// rows are no rows affected, so a count stays the app's statement's. But Npgsql runs a command in the connection's
 /// open transaction, whatever the command's own: on a connection where <c>BeginSignedInAsync</c> began one, the command
 /// runs in it as it is for the principal it signed in as, and is refused for anyone else; in a
-/// <c>TransactionScope</c> the connection takes part in, it is refused, as its sign-in can't be known. (A transaction
-/// the app began on the connection by other means isn't seen: bring it to the context with <c>UseTransaction</c>.)
+/// <c>TransactionScope</c> the connection takes part in, it is refused, as its sign-in can't be known
+/// (<see cref="Scopes"/>). (A transaction the app began on the connection by other means isn't seen: bring it to the
+/// context with <c>UseTransaction</c>.) The sign-in is put first in the command's text, which needs Npgsql's SQL
+/// rewriting (on unless the app turns it off).
 /// </summary>
 internal sealed class CommandSignIn(SignIn signIn) : DbCommandInterceptor
 {
@@ -268,14 +286,7 @@ internal sealed class CommandSignIn(SignIn signIn) : DbCommandInterceptor
         {
             return signed == who ? false : throw SignedIn.Already(signed, who);
         }
-        if (System.Transactions.Transaction.Current is not null && new NpgsqlConnectionStringBuilder(conn.ConnectionString).Enlist)
-        {
-            throw new InvalidOperationException(
-                "this command runs in a TransactionScope's transaction, which the context didn't begin: who it is signed "
-                    + "in as can't be known, and a sign-in lasts the database transaction. Begin the transaction with the "
-                    + "context (Database.BeginTransaction), or run this outside the scope"
-            );
-        }
+        Scopes.Check(conn);
         command.CommandText = Prefix + command.CommandText;
         command.Parameters.AddRange(RowstileNpgsql.ActAsParameters(who));
         return true;
@@ -286,10 +297,34 @@ internal sealed class CommandSignIn(SignIn signIn) : DbCommandInterceptor
 }
 
 /// <summary>
+/// A <c>System.Transactions.TransactionScope</c> around the code. A connection takes part in it unless its connection
+/// string says <c>Enlist=false</c>, and its transaction is then the scope's, whose sign-in can't be known: the
+/// context's work on it is refused, a command, SaveChanges or a call of the runtime's alike (EF Core would refuse the
+/// SDK's own transaction there, in words that don't say why). On one that takes no part, the work runs as if no
+/// scope were around.
+/// </summary>
+internal static class Scopes
+{
+    /// <summary>Throws if a scope is around and <paramref name="conn"/> takes part in it.</summary>
+    public static void Check(NpgsqlConnection conn)
+    {
+        if (System.Transactions.Transaction.Current is not null && new NpgsqlConnectionStringBuilder(conn.ConnectionString).Enlist)
+        {
+            throw new InvalidOperationException(
+                "the context's work runs in a TransactionScope's transaction here, which the context didn't begin: who "
+                    + "it is signed in as can't be known, and a sign-in lasts the database transaction. Run it outside the "
+                    + "scope, or on a connection that takes no part in it (Enlist=false in its connection string)"
+            );
+        }
+    }
+}
+
+/// <summary>
 /// SaveChanges in a transaction of the SDK's when the app has none open, committed when it succeeds and rolled back
 /// when it fails. So EF Core sends its writes after a savepoint, and rolls back to it when one fails: an update or a
 /// delete that matched no row (a <see cref="DbUpdateConcurrencyException"/>) is asked about just before, in the
-/// transaction and as the same user, while it still holds what SaveChanges wrote.
+/// transaction and as the same user, while it still holds what SaveChanges wrote. A failure that matched no row is
+/// heard by the context's event alone, which can't be awaited: that rollback waits, the others are awaited.
 /// </summary>
 internal sealed class SaveChangesInTransaction : SaveChangesInterceptor
 {
@@ -301,6 +336,9 @@ internal sealed class SaveChangesInTransaction : SaveChangesInterceptor
         public IDbContextTransaction? Ours { get; set; }
 
         public DbUpdateConcurrencyException? Stale { get; set; }
+
+        /// <summary>The context's event's handler: a failed SaveChanges ends the SDK's transaction, rolled back.</summary>
+        public EventHandler<SaveChangesFailedEventArgs>? Failed { get; set; }
     }
 
     /// <summary>The write of the context's that matched no row, if one is waiting to be asked about (and no longer waiting).</summary>
@@ -315,18 +353,21 @@ internal sealed class SaveChangesInTransaction : SaveChangesInterceptor
         return stale;
     }
 
-    private Saving Of(DbContext db) =>
-        saving.GetValue(
-            db,
-            context =>
-            {
-                var s = new Saving();
-                // a failed SaveChanges (one that matched no row too, which no interceptor hears of) ends the SDK's
-                // transaction: rolled back
-                context.SaveChangesFailed += (_, _) => End(s)?.Dispose();
-                return s;
-            }
-        );
+    private Saving Of(DbContext db) => saving.GetValue(db, _ => new Saving());
+
+    /// <summary>
+    /// The context's SaveChanges at its start: heard when it fails (one that matched no row too, which no interceptor
+    /// hears of). A pooled context's events are cleared each time it goes back to the pool, so the handler is put on
+    /// again each time, once.
+    /// </summary>
+    private Saving Starting(DbContext db)
+    {
+        var s = Of(db);
+        s.Failed ??= (_, _) => End(s)?.Dispose();
+        db.SaveChangesFailed -= s.Failed;
+        db.SaveChangesFailed += s.Failed;
+        return s;
+    }
 
     private static IDbContextTransaction? End(Saving s)
     {
@@ -339,13 +380,14 @@ internal sealed class SaveChangesInTransaction : SaveChangesInterceptor
     public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
     {
         var db = eventData.Context!;
-        var s = Of(db);
+        var s = Starting(db);
         if (db.Database.CurrentTransaction is { } open)
         {
             SignedIn.Check(open.GetDbTransaction()); // before the savepoint EF Core makes in it
         }
         else
         {
+            Scopes.Check((NpgsqlConnection)db.Database.GetDbConnection());
             s.Ours = db.Database.BeginTransaction();
         }
         return result;
@@ -358,16 +400,26 @@ internal sealed class SaveChangesInTransaction : SaveChangesInterceptor
     )
     {
         var db = eventData.Context!;
-        var s = Of(db);
+        var s = Starting(db);
         if (db.Database.CurrentTransaction is { } open)
         {
             SignedIn.Check(open.GetDbTransaction());
         }
         else
         {
+            Scopes.Check((NpgsqlConnection)db.Database.GetDbConnection());
             s.Ours = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         }
         return result;
+    }
+
+    // a failure other than a write that matched no row, awaited: the context's event, next, finds nothing to end
+    public override async Task SaveChangesFailedAsync(DbContextErrorEventData eventData, CancellationToken cancellationToken = default)
+    {
+        if (End(Of(eventData.Context!)) is { } tx)
+        {
+            await tx.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     // the batch's reader is still open: the question waits for the rollback to the savepoint

@@ -6,7 +6,11 @@
     <PackageReference Include="Npgsql" Version="10.0.3" />
   </ItemGroup>
   <ItemGroup>
-    <!-- whom the transactions BeginSignedInAsync began signed in as (SignedConnections), which the EF Core package reads -->
+    <!-- what only the EF Core package calls: whom the transactions BeginSignedInAsync began signed in as
+         (SignedConnections), the sign-in's statement, the question asked of a write that matched no row and its
+         answer (Verdicts, Stale.Record), a key's text (Keys); and the conformance suite's tests of them
+         (integrations/aspnetcore/Tests) -->
     <InternalsVisibleTo Include="Rowstile.EntityFrameworkCore" />
+    <InternalsVisibleTo Include="Tests" />
   </ItemGroup>
 </Project>

@@ -211,6 +211,21 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         {
             Assert.Equal([1L], await Ids(conn, "SELECT 1::bigint WHERE NOT EXISTS (SELECT 1 FROM authz.principal())"));
         }
+        // a transaction signed in is one principal's: the database refuses to sign it in as anyone else (a 500)
+        await using (var tx = await conn.BeginSignedInAsync(Principal.User(2)))
+        {
+            await conn.SignInAsync(Principal.User(2)); // the same, again
+            var e = await Assert.ThrowsAsync<PostgresException>(() => conn.SignInAsync(Principal.User(1)));
+            Assert.Equal(("AZ716", (Problem?)null), (Errors.Code(e), Errors.ProblemOf(e)));
+        }
+        // a sign-in the database refuses (a type that signs in nobody) leaves no transaction behind: the connection
+        // goes on
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => conn.BeginSignedInAsync(new Principal("robot", "1")));
+        Assert.Equal("AZ707", Errors.Code(refused));
+        await using (var tx = await conn.BeginSignedInAsync(Principal.User(2)))
+        {
+            Assert.Equal([2L, 3L], await Ids(conn, "SELECT id FROM app.notes ORDER BY id"));
+        }
     }
 
     [Fact]
@@ -289,6 +304,24 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         using (Acting.As(Principal.User(1)))
         {
             Assert.Equal(0, plain.Notes.Where(n => n.Id == 2).ExecuteDelete()); // outside one, too
+        }
+    }
+
+    [Fact]
+    public async Task A_sign_in_the_database_refuses_leaves_no_transaction_behind()
+    {
+        // a type that signs in nobody: the transaction the context began is rolled back, and the context goes on
+        await using var ctx = Context();
+        using (Acting.As(new Principal("robot", "1")))
+        {
+            Assert.Equal("AZ707", Errors.Code(Assert.Throws<PostgresException>(() => ctx.Database.BeginTransaction())));
+            Assert.Equal("AZ707", Errors.Code(await Assert.ThrowsAsync<PostgresException>(() => ctx.Database.BeginTransactionAsync())));
+        }
+        Assert.Null(ctx.Database.CurrentTransaction);
+        using (Acting.As(Principal.User(2)))
+        {
+            await using var tx = await ctx.Database.BeginTransactionAsync();
+            Assert.Equal([2L, 3L], Notes(ctx));
         }
     }
 
@@ -384,6 +417,45 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_failed_SaveChanges_ends_the_sdks_transaction_each_time()
+    {
+        // a pooled context is the same one again, its events cleared each time it goes back to the pool: each lease's
+        // failed SaveChanges rolls back the SDK's transaction, and the next query runs in one of its own
+        var options = new DbContextOptionsBuilder<AppDb>().UseNpgsql(db.App).UseRowstile().Options;
+        var pool = new PooledDbContextFactory<AppDb>(options);
+        AppDb? first = null;
+        using (Acting.As(Principal.User(3)))
+        {
+            for (int lease = 0; lease < 3; lease++)
+            {
+                await using var ctx = await pool.CreateDbContextAsync();
+                Assert.Same(first ??= ctx, ctx);
+                (await ctx.Notes.SingleAsync(n => n.Id == 1)).Body = "x";
+                await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => ctx.SaveChangesAsync());
+                Assert.Null(ctx.Database.CurrentTransaction);
+                ctx.ChangeTracker.Clear();
+                ctx.Notes.Add(new Note { ProjectId = 2, AuthorId = 3, Body = "hi" }); // bo's project: refused
+                Assert.Equal("insert", Errors.Refusal(Assert.Throws<DbUpdateException>(() => ctx.SaveChanges()))!.Command);
+                Assert.Null(ctx.Database.CurrentTransaction);
+            }
+        }
+        // in the app's own transaction, a failure leaves it to the app, each way
+        using (Acting.As(Principal.User(3)))
+        {
+            await using var ctx = Context();
+            await using var tx = await ctx.Database.BeginTransactionAsync();
+            ctx.Notes.Add(new Note { ProjectId = 2, AuthorId = 3, Body = "hi" });
+            await Assert.ThrowsAsync<DbUpdateException>(() => ctx.SaveChangesAsync());
+            Assert.Same(tx, ctx.Database.CurrentTransaction);
+            ctx.ChangeTracker.Clear();
+            (await ctx.Notes.SingleAsync(n => n.Id == 4)).Body = "still";
+            Assert.Equal(1, await ctx.SaveChangesAsync());
+            await tx.CommitAsync();
+        }
+        Assert.Equal(["plan", "still"], await Data.Bodies(db.Owner, [1, 4]));
+    }
+
+    [Fact]
     public async Task A_write_the_database_cannot_be_asked_about_stays_ef_cores()
     {
         await Data.Sql(db.Owner, "CREATE TABLE app.scratch (id bigint PRIMARY KEY, name text NOT NULL); INSERT INTO app.scratch VALUES (1, 'a'); GRANT SELECT, UPDATE ON app.scratch TO conf_app");
@@ -399,6 +471,7 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
                 var e = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => ctx.SaveChangesAsync());
                 Assert.Null(Errors.ProblemOf(e));
                 Assert.Equal("c", row.Name);
+                Assert.Null(Errors.ProblemOf(Assert.Throws<DbUpdateConcurrencyException>(() => ctx.SaveChanges()))); // without awaiting
             }
         }
         finally
@@ -529,15 +602,31 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
             Assert.Equal([1L, 3L, 4L], Notes(ctx));
         }
         // in a TransactionScope the connection takes part in, who it is signed in as can't be known: refused
+        const string Scoped = "the context's work runs in a TransactionScope's transaction here, which the context didn't begin: who it is "
+            + "signed in as can't be known, and a sign-in lasts the database transaction. Run it outside the scope, or on a "
+            + "connection that takes no part in it (Enlist=false in its connection string)";
         using (new System.Transactions.TransactionScope(System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+        using (Acting.As(Principal.User(3)))
         {
-            await using var scoped = Context(() => Principal.User(1));
-            var e = await Assert.ThrowsAsync<InvalidOperationException>(() => scoped.Notes.CountAsync());
-            Assert.StartsWith("this command runs in a TransactionScope's transaction", e.Message, StringComparison.Ordinal);
-            // one that takes no part in it (Enlist=false) signs in as usual
-            await using var apart = Context(() => Principal.User(1), db.App + ";Enlist=false");
+            // a command, SaveChanges and the runtime's calls, each way, before anything is sent
+            await using var scoped = Context();
+            Assert.Equal(Scoped, (await Assert.ThrowsAsync<InvalidOperationException>(() => scoped.Notes.CountAsync())).Message);
+            scoped.Notes.Add(new Note { ProjectId = 1, AuthorId = 3, Body = "scoped" });
+            Assert.Equal(Scoped, Assert.Throws<InvalidOperationException>(() => scoped.SaveChanges()).Message);
+            Assert.Equal(Scoped, (await Assert.ThrowsAsync<InvalidOperationException>(() => scoped.SaveChangesAsync())).Message);
+            Assert.Equal(Scoped, (await Assert.ThrowsAsync<InvalidOperationException>(() => scoped.Database.CanAsync(Policy.Note.Edit, 4))).Message);
+            // one that takes no part in it (Enlist=false) signs in as usual, and SaveChanges runs in the SDK's own
+            await using var apart = Context(connection: db.App + ";Enlist=false");
             Assert.Equal([1L, 3L, 4L], Notes(apart));
+            apart.Notes.Single(n => n.Id == 4).Body = "apart";
+            Assert.Equal(1, apart.SaveChanges());
+            (await apart.Notes.SingleAsync(n => n.Id == 4)).Body = "apart again";
+            Assert.Equal(1, await apart.SaveChangesAsync());
+            Assert.True(await apart.Database.CanAsync(Policy.Note.Edit, 4));
+            apart.Notes.Single(n => n.Id == 1).Body = "not cy's";
+            Assert.Equal(Refused3, Stale.Why(await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => apart.SaveChangesAsync()))!.Message);
         }
+        Assert.Equal(["plan", "apart again"], await Data.Bodies(db.Owner, [1, 4])); // committed: not the scope's
     }
 
     [Fact]
@@ -635,6 +724,62 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         var e = await Assert.ThrowsAsync<NotSignedInException>(() => client.GetAsync(new Uri("/notes", UriKind.Relative)));
         Assert.Contains("UseRowstile()", e.Message, StringComparison.Ordinal);
         Assert.Equal("AZ701", Errors.Code(e));
+    }
+
+    [Fact]
+    public async Task A_problem_body_drops_what_the_endpoint_set_before_it_threw()
+    {
+        await using var app = await Host(
+            b => b.Services.AddRowstile(o => o.CheckConnection = false),
+            a => a.MapGet(
+                "/refused",
+                (HttpContext c) =>
+                {
+                    c.Response.Headers.CacheControl = "public, max-age=600";
+                    c.Response.Cookies.Append(
+                        "session",
+                        "for a success",
+                        new CookieOptions { Secure = true, HttpOnly = true }
+                    );
+                    c.Response.StatusCode = 201;
+                    throw new RefusedException("no");
+                }
+            )
+        );
+        using var client = app.GetTestClient();
+        using var response = await client.GetAsync(new Uri("/refused", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Null(response.Headers.CacheControl);
+        Assert.False(response.Headers.Contains("Set-Cookie"));
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task A_named_connection_string_is_left_to_ef_core()
+    {
+        // Name=... is EF Core's, read from the configuration when the context connects: UseRowstile leaves it as it is
+        await using var app = await Host(
+            b =>
+            {
+                b.Configuration["ConnectionStrings:Notes"] = db.App;
+                b.Services.AddDbContext<AppDb>(o => o.UseNpgsql("Name=ConnectionStrings:Notes").UseRowstile(() => Principal.User(2)));
+                b.Services.AddRowstile(o => o.CheckConnection = false);
+            },
+            a => a.MapGet("/notes", (AppDb ctx) => Notes(ctx))
+        );
+        using var client = app.GetTestClient();
+        Assert.Equal("[2,3]", await client.GetStringAsync(new Uri("/notes", UriKind.Relative)));
+    }
+
+    [Fact]
+    public async Task The_check_says_what_to_give_when_there_is_no_data_source()
+    {
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => Host(b => b.Services.AddRowstile(), _ => { }));
+        Assert.Equal(
+            "AddRowstile checks the app's connection at start, and the services hold no NpgsqlDataSource: give "
+                + "o.ConnectionString or o.DataSource, or set o.CheckConnection = false",
+            e.Message
+        );
     }
 
     [Fact]

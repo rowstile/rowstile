@@ -48,7 +48,8 @@ A refused insert's reasons are in the database's DETAIL, which Npgsql hides unle
 `Include Error Detail=true`. The SDK turns it on where it builds the app's connections: the data source
 `AddRowstile` builds from `o.ConnectionString`, and a context's connection string (`UseNpgsql(connectionString)`
 before `UseRowstile()`). A data source or a connection you build yourself is yours, and the SDK leaves it as it
-is: put `Include Error Detail=true` in its connection string. (It shows the DETAIL of every error, the values in a
+is: put `Include Error Detail=true` in its connection string. So does a named one (`Name=ConnectionStrings:Db`),
+which EF Core reads from the configuration when it connects: put it in the string it names. (It shows the DETAIL of every error, the values in a
 unique key's error too: the SDK doesn't turn it on behind an app that built its own without it.)
 
 ## The policy
@@ -86,10 +87,14 @@ rules app.notes
 
 `UseRowstile()` on the context's options signs in every transaction the context begins (SaveChanges' own, and
 the app's, `BeginTransactionAsync`), and every command outside a transaction (a query, an `ExecuteDeleteAsync`),
-as whoever the code acts for. `AddRowstile` builds the `NpgsqlDataSource` the services hold, from
+as whoever the code acts for. A transaction it begins whose sign-in the database refuses is rolled back, and the
+context goes on. The sign-in goes first in a command outside a transaction, a statement of its own, which needs
+Npgsql's SQL rewriting: it is on unless the app turns it off (`Npgsql.EnableSqlRewriting`), and EF Core's commands
+with parameters need it too. `AddRowstile` builds the `NpgsqlDataSource` the services hold, from
 `o.ConnectionString`, and says who a request acts for, and `UseRowstile()` on the app runs it for each request:
 `User(context)` returns a `Principal`, or null for nobody, who sees only what `anyone` may. It also refuses to
-start on a connection that skips row-level security (that data source, unless `o.DataSource` gives another).
+start on a connection that skips row-level security (that data source, unless `o.DataSource` gives another; with
+neither, it says so at start, and `o.CheckConnection = false` turns the check off).
 
 Here `User` is `Auth.SessionUser`, the app's own: yours reads `context.User`, once your authentication ran. The
 conformance app has no sign-in, so its `Auth.cs` stands in for one: it takes the user from a header its checks
@@ -117,7 +122,7 @@ An update the rules refuse changes no row, and EF Core throws `DbUpdateConcurren
 a transaction (the SDK's, when the app has none open), and EF Core sends its writes after a savepoint: just before
 it rolls back to it, the SDK asks the database why, in that transaction and as the same user, so it sees what
 SaveChanges wrote. The middleware answers 403 with the rule and the reason, or 404 when the user can't see the
-row. When the rules allow the change, the row changed since it was read (a concurrency token: the conformance
+row, in place of whatever the endpoint had put on the response (its headers, its cookies). When the rules allow the change, the row changed since it was read (a concurrency token: the conformance
 app's notes have Postgres's `xmin`, `[Timestamp] public uint Version`), and the answer is 409:
 
 ```csharp
@@ -197,8 +202,10 @@ Npgsql runs a command in its connection's open transaction, whatever transaction
 transaction begun with `BeginSignedInAsync` on the context's connection, and not brought to it, holds the context's
 work too: it runs as it is while the code acts for the principal it signed in as, and is refused (the same
 `InvalidOperationException`) for anyone else. In a `TransactionScope` the connection takes part in, the context's
-work is refused, since who that transaction is signed in as can't be known: begin the transaction with the context
-instead. Bring any other transaction begun on the context's connection with `UseTransaction`. The database holds a
+work is refused, since who that transaction is signed in as can't be known: run it outside the scope, or on a
+connection that takes no part in it (`Enlist=false` in its connection string), where SaveChanges and the runtime's
+calls run in the SDK's own transactions as they do outside a scope. Bring any other transaction begun on the
+context's connection with `UseTransaction`. The database holds a
 transaction to one principal too, whatever signs it in (AZ716).
 
 ## Migrations
@@ -269,6 +276,9 @@ same way:
         await using (var tx = await conn.BeginSignedInAsync(Principal.User(2)))
             Assert.Equal(1, await conn.ExpectAsync(await Run(conn, "UPDATE app.notes SET body = 'x' WHERE id = 2"), "app.notes", "update", 2));
 ```
+
+A sign-in the database refuses (a type the policy doesn't sign in, AZ707) rolls the transaction back. The database
+refuses `SignInAsync` for anyone else inside a transaction signed in already (AZ716, a 500).
 
 At start-up, `await dataSource.CheckAsync()` throws `ConnectionProblemException` on a connection that skips
 row-level security (a superuser, BYPASSRLS, the tables' owner); `AddRowstile` does it for you.

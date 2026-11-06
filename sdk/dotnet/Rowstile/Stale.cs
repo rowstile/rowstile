@@ -34,7 +34,7 @@ public static class Stale
     /// Records on <paramref name="error"/> what the database said: <paramref name="verdict"/>, a
     /// <see cref="NotFoundException"/> or a <see cref="RefusedException"/>; null when the rules allow every row.
     /// </summary>
-    public static void Record(Exception error, Exception? verdict)
+    internal static void Record(Exception error, Exception? verdict)
     {
         ArgumentNullException.ThrowIfNull(error);
         error.Data[Key] = verdict ?? (object)Allowed;
