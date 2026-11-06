@@ -34,7 +34,8 @@ transaction, as the user it signed in as:
 
 - `begin(fn, who)` signs in as `who`, or as whoever `actingAs` set (`@rowstile/client`), else the `user`
   function, else nobody. `fn` acts for them too: `expect`, `can` and the others called inside it run in its
-  transaction.
+  transaction, and a `begin(fn)` called inside it for them is a savepoint of it. `fn` may return an array of
+  queries, as postgres.js's own `begin` takes: each runs, in the transaction.
 - A transaction is one principal's: inside it, this object's work for anyone else (after `actingAs`, a `who`
   given, nobody) throws an `Error` before anything is sent, and the transaction goes on as its own principal.
   Run that work after it, or in a transaction of its own on another connection.

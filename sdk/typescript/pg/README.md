@@ -24,7 +24,8 @@ import { authz as rowstile } from "@rowstile/pg";
 ```
 
 `transaction(fn, who)` signs in as `who`, or as whoever `actingAs` set, else the `user` function, else nobody.
-`fn` acts for them too: `expect`, `can` and the others called inside it run in its transaction. A transaction is
+`fn` acts for them too: `expect`, `can` and the others called inside it run in its transaction, and a
+`transaction(fn)` called inside it for them is a savepoint of it, on its connection. A transaction is
 one principal's: inside it, this object's work for anyone else (after `actingAs`, a `who` given, nobody) throws an
 `Error` before anything is sent, and the transaction goes on as its own principal. Run that work after it, or in a
 transaction of its own on another connection. An UPDATE the rules refuse changes 0 rows, without an error;

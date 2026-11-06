@@ -33,7 +33,7 @@ A DELETE the rules refuse deletes 0 rows, without an error; `expect` asks the da
 
 - `transaction(fn, who)` signs in as `who`, or as whoever `actingAs` set (`@rowstile/client`), else the `user`
   function, else nobody. `fn` acts for them too: `can`, `permsOf` and the others called inside it run in its
-  transaction.
+  transaction, and a `transaction(fn)` called inside it for them is Drizzle's own nested one, a savepoint of it.
 - A transaction is one principal's: inside it, this object's work for anyone else (after `actingAs`, a `who`
   given, nobody) throws an `Error` before anything is sent, and the transaction goes on as its own principal.
   Run that work after it, or in a transaction of its own on another connection.

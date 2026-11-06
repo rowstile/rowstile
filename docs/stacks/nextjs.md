@@ -206,16 +206,20 @@ not read the row, the 403 names the select rule.
 Two Prisma habits are handled: each `findUnique` runs in a transaction of its own (Prisma answers the calls of
 one tick together, from the first caller's context), and array transactions, `$transaction([...])`, are
 refused for the same reason. Use `$transaction(async (tx) => ...)`; inside it, why a write was refused is asked
-through the transaction, so it needs no second connection. Those transactions wait for a connection
+through the transaction, and so is what `db.$authz` (or `tx.$authz`) asks for its principal: it sees what the
+transaction wrote, and needs no second connection. Those transactions wait for a connection
 as long as Prisma's `transactionOptions` say, 2 seconds by default: with the database far away and many
 `findUnique` calls at once, give the client a longer `maxWait` (or a bigger pool), or they fail with
 "Unable to start a transaction in the given time".
 
 A transaction is one principal's: a sign-in lasts the database transaction. Inside `$transaction(async (tx) =>
 ...)`, a query through `db` (not `tx`) for anyone else, after `actingAs` or in a job, throws an `Error` before a
-connection is asked for, and so does a `$transaction` inside it; the transaction goes on as its own principal.
-Run that work after it, or in a transaction of its own on another connection. The same holds for `@rowstile/pg`,
-`/postgres` and `/drizzle` ([Node apps](node.md#who-a-transaction-acts-for)).
+connection is asked for, and so does a `db.$transaction` inside it for anyone else; the transaction goes on as its
+own principal. Run that work after it, or in a transaction of its own on another connection. The same holds for
+`@rowstile/pg`, `/postgres` and `/drizzle` ([Node apps](node.md#who-a-transaction-acts-for)). A `db.$transaction`
+inside it for the same principal is Prisma's: another transaction, on another connection, which doesn't see what
+the first one wrote. Prisma's own `tx.$transaction(async (t) => ...)` is a savepoint of it, as a transaction inside
+another for the same principal is in those three.
 
 ## Buttons, sharing and live updates (React)
 

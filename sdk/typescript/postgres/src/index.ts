@@ -32,12 +32,19 @@ export function authz(sql: Sql, options: Options = {}) {
   const scope = transactionScope<TransactionSql>();
   const begin = async <R>(fn: (tx: TransactionSql) => Promise<R>, who?: Who): Promise<R> => {
     const p = await signingIn(options.user, who);
-    scope.enter(p);                                // inside a transaction of this object's, as no one else
+    // inside a transaction of this object's: as no one else, and as p a savepoint of it
+    const open = scope.enter(p);
+    // fn may return an array of queries, as postgres.js's own begin takes: each runs, in the transaction
+    const run = (tx: TransactionSql) => scope.run(tx, p, () => {
+      const r: unknown = fn(tx);
+      return (Array.isArray(r) ? Promise.all(r) : r) as Promise<R>;
+    });
     try {
+      if (open) return (await open.savepoint(run)) as R;
       return (await sql.begin(async (tx) => {
         const a = actAs(p);
         await tx.unsafe(a.text, a.values);
-        return scope.run(tx, p, () => fn(tx));
+        return run(tx);
       })) as R;
     } catch (e) {
       throw translate(e) ?? e;
@@ -53,7 +60,8 @@ export function authz(sql: Sql, options: Options = {}) {
   return {
     sql,
     /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). fn acts for them too:
-     *  this object's own calls made inside it (expect, can, ...) run in the same transaction.
+     *  this object's own calls made inside it (expect, can, ...) run in the same transaction, and so does a
+     *  begin(fn) of theirs, as a savepoint of it. fn may return an array of queries, as postgres.js's begin takes.
      *  A transaction is one principal's: inside it, this object's work for anyone else throws before it is sent. */
     begin,
     /** The runtime's functions (can, permsOf, list, share, ...): inside begin(fn), in that transaction;

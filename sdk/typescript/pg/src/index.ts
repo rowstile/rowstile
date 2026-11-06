@@ -46,10 +46,12 @@ export interface Options {
   user?: UserResolver;
 }
 
-async function signedIn<C extends ClientLike, R>(pool: PoolLike<C>, enter: (p: Principal) => void, who: Who | undefined,
+async function signedIn<C extends ClientLike, R>(pool: PoolLike<C>, enter: (p: Principal) => C | undefined, who: Who | undefined,
                                                  options: Options, fn: (client: C, p: Principal) => Promise<R>): Promise<R> {
   const p = await signingIn(options.user, who);
-  enter(p);                                        // inside a transaction of this object's, as no one else
+  // inside a transaction of this object's: as no one else, and as p a savepoint of it, on its connection
+  const open = enter(p);
+  if (open) return savepoint(open, () => fn(open, p));
   const client = await pool.connect();
   let broken: unknown;
   // node-postgres listens for a lost connection only on idle clients: while this one is out, an error with
@@ -76,6 +78,20 @@ async function signedIn<C extends ClientLike, R>(pool: PoolLike<C>, enter: (p: P
   }
 }
 
+/** fn in a savepoint of the transaction client is in: rolled back to it if fn throws, and the transaction goes on. */
+async function savepoint<R>(client: ClientLike, fn: () => Promise<R>): Promise<R> {
+  await client.query("SAVEPOINT rowstile");
+  let out: R;
+  try {
+    out = await fn();
+  } catch (e) {
+    await client.query("ROLLBACK TO SAVEPOINT rowstile");
+    throw translate(e) ?? e;
+  }
+  await client.query("RELEASE SAVEPOINT rowstile");
+  return out;
+}
+
 export function authz<P extends PoolLike>(pool: P, options: Options = {}) {
   type C = ClientOf<P>;
   const clients = pool as unknown as PoolLike<C>;  // (connect() gives a C: what ClientOf<P> reads)
@@ -86,8 +102,9 @@ export function authz<P extends PoolLike>(pool: P, options: Options = {}) {
   return {
     pool,
     /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). fn acts for them too:
-     *  this object's own calls made inside it (query, expect, can, ...) run in the same transaction.
-     *  A transaction is one principal's: inside it, this object's work for anyone else throws before it is sent. */
+     *  this object's own calls made inside it (query, expect, can, ...) run in the same transaction, and so does a
+     *  transaction(fn) of theirs, as a savepoint of it. A transaction is one principal's: inside it, this object's
+     *  work for anyone else throws before it is sent. */
     transaction: <R>(fn: (client: C) => Promise<R>, who?: Who) =>
       signedIn(clients, scope.enter, who, options, (client, p) => scope.run(client, p, () => fn(client))),
     /** One statement: inside transaction(fn), in that transaction; elsewhere, in a signed-in transaction of its own. */
