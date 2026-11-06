@@ -895,7 +895,10 @@ FEATURES: list[Feature] = [
         ),
         Doc(TOOLS, "`rowstile studio"),
         tuple(T("studio_test.py", f"/api/{r}") for r in ("overview", "rows", "why", "graph", "diff", "shares", "test"))
-        + (T("studio_test.py", "the API needs the token"), T("studio_test.py", "read-only: no shares made"))
+        + (
+            T("studio_test.py", "a token from an earlier start of Studio: 401"),
+            T("studio_test.py", "read-only: no shares made"),
+        )
         # the guards walked over every route, and what each route's transaction may do
         + (
             T("studio_test.py", "no token: 401 on every route"),

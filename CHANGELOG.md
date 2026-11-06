@@ -682,6 +682,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile migrate` writes a migration when a policy's lines only moved (a comment added above a rule): it writes
   where each line is now, and nothing else, and `rowstile migrate --check` asks for it. Before, there was none, and
   a migrated database's messages named a rule's old line until the next migration.
+- The language server, when a file a policy includes is closed while the policy is open, marks it with what the
+  policy's check finds there. Before, with no policy named in rowstile.toml, it kept the mistakes the file had
+  when read as a policy alone (no app role, say).
 
 ### Upgrading
 
