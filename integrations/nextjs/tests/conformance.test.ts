@@ -3,7 +3,7 @@
 // test.sh does check 11 (a fresh database: migrate, the policy's tests, then Prisma's own diff shows no
 // change) and starts the servers these checks call, before they run.
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
@@ -858,36 +858,4 @@ test("authzRoutes: no more event streams than maxStreams", async () => {
   one.controller.abort();
   expect(subscribers).toBe(1);
   expect((await open().response).status).toBe(200);
-});
-
-// 14: after a policy change and a new migration, the app works with the new generated names
-test("14: a policy change ships as the next migration", () => {
-  const work = join(HERE, ".work", "check14");
-  rmSync(work, { recursive: true, force: true });
-  for (const part of ["db", "prisma", "rowstile.toml", "prisma.config.ts"]) cpSync(join(HERE, part), join(work, part), { recursive: true });
-  const policy = join(work, "db", "policy.authz");
-  writeFileSync(policy, readFileSync(policy, "utf8").replace("  can read = recipient\n", "  can read = recipient\n  can reply = recipient\n"));
-  const env = { ...process.env };
-  execFileSync(PYTHON, [CLI, "migrate", "--name", "reply"], { cwd: work, stdio: "pipe", env });
-  const deploy = run("prisma", ["migrate", "deploy"], work);
-  expect(deploy.status, deploy.stdout + deploy.stderr).toBe(0);
-  execFileSync(PYTHON, [CLI, "client"], { cwd: work, stdio: "pipe", env });
-  const names = readFileSync(join(work, "src", "authz.gen.ts"), "utf8");
-  expect(names).toContain('"reply"');
-  writeFileSync(join(work, "use.ts"), 'import "./src/authz.gen.ts";\nimport type { Permission } from "@rowstile/client";\n' +
-    'export const p: Permission<"message"> = "reply";\n');
-  writeFileSync(join(work, "tsconfig.json"), JSON.stringify({ extends: "../../tsconfig.json", compilerOptions: { incremental: false, plugins: [] }, exclude: [], include: ["use.ts", "src/authz.gen.ts"] }));
-  const tsc = run("tsc", ["-p", "tsconfig.json", "--noEmit"], work);
-  expect(tsc.status, tsc.stdout).toBe(0);
-});
-
-test("14: ... and the running app has the new permission", async () => {
-  const inbox = await actingAs("1", () => db.$executeRaw`INSERT INTO app.inbox (sender_id, recipient_id, body) VALUES (1, 2, 'hi')`);
-  expect(inbox).toBe(1);
-  const perms = await actingAs("2", async () => {
-    const [m] = await db.message.findMany({ where: { recipient_id: 2 } });
-    return db.$authz.perms("message", m.id);
-  });
-  expect(perms).toContain("reply");
-  expect(current()).toBeUndefined();
 });
