@@ -138,7 +138,7 @@ end
 module ActiveJob
   class Base
     def self.class_attribute: (Symbol name, instance_writer: bool, default: untyped) -> void
-    def self.around_perform: () { (untyped job, Proc block) -> untyped } -> void
+    def perform_now: () -> untyped
   end
 end
 

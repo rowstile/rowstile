@@ -140,9 +140,10 @@ module Rowstile
   class Railtie < Rails::Railtie
   end
 
-  module Job
+  module Job : ActiveJob::Base
     def self.included: (singleton(ActiveJob::Base) job) -> void
     def rowstile_principal: () -> Principal
+    def perform_now: () -> untyped
 
     module ClassMethods : _Job
       def acts_for: (who who) -> Principal
