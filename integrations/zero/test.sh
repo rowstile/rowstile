@@ -15,6 +15,9 @@
 # policy's tests, then the lock files. Then zero-cache starts on the migrated database, the app is built and started,
 # and the other checks run.
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 MODE=${SYNC_MODE:-copied}
 case $MODE in copied|keyed|after) ;; *) echo "SYNC_MODE=$MODE: copied, keyed or after"; exit 2 ;; esac
@@ -28,7 +31,7 @@ ZERO_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS zero$/\1/p' ../images/Dockerfile)
 export PYTHON=${PYTHON:-python3}
 # the workspace's packages, installed again when the lock file is newer than the install (a pull that changed it)
 [ "$ROOT/node_modules/.package-lock.json" -nt "$ROOT/package-lock.json" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 servers=()
 cleanup() {
   for p in "${servers[@]}"; do kill "$p" 2>/dev/null; done
@@ -39,15 +42,14 @@ cleanup() {
   docker rm -f -v "$NAME-zero" "$NAME" >/dev/null 2>&1
   docker network rm "$NAME-net" >/dev/null 2>&1
 }
-trap cleanup EXIT
+trap 'cleanup; gone' EXIT
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker image inspect "$ZERO_IMAGE" >/dev/null 2>&1 || docker pull -q "$ZERO_IMAGE" >/dev/null || exit 1
 docker rm -f -v "$NAME-zero" "$NAME" >/dev/null 2>&1
 docker network create "$NAME-net" >/dev/null 2>&1
 docker run -d --name "$NAME" --network "$NAME-net" --network-alias=pg -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" \
   "rowstile:$PG" -c wal_level=logical >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the database, not a superuser, as on managed Postgres; Zero's role is made by whoever runs
 # the database (a role that may make roles may give neither REPLICATION nor BYPASSRLS without holding them)
 docker exec "$NAME" psql -q -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \

@@ -16,6 +16,9 @@
 # Electric starts on the migrated database, the app is built and started twice (a pool of five connections, and a
 # pool of one), and the other checks run.
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 MODE=${SYNC_MODE:-copied}
 case $MODE in copied|keyed|after) ;; *) echo "SYNC_MODE=$MODE: copied, keyed or after"; exit 2 ;; esac
@@ -30,7 +33,7 @@ NGINX_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS nginx$/\1/p' ../images/Dockerfile)
 export PYTHON=${PYTHON:-python3}
 # the workspace's packages, installed again when the lock file is newer than the install (a pull that changed it)
 [ "$ROOT/node_modules/.package-lock.json" -nt "$ROOT/package-lock.json" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 servers=()
 cleanup() {
   for p in "${servers[@]}"; do kill "$p" 2>/dev/null; done
@@ -41,7 +44,7 @@ cleanup() {
   docker rm -f -v "$NAME-electric" "$NAME-nginx" "$NAME" >/dev/null 2>&1
   docker network rm "$NAME-net" >/dev/null 2>&1
 }
-trap cleanup EXIT
+trap 'cleanup; gone' EXIT
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 for image in "$ELECTRIC_IMAGE" "$NGINX_IMAGE"; do
   docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" >/dev/null || exit 1
@@ -50,8 +53,7 @@ docker rm -f -v "$NAME-electric" "$NAME-nginx" "$NAME" >/dev/null 2>&1
 docker network create "$NAME-net" >/dev/null 2>&1
 docker run -d --name "$NAME" --network "$NAME-net" --network-alias=pg -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" \
   "rowstile:$PG" -c wal_level=logical >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the database, not a superuser, as on managed Postgres; Electric's role is made by whoever
 # runs the database (a role that may make roles may give neither REPLICATION nor BYPASSRLS without holding them)
 docker exec "$NAME" psql -q -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
@@ -158,7 +160,7 @@ export CONFORMANCE_CACHE="http://localhost:$((PORT + 2))"
 for _ in $(seq 30); do curl -s -o /dev/null "$CONFORMANCE_CACHE/" && break; sleep 1; done
 # What the checks run of Electric's proxy in the SDK, lines, branches and functions: the report is printed, and kept
 # in CONFORMANCE_COVERAGE (a folder of its own if not given) with the details of each file
-export CONFORMANCE_COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
+[ -n "${CONFORMANCE_COVERAGE:-}" ] || { CONFORMANCE_COVERAGE=$(mktemp -d); TMPS+=("$CONFORMANCE_COVERAGE"); }; export CONFORMANCE_COVERAGE
 $BIN/vitest run --coverage "$@" || { rc=1; echo "(logs: $LOG; Electric's: docker logs $NAME-electric, with KEEP=1)"; }
 if [ $# -gt 0 ]; then
   echo "(some of the checks ran: the SDK's coverage isn't judged)"

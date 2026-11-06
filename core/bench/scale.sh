@@ -36,8 +36,7 @@ docker rm -f -v "$NAME" >/dev/null 2>&1
 # shellcheck disable=SC2086
 docker run -d --name "$NAME" --shm-size=1g -e POSTGRES_HOST_AUTH_METHOD=trust -v "$REPO:/src" "rowstile:$PG" \
   $SETTINGS -c max_connections=300 -c max_wal_size=8GB -c checkpoint_timeout=30min -c jit=off >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h /var/run/postgresql 2>/dev/null && break; sleep 1; done
-sleep 3
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 2>/dev/null && break; sleep 1; done
 # run as the tables' owner, not a superuser, as the suites and the documented setup are (tests/make_owner.sh): what
 # a superuser would skip, the benchmark measures
 docker exec -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core "$NAME" bash tests/make_owner.sh || exit 1

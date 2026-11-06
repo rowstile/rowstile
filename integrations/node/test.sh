@@ -9,6 +9,9 @@
 # database. Then the app is built and started twice (a pool of five connections, and a pool of one), and the other
 # checks run (Jest, two workers, a test database each).
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-node
@@ -20,7 +23,7 @@ BIN=$ROOT/node_modules/.bin
 export PYTHON=${PYTHON:-python3}
 # the workspace's packages, installed again when the lock file is newer than the install (a pull that changed it)
 [ "$ROOT/node_modules/.package-lock.json" -nt "$ROOT/package-lock.json" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 servers=()
 cleanup() {
   for p in "${servers[@]}"; do kill "$p" 2>/dev/null; done
@@ -29,12 +32,11 @@ cleanup() {
   [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"
   docker rm -f -v "$NAME" >/dev/null 2>&1
 }
-trap cleanup EXIT
+trap 'cleanup; gone' EXIT
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per worker)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
@@ -111,7 +113,7 @@ for _ in $(seq 60); do [ -n "$(listening "$LOG/server.log")" ] && [ -n "$(listen
 export CONFORMANCE_SERVER="http://localhost:$(listening "$LOG/server.log")"
 export CONFORMANCE_SERVER_ONE="http://localhost:$(listening "$LOG/server-one.log")"
 # @rowstile/jest as npm installs it: packed, with the packages it depends on, in a folder of its own, and loaded
-pack=$(mktemp -d)
+pack=$(mktemp -d); TMPS+=("$pack")
 for p in client vitest jest; do (cd "$ROOT/sdk/typescript/$p" && npm pack --silent --pack-destination "$pack" >/dev/null) || exit 1; done
 (cd "$pack" && echo '{"private": true}' >package.json && npm install --no-audit --no-fund --legacy-peer-deps ./*.tgz >/dev/null 2>&1 &&
   node --input-type=module -e 'const j = await import("@rowstile/jest");
@@ -120,7 +122,7 @@ for p in client vitest jest; do (cd "$ROOT/sdk/typescript/$p" && npm pack --sile
 rm -rf "$pack"
 # What the checks run of the SDK's packages (their sources), lines, branches and functions: the report is printed,
 # and kept in CONFORMANCE_COVERAGE (a folder of its own if not given) with the details of each file
-export CONFORMANCE_COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
+[ -n "${CONFORMANCE_COVERAGE:-}" ] || { CONFORMANCE_COVERAGE=$(mktemp -d); TMPS+=("$CONFORMANCE_COVERAGE"); }; export CONFORMANCE_COVERAGE
 NODE_OPTIONS="--experimental-vm-modules --no-warnings=ExperimentalWarning" node "$ROOT/node_modules/jest/bin/jest.js" --coverage "$@" ||
   { rc=1; echo "(server logs: $LOG)"; }
 # 12: the checks ran on two Jest workers, each in a copy of the test database of its own

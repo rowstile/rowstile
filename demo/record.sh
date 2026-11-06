@@ -39,8 +39,7 @@ python3 demo/files.py "$WORK" "$WORK.sql"
 # the database: the guide's tables and rows
 docker network create "$NET" >/dev/null
 docker run -d --name "$PG" --network "$NET" -e POSTGRES_HOST_AUTH_METHOD=trust rowstile:16 >/dev/null
-for _ in $(seq 30); do docker exec "$PG" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 30); do docker exec "$PG" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 docker exec "$PG" psql -X -q -U postgres -c "CREATE DATABASE notes" >/dev/null
 docker exec -i "$PG" psql -X -q -U postgres -d notes -v ON_ERROR_STOP=1 < "$WORK.sql" >/dev/null
 URL="postgres://postgres@$PG/notes"

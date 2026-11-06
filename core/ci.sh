@@ -56,8 +56,8 @@ for v in $VERSIONS; do
     -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c wal_level=logical \
     ${COVERAGE:+-c track_functions=all} ${STATEMENTS:+-c shared_preload_libraries=plpgsql_check -c plpgsql_check.profiler=on} \
     ${STATEMENTS:+-c plpgsql_check.cursors_leaks=off -c plpgsql_check.max_stats_size=204800} >/dev/null || { failed+=("$v (start)"); continue; }
-  for _ in $(seq 60); do docker exec "$name" pg_isready -q -h /var/run/postgresql 2>/dev/null && break; sleep 1; done
-  sleep 2                              # the image's entrypoint restarts the server once after initdb
+  # over TCP: the image's entrypoint first runs a server on the socket alone (initdb), then restarts it
+  for _ in $(seq 60); do docker exec "$name" pg_isready -q -h 127.0.0.1 2>/dev/null && break; sleep 1; done
   log="$LOGS/rowstile-ci-$v.log"
   # with --coverage, where the suites measure: .ci/coverage-<version> in the checkout, emptied first (from inside:
   # the container's files are root's)

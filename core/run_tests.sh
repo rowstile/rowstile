@@ -21,7 +21,10 @@ cd "$(dirname "$0")"
 # Every suite runs as a non-superuser owner, as on managed Postgres. Started as a superuser, this
 # makes one (authz_owner: LOGIN, CREATEDB, CREATEROLE, and SET on the roles it creates) and runs again as it;
 # PGSUPERUSER names the superuser for the few checks that a superuser's connection is refused.
-if [ "$(psql -X -At -d postgres -c "SELECT rolsuper FROM pg_roles WHERE rolname = current_user")" = t ]; then
+# (a first question the server doesn't answer stops the run: read as "not a superuser", the run would go on as one)
+super=$(psql -X -At -d postgres -c "SELECT rolsuper FROM pg_roles WHERE rolname = current_user") ||
+  { echo "run_tests.sh: the server doesn't answer: $super" >&2; exit 1; }
+if [ "$super" = t ]; then
   PGSUPERUSER=$(psql -X -At -d postgres -c "SELECT current_user")
   bash tests/make_owner.sh || exit 1
   echo "running as authz_owner, not the superuser $PGSUPERUSER"

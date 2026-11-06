@@ -14,6 +14,9 @@
 # its own copy of the migrated test database), measured by cargo-llvm-cov, and checks 9 and 14, which compile Rust
 # (tests/compile.sh).
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-axum
@@ -24,7 +27,7 @@ HERE=$PWD
 RUST_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS rust$/\1/p' ../images/Dockerfile)
 IMAGE=rowstile-axum
 CACHE=${ROWSTILE_AXUM_CACHE:-$HOME/.cache/rowstile/axum}
-T=$(mktemp -d)
+T=$(mktemp -d); TMPS+=("$T")
 # What the checks run of the SDK (sdk/rust), lines and regions (cargo-llvm-cov, on stable Rust: branches need a
 # nightly compiler). The report is printed, and kept in CONFORMANCE_COVERAGE (a folder of its own if not given)
 export CONFORMANCE_COVERAGE=${CONFORMANCE_COVERAGE:-$T/coverage}
@@ -34,7 +37,7 @@ stop() {
   docker rm -f "$NAME-server" >/dev/null 2>&1
   rm -rf "$T"
 }
-trap stop EXIT
+trap 'stop; gone' EXIT
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker build -q -t "$IMAGE" --build-arg "RUST_IMAGE=$RUST_IMAGE" -f rust.Dockerfile . >/dev/null || exit 1
 # Rust, in a folder (this one if none is given), with the suite's environment (its databases, and what a step sets)
@@ -71,8 +74,7 @@ rust_run -C "$SDK" cargo package --locked --allow-dirty >"$T/package.log" 2>&1 &
   { cat "$T/package.log"; echo "FAIL  the SDK's package"; exit 1; }
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per binary)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \

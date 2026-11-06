@@ -7,6 +7,9 @@
 # migrations), then the policy's tests, then Django's own diff (makemigrations --check), which must show no change.
 # Then the other checks (pytest, pytest-django).
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-django
@@ -19,10 +22,9 @@ stop() {
   [ -n "$POOLED" ] && pooler_stop "$NAME"
   docker rm -f -v "$NAME" >/dev/null 2>&1
 }
-trap stop EXIT
+trap 'stop; gone' EXIT
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per worker)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
@@ -41,7 +43,7 @@ export DATABASE_URL="postgresql://conf_app:app@localhost:$APP_PORT/conf"
 if [ -n "${RESOLUTION:-}" ]; then
   # the lowest version of each dependency pyproject.toml names (Django, psycopg: the same floors as the SDK's
   # extra), on the oldest Python the SDK supports, in an environment of its own; uv.lock and .venv stay as they are
-  export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv" UV_NO_SYNC=1
+  UVDIR=$(mktemp -d); TMPS+=("$UVDIR"); export UV_PROJECT_ENVIRONMENT="$UVDIR/venv" UV_NO_SYNC=1
   uv venv -q --python 3.11 "$UV_PROJECT_ENVIRONMENT" &&
     uv pip install -q --python "$UV_PROJECT_ENVIRONMENT" --resolution "$RESOLUTION" -r pyproject.toml \
       -e ../../sdk/python || exit 1
@@ -50,10 +52,10 @@ fi
 # What the checks run of the SDK's Django module (sdk/python/rowstile/django), lines and branches (pyproject.toml's
 # [tool.coverage]): every Python process from here on, the tests' own subprocesses too, measures itself into
 # CONFORMANCE_COVERAGE (a folder of its own if not given), where the report is kept; it is printed at the end
-COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
+COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}; [ -n "${CONFORMANCE_COVERAGE:-}" ] || TMPS+=("$COVERAGE")
 mkdir -p "$COVERAGE" && rm -f "$COVERAGE"/.coverage* "$COVERAGE/report.txt"
 export COVERAGE_PROCESS_START="$PWD/pyproject.toml" COVERAGE_FILE="$COVERAGE/.coverage"
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 rc=0
 DATABASE_URL=$ROWSTILE_OWNER_DSN uv run --quiet python manage.py migrate --verbosity 0 ||
   { echo "FAIL  11: manage.py migrate"; rc=1; }

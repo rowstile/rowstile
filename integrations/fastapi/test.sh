@@ -7,6 +7,9 @@
 # the policy's tests, then Alembic's own diff, which must show no change. Then the other checks (pytest), the
 # background jobs' among them, in Celery's and RQ's workers on a Redis of their own (CONFORMANCE_REDIS_PORT).
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-py
@@ -19,12 +22,11 @@ cleanup() {
   declare -F pooler_stop >/dev/null && pooler_stop "$NAME"   # the pooler, if it was started
   docker rm -f -v "$NAME" "$NAME-redis" >/dev/null 2>&1
 }
-trap cleanup EXIT
+trap 'cleanup; gone' EXIT
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per worker)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
@@ -49,7 +51,7 @@ if [ -n "${RESOLUTION:-}" ]; then
   # the lowest version of each dependency pyproject.toml names (FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic: the
   # same floors as the SDK's extras), on the oldest Python the SDK supports (the oldest of them build on no newer
   # one), in an environment of its own; uv.lock and .venv stay as they are
-  export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv" UV_NO_SYNC=1
+  UVDIR=$(mktemp -d); TMPS+=("$UVDIR"); export UV_PROJECT_ENVIRONMENT="$UVDIR/venv" UV_NO_SYNC=1
   uv venv -q --python 3.11 "$UV_PROJECT_ENVIRONMENT" &&
     uv pip install -q --python "$UV_PROJECT_ENVIRONMENT" --resolution "$RESOLUTION" -r pyproject.toml || exit 1
   uv pip list -q --python "$UV_PROJECT_ENVIRONMENT" | grep -iE '^(fastapi|starlette|sqlalchemy|psycopg|asyncpg|alembic|celery|rq) '
@@ -57,7 +59,7 @@ fi
 # What the checks run of the SDK (sdk/python/rowstile), lines and branches (pyproject.toml's [tool.coverage]): every
 # Python process from here on, the tests' own subprocesses too, measures itself into CONFORMANCE_COVERAGE (a folder
 # of its own if not given), where the report is kept; it is printed at the end
-COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
+COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}; [ -n "${CONFORMANCE_COVERAGE:-}" ] || TMPS+=("$COVERAGE")
 mkdir -p "$COVERAGE" && rm -f "$COVERAGE"/.coverage* "$COVERAGE/report.txt"
 export COVERAGE_PROCESS_START="$PWD/pyproject.toml" COVERAGE_FILE="$COVERAGE/.coverage"
 rc=0
