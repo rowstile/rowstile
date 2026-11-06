@@ -5,7 +5,7 @@
 # The owner's (migrations, the command, rowstile test) and the change feed's stay direct, as the operations page
 # asks (docs/operations.md, Behind a pooler, which says what this runs). It keeps prepared statements per client
 # (max_prepared_statements, PgBouncer 1.21 and newer): a pooler that keeps none, and the drivers' settings for
-# it, aren't run here. pooler_stop removes it.
+# it, aren't run here. pooler_stop removes it, and the folder of its settings.
 # PgBouncer's image, pinned in images/Dockerfile beside this file
 POOLER_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS pgbouncer$/\1/p' "$(dirname "${BASH_SOURCE[0]}")/images/Dockerfile")
 
@@ -13,6 +13,7 @@ pooler_start() {
   local pg=$1 port=$2; shift 2
   local name="$pg-pgbouncer" dir
   dir=$(mktemp -d)
+  POOLER_DIR=$dir                                # for pooler_stop: the folder holds the userlist's passwords
   docker network create "$pg-net" >/dev/null 2>&1
   docker network connect --alias pg "$pg-net" "$pg" 2>/dev/null
   docker rm -f -v "$name" >/dev/null 2>&1
@@ -52,4 +53,5 @@ pooler_stop() {
   docker rm -f -v "$1-pgbouncer" >/dev/null 2>&1
   docker network disconnect "$1-net" "$1" >/dev/null 2>&1
   docker network rm "$1-net" >/dev/null 2>&1
+  if [ -n "${POOLER_DIR:-}" ]; then rm -rf "$POOLER_DIR"; POOLER_DIR=; fi
 }
