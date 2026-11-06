@@ -18,6 +18,7 @@ Route::post('projects/{id}/requests', [ProjectsController::class, 'ask']);
 Route::post('keys', [KeysController::class, 'create']);
 Route::delete('keys/{id}', [KeysController::class, 'destroy']);
 Route::get('notes', [NotesController::class, 'index']);
+Route::get('notes/export', [NotesController::class, 'export']);
 Route::get('notes/as/{userId}', [NotesController::class, 'as']);
 Route::post('notes', [NotesController::class, 'create']);
 Route::patch('notes/{note}', [NotesController::class, 'update']);

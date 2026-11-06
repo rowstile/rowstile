@@ -13,12 +13,23 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Rowstile\Principal;
 use Rowstile\Rowstile;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class NotesController
 {
     public function index(): JsonResponse
     {
         return new JsonResponse(Note::query()->orderBy('id')->pluck('id'));
+    }
+
+    // the notes' ids, streamed: the body is written after the request returns, still as its user (SignIn)
+    public function export(): StreamedResponse
+    {
+        return new StreamedResponse(static function (): void {
+            foreach (Note::query()->orderBy('id')->lazy() as $note) {
+                echo $note->id, "\n";
+            }
+        }, 200, ['Content-Type' => 'text/csv']);
     }
 
     public function create(Request $request): JsonResponse

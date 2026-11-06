@@ -92,6 +92,11 @@ the transaction is as it was. Run that work after it, or in a transaction of its
 `Rowstile::transaction($pdo, fn)` refuses to run inside a transaction it didn't begin (`$pdo->beginTransaction()`):
 who it is signed in as can't be known. Let `Rowstile::transaction` (or `transactionAs`) begin it instead.
 
+Laravel makes all `pgsql` connections with one class, so a package that brings its own (a Postgres extension's
+package) replaces rowstile's, or is replaced by it. Then give a class of yours that extends that package's the
+`Rowstile\Laravel\SignsIn` trait, and make the `pgsql` connections with it (`Connection::resolverFor('pgsql', ...)`
+in your service provider's `register`). `php artisan rowstile:check` refuses a connection that signs nothing in.
+
 Who each request acts for is the `SignIn` middleware's to say. Put it first, before route model binding reads a row:
 
 ```php
@@ -101,8 +106,10 @@ Who each request acts for is the `SignIn` middleware's to say. Put it first, bef
     })
 ```
 
-By default it is the user Laravel authenticated (its id), or nobody, who sees only what `anyone` may. Read your
-session or your token there instead, in a service provider's `boot`. The conformance app has no sign-in, so its
+By default it is the user Laravel authenticated (its id), or nobody, who sees only what `anyone` may. Laravel's guard
+finds the user before the request acts for anyone: it reads the users table (and Sanctum its tokens) with nobody
+signed in, so those tables can't have rules. If yours does, a `LogicException` says so: find the id without reading
+it (in the session, the token). Read your session or your token there instead, in a service provider's `boot`. The conformance app has no sign-in, so its
 `SessionUser` stands in for one: it takes the user from a header its checks set, which a real app must never
 believe. That is why this page doesn't show it.
 
@@ -160,6 +167,25 @@ errors, a 500; a query nobody signed in to is reported as `Rowstile\NotSignedIn`
         return new JsonResponse(Database::queries()->list(ProjectPermission::View, is_string($after) ? $after : null, $request->integer('limit')));
     }
 ```
+
+A streamed response's body (`response()->stream`, `streamDownload`, `StreamedJsonResponse`) is written after the
+controller returns: `SignIn` writes it as the request's principal too.
+
+```php
+    // the notes' ids, streamed: the body is written after the request returns, still as its user (SignIn)
+    public function export(): StreamedResponse
+    {
+        return new StreamedResponse(static function (): void {
+            foreach (Note::query()->orderBy('id')->lazy() as $note) {
+                echo $note->id, "\n";
+            }
+        }, 200, ['Content-Type' => 'text/csv']);
+    }
+```
+
+Work that runs after the response is sent acts for no one: a terminable middleware's `terminate`, or a closure
+given to `dispatch(...)->afterResponse()`. Wrap it in `Rowstile::actingAs($who, fn () => ...)`; a job sent after the
+response acts for whoever its `ActsFor` names (below).
 
 PHP starts each request on its own, so there is no moment when the app starts to refuse a connection in. Run
 `php artisan rowstile:check` before the app is served (a container's entrypoint, a deploy step): it exits 1 on a
