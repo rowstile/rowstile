@@ -395,12 +395,13 @@ class SdkTest < ActionDispatch::IntegrationTest
     assert_equal ["AZ705", nil, nil], [share.code, share.table, share.command]
   end
 
-  # the gem without Rails: no Railtie, the rest as it is
+  # the gem without Rails: no Railtie, no Action Pack, the rest as it is (its problem bodies too)
   test "the gem loads without Rails" do
-    code = 'require "rowstile"; print [defined?(Rails), defined?(Rowstile::Railtie), Rowstile::Principal.of(3).to_s].inspect'
+    code = 'require "rowstile"; print [defined?(Rails), defined?(ActionDispatch), defined?(Rowstile::Railtie), ' \
+           'Rowstile::Principal.of(3).to_s, Rowstile.problem_of(Rowstile::NotFound.new("app.x", 7))["status"]].inspect'
     said, status = Open3.capture2e("ruby", "-e", code, chdir: File.expand_path("..", __dir__))
     assert status.success?, said
-    assert_equal "[nil, nil, \"3\"]", said.lines.last
+    assert_equal "[nil, nil, nil, \"3\", 404]", said.lines.last
   end
 
   # the Minitest helpers say what was expected
