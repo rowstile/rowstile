@@ -664,6 +664,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   Postgres writes the row: a field is quoted for ASCII's six spaces, not for a no-break space or another Unicode
   space, and a NULL field is nothing (it was `None` or `null`). A key of one value given as a tuple or an array is
   that value, in a message and in what they send: `(7,)` was sent as `("7")`.
+- The review for CI on GitHub: when GitHub can't be reached, or doesn't answer within 30 seconds, the comment step
+  fails with an error that says so and that the review is in the run's summary. Before, it ended with a traceback,
+  or waited for the job's timeout.
 
 ### Upgrading
 

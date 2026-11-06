@@ -1,6 +1,9 @@
 """The action's comment: the review posted on the pull request, or the comment posted before updated in place (the one
 that starts with the review's marker, written by the token's own account: anyone may write a comment that starts so). The standard library only: a self-hosted runner may not have the GitHub CLI.
 
+GitHub out of reach, or silent for TIMEOUT seconds, fails the step with an error that says so, as a refusal does: the
+review stays in the run's summary.
+
 A pull request from a fork gets a read-only token, whatever the workflow's permissions ask for. GitHub refuses the
 comment then (403): the review stays in the run's summary, a notice says so, and the step passes. A review longer
 than a comment may be is cut, and the comment says the whole review is in the run's summary.
@@ -19,6 +22,8 @@ from typing import TypedDict, cast
 MARK = "<!-- rowstile review -->"
 # GitHub refuses a comment over 65,536 characters; what is cut stays under it with room to spare
 LIMIT = 60_000
+# how long a request may wait for GitHub's answer, in seconds
+TIMEOUT = 30
 
 
 class Author(TypedDict):
@@ -60,7 +65,7 @@ def call(method: str, url: str, token: str, body: dict[str, str] | None = None) 
         data=None if body is None else json.dumps(body).encode(),
         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
     )
-    with urllib.request.urlopen(req) as res:
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as res:
         return json.load(res)
 
 
@@ -86,9 +91,12 @@ def refusal(e: urllib.error.HTTPError) -> str:
         said = json.loads(e.read()).get("message", "")
     except (ValueError, AttributeError, OSError):
         said = ""
-    said = f"HTTP {e.code}" + (f": {said}" if said else "")
-    # a workflow command's message: % and line breaks escaped
-    return said.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return escaped(f"HTTP {e.code}" + (f": {said}" if said else ""))
+
+
+def escaped(text: str) -> str:
+    """Text for a workflow command's message: % and line breaks escaped."""
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
 def main() -> int:
@@ -126,6 +134,13 @@ def main() -> int:
         )
         print(
             f"::error title=rowstile review::GitHub refused the comment ({refusal(e)}).{hint} "
+            "The review is in the run's summary."
+        )
+        return 1
+    except OSError as e:  # URLError (no answer: a name not found, a connection refused), a reset, a timeout
+        reason = str(e.reason if isinstance(e, urllib.error.URLError) else e) or type(e).__name__
+        print(
+            f"::error title=rowstile review::GitHub couldn't be reached ({escaped(reason)}). "
             "The review is in the run's summary."
         )
         return 1
