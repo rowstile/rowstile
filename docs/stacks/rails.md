@@ -264,9 +264,18 @@ transaction goes as it would without it: a statement outside a transaction signs
 when that changes, so a test may act for one user and then another. Each transaction the app begins there (a
 savepoint, to Postgres) is one principal's, as above. The console's sandbox (`rails console --sandbox`) is the same.
 
+Leave out fixtures (`fixtures :all`, which a new app's `test/test_helper.rb` has). Rails loads them on the app's
+connection, as no one, so the database refuses them (AZ701). As a superuser, Rails turns every trigger off while it
+loads them (`DISABLE TRIGGER ALL`), rowstile's too, and the closure tables, the audit trail and the feed miss those
+rows. Load the tests' rows as the tables' owner, in SQL, as the conformance app's `Rows.load!` does
+(`test/test_helper.rb`).
+
 ## What the preview leaves out
 
-`load_async` runs its query on another thread, which acts for no one: the database refuses it (AZ701), rather
-than answer as someone. Streaming a response (`ActionController::Live`) is the same. Sharing, requests, reviews
-and keys are `authz.*` functions to call in SQL, as the conformance app does ([Using it from app
-code](../reference/app-code.md)).
+`load_async` runs its query in the request, as the user, while the app sets no async query executor
+(`config.active_record.async_query_executor`, unset by default), and always inside a transaction. With one set, a
+query the executor's thread runs acts for no one, and the database refuses it (AZ701), while one the request reads
+first runs in the request: whether it fails depends on which comes first, so leave the executor unset. Streaming a
+response (`ActionController::Live`) runs the action on another thread, which Rails gives the request's state: it
+acts for the request's user, on a connection of its own. Sharing, requests, reviews and keys are `authz.*` functions
+to call in SQL, as the conformance app does ([Using it from app code](../reference/app-code.md)).
