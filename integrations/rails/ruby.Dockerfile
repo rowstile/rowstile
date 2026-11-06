@@ -5,7 +5,7 @@
 # db/structure.sql (Rails dumps it with pg_dump, which refuses a server newer than itself, and whose newer versions
 # write more settings at the top: one version for every server the suite runs on, so the dump is the same on each);
 # python3 for the rowstile command (check 14 runs rowstile migrate and rowstile client from the tests).
-#   docker build -t rowstile-rails --build-arg RUBY_IMAGE=<ruby image> -f integrations/rails/ruby.Dockerfile integrations/rails
+#   docker build -t rowstile-rails:ruby --build-arg RUBY_IMAGE=<ruby image> -f integrations/rails/ruby.Dockerfile integrations/rails
 ARG RUBY_IMAGE
 FROM ${RUBY_IMAGE}
 RUN apt-get update \
