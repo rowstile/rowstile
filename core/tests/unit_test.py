@@ -13632,7 +13632,7 @@ class SdkPackages(unittest.TestCase):
                         ran, f"{path}: {dep} {alternative}: no lock file installs it ({sorted(locks[dep])})"
                     )
                     seen += 1
-        self.assertEqual(seen, 11)
+        self.assertEqual(seen, 12)
 
     def test_the_lock_file_says_what_each_package_json_does(self) -> None:
         # npm ci doesn't compare a workspace package's engines and peers with its entry in the lock
