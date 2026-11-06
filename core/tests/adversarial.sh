@@ -389,6 +389,13 @@ expect "updating a hidden row changes nothing" "UPDATE 0" -c "\\set QUIET off" -
 expect "deleting a hidden row changes nothing" "DELETE 0" -c "\\set QUIET off" -c "DELETE FROM app.files WHERE id = 12"
 expect "an upsert onto a hidden row" "42501: permission denied: user 3 may not insert this row into app.files" \
   -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (12, 4, 3, 'x') ON CONFLICT (id) DO UPDATE SET name = 'pwned'"
+# carol may insert nowhere there, so the insert's own check refuses her before any conflict. Alice may insert the
+# row (as a new one, rolled back; any error stops there), but not see file 12: Postgres then refuses the update the
+# conflict leads to
+AS=1 expect "... and one whose new row may be inserted: the update of the hidden row is refused" \
+  "42501: new row violates row-level security policy (USING expression) for table \"files\"" -v ON_ERROR_STOP=1 \
+  -c "SAVEPOINT s" -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (9012, 4, 1, 'x')" -c "ROLLBACK TO s" \
+  -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (12, 4, 1, 'x') ON CONFLICT (id) DO UPDATE SET name = 'pwned'"
 [ "$(PSQL -c "SELECT name FROM app.files WHERE id = 12")" = "prod-keys.txt" ] && echo "ok    the hidden file is untouched" ||
   { echo "FAIL  the hidden file changed"; fails=$((fails + 1)); }
 expect "a file claiming someone else as owner" "42501: permission denied: user 3 may not insert this row into app.files" \
