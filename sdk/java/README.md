@@ -14,7 +14,8 @@ Three artifacts, group `dev.rowstile`:
   `expect`, `check`), and `Errors.problem(e)` reads a database error as rowstile's answer: a refusal 403, a row that
   isn't there 404, and each code as its page says (`rowstile help AZ710`).
 - `rowstile-spring-boot-starter`: Spring Boot 4. Every transaction Spring's transaction managers begin (JDBC's and
-  JPA's: `@Transactional`, `TransactionTemplate`, Spring Data's repositories) signs in first, as the request's user
+  JPA's, on any JPA provider: `@Transactional`, `TransactionTemplate`, Spring Data's repositories; not JTA's) signs
+  in first, as the request's user
   from Spring Security; a refusal answers with problem details (RFC 9457); and the app doesn't start on a connection
   that skips row-level security. A transaction is one principal's: work for someone else that joins one, or a
   statement on its connection while the code acts for someone else, is refused (`IllegalStateException`) before
