@@ -86,6 +86,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Elixir SDK's `Rowstile.Testing.assert_refused(result, command)` takes the rule's whole name (`insert`,
   `update`, `delete`, `select`): a part of it, such as `"up"`, or `""`, fails the test. Before, any start of the
   name passed.
+- The PHP SDK's `assertRefused($fn, $command)` asks for the rule's command itself (`select`, `insert`, `update` or
+  `delete`). Before, any start of it passed: `'ins'`, and `''` for any refusal.
 
 ### Removed
 
