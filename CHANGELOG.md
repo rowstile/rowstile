@@ -451,6 +451,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   (`'app"."notes'`), where they failed with AZ707.
 - `@rowstile/jest` names `expect`, whose types it adds the matchers to, as a peer: with pnpm's strict layout,
   `toBeRefused` and `toBeNotFound` were untyped.
+- `electricShape` (`@rowstile/client`, a preview) finds no filter for a principal type named like a member every
+  object has (`constructor`): it answers 403, as for any type the shape doesn't sync.
 
 ### Upgrading
 
