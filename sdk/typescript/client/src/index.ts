@@ -359,8 +359,9 @@ export function sqlstate(e: unknown): string | undefined {
 }
 
 // Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
-// without its schema, and sets no field for it
-const RLS_GENERIC = /^(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/;
+// without its schema, and sets no field for it; it names the policy too when it is a restrictive one (the app's own:
+// rowstile makes none), quoting the name as it is
+const RLS_GENERIC = /^(new|target) row violates row-level security policy (".*?" )?(\(USING expression\) )?for table "([^"]+)"/;
 // the function in Postgres that raises those refusals (the error's routine): what tells one in another language
 const ROW_CHECK = "ExecWithCheckOptions";
 const UNSEEN = "this user may not see the row as written (the select rule). An insert that reads it back (RETURNING), " +
@@ -383,9 +384,14 @@ export function refusal(e: unknown, schemaOf?: (table: string) => string | undef
   if (!err || err.code !== "42501") return null;
   const generic = RLS_GENERIC.exec(err.message);
   if (generic) {
-    const [, row, existing, name] = generic;
+    const [, row, policy, existing, name] = generic;
     const schema = err.schema ?? schemaOf?.(name);
     const table = schema ? `${schema}.${name}` : name;
+    if (policy) {
+      // a restrictive policy of the app's own (authz.lint() reports it): Postgres's words name it, and say no more.
+      // An upsert's is about the update of the row there already
+      return new Refused(err.message, table, row === "new" && existing ? "update" : undefined, [], { cause: e });
+    }
     if (row === "target") {
       // MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
       return new Refused(`${err.message}: MERGE matched a row the update or delete rule doesn't let this user change`,

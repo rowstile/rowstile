@@ -458,6 +458,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `@rowstile/drizzle`'s `ids(type, perm, keyType)` takes a type's name and nothing else: one word, or one of
   Postgres's names of several words (`double precision`, `timestamp(3) with time zone`). Before, it took any words
   with spaces between them, and refused `timestamp(3) with time zone`.
+- The TypeScript SDK reads a refusal by a restrictive policy of the app's own, which Postgres names in its message
+  (`new row violates row-level security policy "p" for table "t"`), as `Refused`, a 403; before, it was no refusal, a
+  500.
 
 ### Upgrading
 
