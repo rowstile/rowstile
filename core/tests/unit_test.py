@@ -19559,6 +19559,31 @@ class Mutants(unittest.TestCase):
         self.assertEqual(calls.functions, {"authz.can": {"scenario"}})
         self.assertEqual(calls.ran("authzlib/output.py", 2), {"scenario"})
 
+    def test_a_shard_removes_its_container_when_its_setup_fails(self) -> None:
+        # make_owner.sh failing (check=True) after docker run: the container is removed all the same
+        removed: list[str] = []
+        failed = subprocess.CalledProcessError(1, ["docker", "exec", "bash", "tests/make_owner.sh"])
+        with tempfile.TemporaryDirectory() as d:
+            prepared, out = os.path.join(d, "prepared"), os.path.join(d, "out")
+            os.mkdir(prepared)
+            with open(os.path.join(prepared, "queue.json"), "w", encoding="utf-8") as fh:
+                json.dump({"commit": "abc1234", "mutants": []}, fh)
+            with open(os.path.join(prepared, "stats.json"), "w", encoding="utf-8") as fh:
+                json.dump({"suites": {}}, fh)
+            args = argparse.Namespace(
+                prepared=prepared, shard="1/1", out=out, root=d, image="rowstile:16", name="box", budget=1, keep=False
+            )
+            with (
+                mock.patch.object(sweep, "head", return_value="abc1234"),
+                mock.patch.object(sweep.mutants, "generate", return_value=[]),
+                mock.patch.object(sweep.Container, "start", side_effect=failed),
+                mock.patch.object(sweep.Container, "remove", lambda box: removed.append(box.name)),
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                sweep.run(args)
+        self.assertEqual(removed, ["box"])
+
     def test_the_workflow(self) -> None:
         text = read("../.github/workflows/mutants.yml")
         on = search(r"^on:\n(.*?)^\S", text, re.S | re.M).group(1)
@@ -19571,14 +19596,15 @@ class Mutants(unittest.TestCase):
         self.assertLess(timeout, 360)  # GitHub's runners stop a job at six hours
         self.assertLessEqual(budget + 60, timeout)  # the mutant in flight when the budget is used up still ends
         self.assertEqual(set(re.findall(r"sweep\.py (\w+)", text)), {"calls", "prepare", "run", "collect"})
-        # the next run resumes from what collect keeps: every run's results, but a run of some mutants only that
-        # didn't carry the latest ones (it holds only its own) keeps them under another name
+        # the next run resumes from what collect keeps: every run's results, but a run that didn't carry the latest
+        # ones (resume: none or a run id; a run of every mutant still runs 30 a shard) keeps them under another name
         self.assertIn("-n mutants-results ", text)
         name = search(r"^          name: (.*mutants-results.*)$", text, re.M).group(1)
         self.assertEqual(
-            name,
-            "${{ (inputs.only || inputs.since || inputs.limit) && (inputs.resume || 'latest') != 'latest'"
-            " && 'mutants-results-partial' || 'mutants-results' }}",
+            name, "${{ (inputs.resume || 'latest') != 'latest' && 'mutants-results-partial' || 'mutants-results' }}"
+        )
+        self.assertIn(
+            "# Such a run with `resume` other than `latest` keeps its results as mutants-results-partial", text
         )
         # the suites' order starts from the newest run's stats, whatever resume says: a run that starts its results
         # afresh still knows which suites catch most per second
