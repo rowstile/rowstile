@@ -453,6 +453,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `toBeRefused` and `toBeNotFound` were untyped.
 - `electricShape` (`@rowstile/client`, a preview) finds no filter for a principal type named like a member every
   object has (`constructor`): it answers 403, as for any type the shape doesn't sync.
+- `@rowstile/drizzle`'s `ids(type, perm, keyType)` takes a type's name and nothing else: one word, or one of
+  Postgres's names of several words (`double precision`, `timestamp(3) with time zone`). Before, it took any words
+  with spaces between them, and refused `timestamp(3) with time zone`.
 
 ### Upgrading
 
