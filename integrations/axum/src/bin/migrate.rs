@@ -17,8 +17,12 @@ async fn main() -> ExitCode {
     if info {
         args.remove(0);
     }
+    let Some(url) = args.first() else {
+        eprintln!("usage: migrate [--info] URL [DIR]");
+        return ExitCode::from(2);
+    };
     let dir = args.get(1).map_or("migrations", String::as_str);
-    match run(&args[0], Path::new(dir), info).await {
+    match run(url, Path::new(dir), info).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{e}");
