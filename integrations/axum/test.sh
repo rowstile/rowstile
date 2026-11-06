@@ -6,10 +6,10 @@
 # Rust runs in a container (rust.Dockerfile, on the Rust image ../images/Dockerfile pins), on the host's network, as
 # the caller; cargo's registry and the builds are outside the checkout (ROWSTILE_AXUM_CACHE,
 # ~/.cache/rowstile/axum by default). Needs docker, python3 and curl.
-# First the SDK: rustfmt, Clippy (every warning an error, on each set of its features), its examples, and its
-# package (cargo package builds it as crates.io would), installed from the package: the app builds on it. Then
-# check 11: a fresh database, migrated by sqlx's migrator (rowstile's policy is one of the migrations), the
-# policy's tests, then sqlx's own list of migrations, which must show each one installed, as its file is. The
+# First the SDK: rustfmt, Clippy (every warning an error, with all its features, none, and each one alone), its
+# examples, and its package (cargo package builds it as crates.io would), installed from the package: the app builds
+# on it. Then check 11: a fresh database, migrated by sqlx's migrator (rowstile's policy is one of the migrations),
+# the policy's tests, then sqlx's own list of migrations, which must show each one installed, as its file is. The
 # server's half of check 13. Then the other checks (cargo test, its two test binaries one after the other, each on
 # its own copy of the migrated test database), measured by cargo-llvm-cov, and checks 9 and 14, which compile Rust
 # (tests/compile.sh).
@@ -49,11 +49,13 @@ rust_run() {
 }
 SDK=$ROOT/sdk/rust
 rc=0
-# the SDK's own checks: its layout, Clippy on each set of its features (pedantic, every warning an error), the
-# examples in its documentation; the app's layout and Clippy
+# the SDK's own checks: its layout, Clippy (pedantic, every warning an error) with all its features, none, and each
+# one alone (an app may take any of them alone: none may lean on what another brings), the examples in its
+# documentation; the app's layout and Clippy
 rust_run -C "$SDK" bash -c 'cargo fmt --check && cargo clippy --locked --all-targets --all-features -- -D warnings &&
-  cargo clippy --locked --no-default-features -- -D warnings &&
-  cargo clippy --locked --no-default-features --features sqlx -- -D warnings &&
+  for features in "" tokio-postgres sqlx axum testing; do
+    cargo clippy --locked --no-default-features --features "$features" -- -D warnings || exit 1
+  done &&
   cargo test --locked --doc --all-features && cd "$0" && cargo fmt --check &&
   cargo clippy --locked --all-targets -- -D warnings' "$HERE" >"$T/lint.log" 2>&1 &&
   echo "ok    rustfmt and Clippy find nothing in the SDK and the app, and the SDK's examples compile" ||
