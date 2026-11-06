@@ -474,7 +474,11 @@ got=$(PSQL -c "SET ROLE app_user" -c "INSERT INTO app.files (folder_id, name) VA
 
 echo "-- who may sign in whom"
 expect "the key is out of the app role's reach" "42501: permission denied for table settings" -c "SELECT value FROM authz.settings WHERE key = 'session_key'"
-expect "... and so is the signing" "42501: permission denied for schema authz_int" -c "SELECT authz_int.session_sig()"
+# (the owner may call it: the schema refuses the app role before the name is looked up, so a name that is gone would
+# be refused alike)
+got=$(PSQL -c "SELECT authz_int.session_sig() IS NOT NULL")
+if [ "$got" = t ]; then expect "... and so is the signing" "42501: permission denied for schema authz_int" -c "SELECT authz_int.session_sig()"
+else bad "... and so is the signing" "the owner can't call authz_int.session_sig() either: $got"; fi
 ROLE=$OTHER expect "a role that isn't the app role can't act_as" "42501: permission denied for function act_as" -c "$(ACT "'user', '1'")"
 expect "act_as names only types that sign in" "P0001: folder is not a type that signs in" -c "$(ACT "'folder', '1'")"
 
