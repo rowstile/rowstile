@@ -1,7 +1,7 @@
 #!/bin/bash
 # package.sh OUT: the Composer package as it is published: composer.json validated, sdk/php archived as Composer
 # archives a package (OUT/rowstile.zip: what a release's tag serves), that archive unpacked and installed by Composer
-# into an empty project (OUT/app), copied in rather than linked, then loaded from there (test/installed.php says what
+# into an empty project (OUT/app), copied in rather than linked, then loaded from there (tests/installed.php says what
 # it checks). test.sh runs it, in the PHP image.
 set -eu
 out=$1

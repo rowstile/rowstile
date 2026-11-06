@@ -25,6 +25,13 @@ IMAGE=rowstile-laravel
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker build -q -t "$IMAGE" --build-arg "PHP_IMAGE=$PHP_IMAGE" --build-arg "COMPOSER_IMAGE=$COMPOSER_IMAGE" -f php.Dockerfile . >/dev/null || exit 1
 LOG=$(mktemp -d)
+cleanup() {
+  rm -rf "$LOG"
+  [ -n "${KEEP:-}" ] && return
+  [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"
+  docker rm -f -v "$NAME" >/dev/null 2>&1
+}
+trap cleanup EXIT
 CACHE=${ROWSTILE_COMPOSER_CACHE:-$HOME/.cache/rowstile/composer}
 # what the checks run of the SDK, kept where CONFORMANCE_COVERAGE says (a folder of its own if not given)
 export CONFORMANCE_COVERAGE=${CONFORMANCE_COVERAGE:-$LOG/coverage}
@@ -52,12 +59,6 @@ php_run vendor/bin/phpstan analyse --no-progress --memory-limit=1G >"$LOG/phpsta
   { cat "$LOG/phpstan.log"; echo "FAIL  phpstan analyse"; exit 1; }
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-cleanup() {
-  [ -n "${KEEP:-}" ] && return
-  [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"
-  docker rm -f -v "$NAME" >/dev/null 2>&1
-}
-trap cleanup EXIT
 for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
 sleep 2
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per worker)
