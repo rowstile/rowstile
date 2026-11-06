@@ -543,6 +543,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Ruby SDK's `Rowstile.problem_of` works in an app without Rails. Before, it was defined only with the Railtie.
 - The Ruby SDK no longer keeps a connection leased after a refused update or destroy, outside Rails' executor (a
   thread of the app's own). `Rowstile.expect` takes `connection: Note` (a model) as well as a connection.
+- The PHP SDK reads rowstile's code from the HINT the server wrote, never from text in the message or a DETAIL that
+  looks like a HINT line (a value echoed back with a line break in it), and only where the HINT ends with it.
+  Before, such a value could give an error another code, and another status.
 
 ### Upgrading
 

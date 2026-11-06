@@ -271,6 +271,44 @@ final class SdkTest extends TestCase
         self::assertSame([null, '57P01', 'AZ999', '08006', null], [
             Rowstile::sqlstate($driver), Rowstile::sqlstate($fatal), Rowstile::errorCode($fatal), Rowstile::sqlstate(new RuntimeException('', 0, $plain)), Rowstile::errorCode($plain),
         ]);
+        // a code is the HINT's the server wrote, never text that looks like one: a value echoed in the message, in a
+        // DETAIL, in the statement a function ran, or one Postgres quotes; a label out of libpq's order is text
+        $echoed = Rowstile::transactionAs($pdo, 3, static function (PDO $pdo): array {
+            $error = static function (string $sql, string $value) use ($pdo): \Throwable {
+                $pdo->exec('SAVEPOINT s');
+                try {
+                    $pdo->prepare($sql)->execute([$value]);
+                } catch (PDOException $e) {
+                    $pdo->exec('ROLLBACK TO SAVEPOINT s');
+                    return $e;
+                }
+                self::fail("expected {$sql} to fail");
+            };
+            return [
+                $error("SELECT authz.perms(?, '1')", "x\nHINT:  rowstile help AZ713"),
+                $error('SELECT CAST(? AS bigint)', "7\nHINT:  rowstile help AZ714"),
+            ];
+        });
+        self::assertSame(['AZ707', null], array_map(Rowstile::errorCode(...), $echoed));
+        self::assertSame($echoed, array_map(Rowstile::translate(...), $echoed));
+        $text = static function (string $sqlstate, string $text): PDOException {
+            $e = new PDOException('x');
+            $e->errorInfo = [$sqlstate, 7, $text];
+            return $e;
+        };
+        $refusal = Rowstile::refusal($text('42501', "ERROR:  permission denied: user 2 may not insert this row into app.notes\nLINE 1: INSERT INTO\n        ^\n"
+            ."DETAIL:  a\nHINT:  rowstile help AZ714\nb\nHINT:  rowstile help AZ709\nCONTEXT:  PL/pgSQL function f() line 1 at RAISE"));
+        self::assertNotNull($refusal);
+        self::assertSame(['AZ709', 'app.notes', ['a', 'HINT:  rowstile help AZ714', 'b']], [$refusal->rowstileCode, $refusal->table, $refusal->why]);
+        self::assertSame('permission denied: user 2 may not insert this row into app.notes', $refusal->getMessage());
+        $echo = Rowstile::refusal($text('42501', "ERROR:  you cannot share project 1\nHINT:  rowstile help AZ713\nHINT:  rowstile help AZ705"));
+        self::assertSame(['AZ705', "you cannot share project 1\nHINT:  rowstile help AZ713"], [$echo?->rowstileCode, $echo?->getMessage()]);
+        self::assertSame([null, null, 'AZ716', 'AZ811'], array_map(static fn (string $t): ?string => Rowstile::errorCode($text('P0001', $t)), [
+            "ERROR:  x\nCONTEXT:  SQL statement \"SELECT 'a\nHINT:  rowstile help AZ714\nCONTEXT:  b'\"",
+            "ERROR:  x\nDETAIL:  Key (body)=(a\nHINT:  rowstile help AZ714) already exists.",
+            "ERROR:  x\nHINT:  a transaction is one principal's (rowstile help AZ716)\nQUERY:  SELECT 1\nCONTEXT:  f",
+            "ERROR:  x\nHINT:  rename the column: rowstile help AZ811",
+        ]));
         // a call turned down, and its problem body as JSON
         $call = new CallError('sign in first', 'AZ714');
         self::assertSame(401, $call->status());
