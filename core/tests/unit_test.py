@@ -18892,14 +18892,30 @@ class Delivery(unittest.TestCase):
             "build.mjs",
             "uv build",
             "uv sync",
-            "vsce@\\S+ package",
+            "vsce package",
         )
+        # but the publishing tools, from their lock file, with no install script run: vsce and ovsx, which take the
+        # vscode job's tokens (never npx, which would take the newest of each dependency's range)
+        tools = "      - run: npm ci --prefix editor/publish --ignore-scripts --no-audit --no-fund\n"
+        self.assertIn(tools, jobs["vscode"])
         for name, job in jobs.items():
             if re.search(r"(?m)^    (permissions: .*write|environment: )", job):
+                job = job.replace(tools, "") if name == "vscode" else job
                 self.assertEqual([b for b in builds if re.search(rf"{b}\b", job)], [], name)
+            self.assertNotRegex(job, r"npx [^\n]*(vsce|ovsx)", name)
         # each file once: the wheel and the sdist, the extension, the npm packages (the launcher among them)
         text = "".join(jobs.values())
-        self.assertEqual([len(re.findall(b, text)) for b in ("uv build", "vsce@\\S+ package", "npm pack")], [1, 1, 1])
+        self.assertEqual([len(re.findall(b, text)) for b in ("uv build", "vsce package", "npm pack")], [1, 1, 1])
+        with open(os.path.join(self.REPO, "editor", "publish", "package.json"), encoding="utf-8") as fh:
+            pinned = json.load(fh)["devDependencies"]
+        self.assertEqual(sorted(pinned), ["@vscode/vsce", "ovsx"])
+        for tool, version in pinned.items():
+            self.assertRegex(version, r"^\d+\.\d+\.\d+$", tool)
+        # the README's way to package it by hand takes the same vsce
+        with open(os.path.join(self.REPO, "editor", "package.json"), encoding="utf-8") as fh:
+            self.assertEqual(
+                json.load(fh)["scripts"]["package"], f"npx --yes @vscode/vsce@{pinned['@vscode/vsce']} package"
+            )
         for name, built in (("pypi", "release-files"), ("vscode", "release-files"), ("npm", "npm-files")):
             self.assertIn(f"    needs: [check, {built}]\n", jobs[name], name)
             self.assertIn(f"        with: {{name: {built}, ", jobs[name], name)

@@ -1,0 +1,9 @@
+{
+  "name": "rowstile-vscode-publish",
+  "private": true,
+  "description": "The tools the release packages and publishes the VS Code extension with (.github/workflows/release.yml): vsce for the Marketplace, ovsx for Open VSX, each at the version named here and its dependencies at what package-lock.json holds, installed with npm ci --ignore-scripts",
+  "devDependencies": {
+    "@vscode/vsce": "3.9.2",
+    "ovsx": "1.2.0"
+  }
+}

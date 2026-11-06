@@ -290,8 +290,10 @@ jobs:
       # uv writes a .gitignore into the folder it builds into: not a file to download (0.1.0-alpha.1 had it)
       - run: uv build --out-dir dist sdk/python && rm -f dist/.gitignore && uvx twine@7.0.0 check --strict dist/*
       # the extension starts the language server with vscode-languageclient: the .vsix carries it (package.json's
-      # files lists node_modules; vsce keeps the production dependencies only)
-      - run: cd editor && npm ci --omit=dev --no-audit --no-fund && npx --yes @vscode/vsce@3.9.2 package --out ../dist/
+      # files lists node_modules; vsce keeps the production dependencies only). vsce is the one editor/publish's
+      # lock file holds, as the vscode job's
+      - run: npm ci --prefix editor/publish --ignore-scripts --no-audit --no-fund
+      - run: cd editor && npm ci --omit=dev --no-audit --no-fund && publish/node_modules/.bin/vsce package --out ../dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with: {name: release-files, path: dist/}
       # the notes github-release takes, written in a dry run too (from main, a -dev version: what Unreleased holds)
@@ -355,6 +357,9 @@ jobs:
         with: {node-version: "24"}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
         with: {name: release-files, path: dist/}
+      # vsce and ovsx, each at the version editor/publish/package.json names and their dependencies at what its lock
+      # file holds (checked by their hashes), with no install script run: the tokens are given to them alone
+      - run: npm ci --prefix editor/publish --ignore-scripts --no-audit --no-fund
       # vsce names it after the extension and its version
       - id: vsix
         run: |
@@ -372,21 +377,21 @@ jobs:
           if [ -z "$VSCE_PAT" ]; then
             echo "::notice::VSCE_PAT isn't set (environment vscode): not published on the VS Code Marketplace"
           # vsce show prints "undefined" for an extension the Marketplace doesn't have
-          elif npx --yes @vscode/vsce@3.9.2 show rowstile.rowstile --json | node -e '
+          elif editor/publish/node_modules/.bin/vsce show rowstile.rowstile --json | node -e '
             let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
               let versions = []; try { versions = JSON.parse(s).versions.map((v) => v.version) } catch {}
               process.exit(versions.includes(process.argv[1]) ? 0 : 1)
             })' "$EXTENSION"; then
             echo "the Marketplace has rowstile.rowstile $EXTENSION already"
           else
-            npx --yes @vscode/vsce@3.9.2 publish --packagePath "$VSIX"
+            editor/publish/node_modules/.bin/vsce publish --packagePath "$VSIX"
           fi
           if [ -z "$OVSX_PAT" ]; then
             echo "::notice::OVSX_PAT isn't set (environment vscode): not published on Open VSX"
           elif curl -sf "https://open-vsx.org/api/rowstile/rowstile/$EXTENSION" > /dev/null; then
             echo "Open VSX has rowstile.rowstile $EXTENSION already"
           else
-            npx --yes ovsx@1.2.0 publish "$VSIX"
+            editor/publish/node_modules/.bin/ovsx publish "$VSIX"
           fi
 
   # The MCP server's entry in the official registry (registry.modelcontextprotocol.io): server.json, which names
