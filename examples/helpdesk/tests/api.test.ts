@@ -132,6 +132,9 @@ describe("admins", () => {
     expect(subjects((await ann.get("/api/tickets")).json)).toEqual(["Password reset never arrives"]);
     const write = await ann.send("POST", `/api/tickets/${tickets.password}/comments`, { body: "as Cy" });
     expect(write.status).toBe(403);
+    // copying someone in, or taking them off, is a write too
+    expect((await ann.send("POST", `/api/tickets/${tickets.password}/cc`, { user: ids.peter })).status).toBe(403);
+    expect((await ann.send("DELETE", `/api/tickets/${tickets.password}/cc`, { user: ids.milton })).status).toBe(403);
     expect((await ann.send("POST", "/api/view-as", { user: null })).status).toBe(204);
     expect((await ann.get("/api/tickets")).json).toHaveLength(3);
     // not someone of another workspace, and not as an agent
