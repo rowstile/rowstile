@@ -25,6 +25,7 @@ module Rowstile
     end
 
     # The block must be refused by the policy (by the rule for command, on table, when given); returns the Refused.
+    # command is the rule's whole word: select, insert, update or delete.
     def assert_refused(command: nil, table: nil)
       yield
     rescue Refused, ActiveRecord::StatementInvalid => e
@@ -32,7 +33,7 @@ module Rowstile
       raise e if refused.nil?
 
       if command
-        assert refused.command.to_s.start_with?(command),
+        assert refused.command == command,
                "expected the #{command} rule to refuse it, but: #{refused.command}: #{refused.message}"
       end
       assert_equal table, refused.table if table

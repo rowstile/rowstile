@@ -411,6 +411,10 @@ class SdkTest < ActionDispatch::IntegrationTest
         assert_refused(command: "delete") { Note.find(1).update!(body: "x") }
       end
       assert_includes wrong.message, "expected the delete rule to refuse it, but: update"
+      # the rule's whole word: the beginning of one is another rule
+      short = assert_raises(Minitest::Assertion) { assert_refused(command: "up") { Note.find(1).update!(body: "x") } }
+      assert_includes short.message, "expected the up rule to refuse it, but: update"
+      assert_raises(Minitest::Assertion) { assert_refused(command: "") { Note.find(1).update!(body: "x") } }
       none = assert_raises(Minitest::Assertion) { assert_refused { Note.find(4).update!(body: "fine") } }
       assert_includes none.message, "expected a refusal"
       refused = assert_refused(table: "app.notes") do # the driver's error for an insert: a refusal too

@@ -75,6 +75,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   lists what is ([.NET](sdk/dotnet/README.md)).
 - The Ruby SDK needs Active Record 8.1 (`~> 8.1`), the version its suite runs: it hooks into parts of Active Record
   that change between minor releases, and it was never run on 8.0.
+- The Ruby SDK's `assert_refused(command:)` asks for the rule's whole word (`select`, `insert`, `update` or
+  `delete`), as the Kotlin and Elixir SDKs do. Before, the beginning of one passed (`"up"`, or `""`).
 
 ### Removed
 
