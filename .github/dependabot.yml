@@ -18,7 +18,7 @@ updates:
 
   - package-ecosystem: npm
     directories: ["/", "/playground", "/site", "/examples/filemanager/frontend", "/examples/messenger/frontend",
-                  "/editor", "/editor/tree-sitter-authz",
+                  "/editor", "/editor/publish", "/editor/tree-sitter-authz",
                   "/sdk/typescript/vitest/types-test/vitest-4", "/sdk/typescript/vitest/types-test/vitest-5"]
     schedule: {interval: monthly}
     cooldown: {default-days: 7}
