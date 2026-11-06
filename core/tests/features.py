@@ -344,7 +344,7 @@ FEATURES: list[Feature] = [
                 "a bot's keys go when its id changes, inside its partition or to another, and with its row",
             ),
         ),
-        (T("around.py", "def api_key("), T(DIFF, "def check_scoped(")),
+        (T("around.py", "def api_key("),),
     ),
     Feature(
         "api.sync",
@@ -597,6 +597,7 @@ FEATURES: list[Feature] = [
             T("governance.sh", "the feed keeps 7 days by default: older entries are trimmed"),
             Check(NEXT_SDK, "one connection listens for every subscriber, until the last one leaves"),
         ),
+        (T(DIFF, "which the feed did not announce"),),
     ),
     Feature(
         "api.audit",
