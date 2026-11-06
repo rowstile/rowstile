@@ -11323,13 +11323,16 @@ class Invariance(unittest.TestCase):
 
     def test_sql_is_read_as_what_it_says_but_for_order(self) -> None:
         """Only what may come in any order is: an `or`'s and an `and`'s operands, a simple CASE's branches, the items
-        of an ARRAY, an IN and a VALUES list, statements but for what one sets and another reads, an explanation's
-        words. An `and` and an `or` that trade places, an operator's operands swapped or a NOT moved are another
-        SQL, though their words are the same."""
+        of an ARRAY, an IN and a VALUES list, statements but for what one sets and another reads (and in a
+        function's body, what one does: a write, a call, an error, a return of a value), an explanation's words. An
+        `and` and an `or` that trade places, an operator's operands swapped, a NOT moved or a body's write moved are
+        another SQL, though their words are the same."""
         import invariance
 
         def same(a: str, b: str) -> bool:
             return invariance.sql_form(a) == invariance.sql_form(b)
+
+        body = "CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN {} END $f$"
 
         for a, b in [
             ("SELECT 1 WHERE (x.a AND x.b) OR x.c", "SELECT 1 WHERE (x.a OR x.b) AND x.c"),
@@ -11340,6 +11343,27 @@ class Invariance(unittest.TestCase):
             ("BEGIN v := 1; RETURN v; END", "BEGIN RETURN v; v := 1; END"),
             ("BEGIN m := m || 'a'; RAISE '%', m; END", "BEGIN RAISE '%', m; m := m || 'a'; END"),
             ("RETURN NEXT 'p = a or (b and c)'", "RETURN NEXT 'p = (a or b) and c'"),
+            (
+                body.format("DELETE FROM t; INSERT INTO t VALUES (1);"),
+                body.format("INSERT INTO t VALUES (1); DELETE FROM t;"),
+            ),
+            (body.format("UPDATE t SET a = 1; RETURN NEW;"), body.format("RETURN NEW; UPDATE t SET a = 1;")),
+            (
+                body.format("PERFORM authz_int.check_writable(); DELETE FROM t;"),
+                body.format("DELETE FROM t; PERFORM authz_int.check_writable();"),
+            ),
+            (
+                body.format("IF a THEN RETURN NULL; END IF; IF b THEN RETURN NEW; END IF;"),
+                body.format("IF b THEN RETURN NEW; END IF; IF a THEN RETURN NULL; END IF;"),
+            ),
+            (
+                body.format("v := 1; DELETE FROM t WHERE x = v; v := 2; DELETE FROM u WHERE x = v;"),
+                body.format("v := 2; DELETE FROM u WHERE x = v; v := 1; DELETE FROM t WHERE x = v;"),
+            ),
+            (
+                "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC DELETE FROM t; INSERT INTO t VALUES (1); END",
+                "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC INSERT INTO t VALUES (1); DELETE FROM t; END",
+            ),
         ]:
             self.assertFalse(same(a, b), (a, b))
             self.assertEqual(sorted(invariance.TOKEN.findall(a)), sorted(invariance.TOKEN.findall(b)), (a, b))
@@ -11373,8 +11397,44 @@ class Invariance(unittest.TestCase):
                 "FOR a IN SELECT 1 UNION ALL SELECT 2 LOOP RETURN NEXT a; END LOOP",
                 "FOR a IN SELECT 2 UNION ALL SELECT 1 LOOP RETURN NEXT a; END LOOP",
             ),
+            # in a body: inserts next to each other (an audit row per column), the rows so far returned where one of
+            # a relation's sources holds (an explanation), a PERFORM of no row (a condition checked as it is made)
+            (
+                body.format("INSERT INTO a VALUES (1); INSERT INTO a VALUES (2);"),
+                body.format("INSERT INTO a VALUES (2); INSERT INTO a VALUES (1);"),
+            ),
+            (
+                body.format(
+                    "IF a THEN RETURN NEXT 'a'; RETURN; END IF; IF b THEN RETURN NEXT 'b'; RETURN; END IF; RETURN NEXT 'no';"
+                ),
+                body.format(
+                    "IF b THEN RETURN NEXT 'b'; RETURN; END IF; IF a THEN RETURN NEXT 'a'; RETURN; END IF; RETURN NEXT 'no';"
+                ),
+            ),
+            (
+                body.format("PERFORM 1 FROM t WHERE a LIMIT 0; PERFORM 1 FROM t WHERE b LIMIT 0;"),
+                body.format("PERFORM 1 FROM t WHERE b LIMIT 0; PERFORM 1 FROM t WHERE a LIMIT 0;"),
+            ),
+            # a DO runs once, as the statements around it: what it does comes in the policy's order
+            (
+                "DO $d$ BEGIN DELETE FROM t; INSERT INTO u VALUES (1); END $d$",
+                "DO $d$ BEGIN INSERT INTO u VALUES (1); DELETE FROM t; END $d$",
+            ),
         ]:
             self.assertTrue(same(a, b), (a, b))
+
+    def test_a_trees_number_alone_is_blurred(self) -> None:
+        # a second tree of the same types and relations is numbered in the order the compiler meets it: the number
+        # alone, so its objects stay apart; in a name its number may make longer than Postgres's 63 bytes, which is
+        # then shortened with a hash, what follows it too
+        import invariance
+
+        u = invariance.unordered
+        self.assertEqual(u('authz_int."t1__parent__tree2_refresh"'), u('authz_int."t1__parent__tree_refresh"'))
+        self.assertNotEqual(u('authz_int."t1__parent__tree_refresh"'), u('authz_int."t1__parent__tree_rebuild"'))
+        long = "authz_folder_project__host_inside_parent__tree{}_rows_project_ins"
+        self.assertEqual(u(long.format("")), u(long.format("2")))
+        self.assertEqual(u(long.format("2")), u("authz_folder_project__host_inside_parent__tree2_rows_fo_605054e5"))
 
     def test_an_or_and_an_and_that_trade_places_are_another_sql(self) -> None:
         """A wrong rewrite planted in the compiled policy: in one object, the first `or` and the first `and` swapped."""
