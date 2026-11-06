@@ -160,7 +160,8 @@ export function electricShape(shape: ElectricShape, options: ElectricShapeOption
       return problem(403, "Forbidden", "refused", `a session limited by scopes, or viewing as someone, can't sync ${table}: ` +
         "the sync index holds what each principal may read, without scopes", "AZ704", vary);
     }
-    const where = shape.where[who.type];
+    // (its own filters only: a type named like an object's member, constructor, has none)
+    const where = Object.hasOwn(shape.where, who.type) ? shape.where[who.type] : undefined;
     if (where === undefined) return problem(403, "Forbidden", "refused", `${who.type} doesn't sync ${table}`, "AZ704", vary);
     upstream.searchParams.set("table", table);
     upstream.searchParams.set("where", where);

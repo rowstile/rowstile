@@ -58,6 +58,12 @@ test("E15: viewing as someone is a session limited too: refused", async () => {
     signedIn: async () => ({ type: "bot", id: "7", limited: false }) });
   const bot = await bots(request(""));
   expect([bot.status, ((await bot.json()) as { detail: string }).detail]).toEqual([403, "bot doesn't sync app.files"]);
+  // ... a type named like a member every object has, too
+  const odd = electricShape(shapes["app.files"], { url: "http://electric/v1/shape", vary: ["cookie"], fetch: electric.fetch,
+    signedIn: async () => ({ type: "constructor", id: "7", limited: false }) });
+  const constructed = await odd(request(""));
+  expect([constructed.status, ((await constructed.json()) as { detail: string }).detail])
+    .toEqual([403, "constructor doesn't sync app.files"]);
   expect(electric.asked).toEqual([]);
 });
 
