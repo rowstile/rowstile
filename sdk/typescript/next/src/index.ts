@@ -96,16 +96,21 @@ export interface RoutesOptions {
   maxStreams?: number;
 }
 
+const POSTS = new Set(["perms", "share", "unshare", "request"]);
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+/** 400, for what the page sent that can't be read: a problem body, as for the database's AZ710. */
+const badRequest = (detail: string) => new Response(JSON.stringify({ type: "https://rowstile.dev/problems/bad-argument",
+  title: "Bad Request", status: 400, detail }), { status: 400, headers: { "content-type": "application/problem+json" } });
 
 /** The routes @rowstile/react calls, for a catch-all route (app/api/authz/[...authz]/route.ts):
  *  GET perms?type=folder&ids=1&ids=2 (POST perms {type, ids} for a long list), GET shares?type=folder&id=3,
  *  GET events (server-sent events), POST share, POST unshare, POST request. Each answers as the signed-in
  *  user, and only what they may see. The POST routes take application/json only: a form on another site
- *  can't send that without the browser asking this one first. They answer as route() does: a share with
- *  someone who doesn't exist 404, a request for access without a reason 400, and one from someone not signed in
- *  401, with the database's words. */
+ *  can't send that without the browser asking this one first. A request that names no type, or a body that
+ *  isn't a JSON object, is 400 before anything is asked. They answer as route() does: a share with someone who
+ *  doesn't exist 404, a request for access without a reason 400, and one from someone not signed in 401, with
+ *  the database's words. */
 export function authzRoutes(options: RoutesOptions) {
   const { calls } = options;
   const streams = { open: 0, most: options.maxStreams ?? 1000 };
@@ -113,7 +118,9 @@ export function authzRoutes(options: RoutesOptions) {
   const GET = route(async (req: Request) => {
     const url = new URL(req.url);
     const type = url.searchParams.get("type") ?? "";
-    switch (last(req)) {
+    const name = last(req);
+    if (!type && (name === "perms" || name === "shares")) return badRequest("say which type: ?type=...");
+    switch (name) {
       case "perms": {
         const ids = url.searchParams.getAll("ids");
         return json(await calls.permsOf(type as never, ids));
@@ -130,9 +137,15 @@ export function authzRoutes(options: RoutesOptions) {
     if (!/^application\/json\b/i.test(req.headers.get("content-type") ?? "")) {
       return json({ title: "Unsupported Media Type", status: 415, detail: "send application/json" }, 415);
     }
-    const body: unknown = await req.json();
+    const name = last(req);
+    if (!POSTS.has(name)) return json({ title: "Not Found", status: 404 }, 404);
+    const body: unknown = await req.json().catch(() => undefined);
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return badRequest('the body is a JSON object: {"type": ..., ...}');
+    }
     const b = body as Record<string, string>;
-    switch (last(req)) {
+    if (typeof b.type !== "string" || !b.type) return badRequest('say which type: {"type": ..., ...}');
+    switch (name) {
       case "perms": {
         const ids = (body as { ids?: unknown }).ids;
         return json(await calls.permsOf(b.type as never, Array.isArray(ids) ? ids.map(String) : []));
@@ -143,10 +156,8 @@ export function authzRoutes(options: RoutesOptions) {
       case "unshare":
         await calls.unshare(b.type as never, b.id, b.relation as never, b.subjectType, b.subjectId, b.subjectRelation ?? "");
         return json({ ok: true });
-      case "request":
+      default:                                     // request
         return json({ id: await calls.requestAccess(b.type as never, b.id, b.relation as never, b.reason ?? "") });
-      default:
-        return json({ title: "Not Found", status: 404 }, 404);
     }
   });
   return { GET, POST };

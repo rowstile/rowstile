@@ -220,7 +220,6 @@ describe("authzRoutes, for @rowstile/react", () => {
 
   test("GET: a list's permissions, the shares, and nothing else", async () => {
     expect(await (await get("3", "perms?type=project&ids=1&ids=3")).json()).toEqual({ "1": ["edit", "view"], "3": ["view"] });
-    expect(await (await get("3", "perms")).json()).toEqual({});                       // no type, no ids
     expect(await (await get("1", "shares?type=project&id=1")).json()).toEqual([]);
     const noId = await get("1", "shares?type=project");
     expect([noId.status, (await noId.json()).code]).toEqual([403, "AZ705"]);      // a share of no object: none to see
@@ -267,6 +266,25 @@ describe("authzRoutes, for @rowstile/react", () => {
     const noType = await post("1", "perms", { type: "nosuch", ids: [1] }).catch((e: unknown) => e);
     expect([noType instanceof Response, errorCode(noType)]).toEqual([false, "AZ707"]);
     expect((await post("1", "nothing", {})).status).toBe(404);
+  });
+
+  // what the page sends that can't be read, or names no type: 400, before anything is asked of the database
+  test("a request without a type, or a body that isn't a JSON object: 400", async () => {
+    const send = (path: string, body: string) => actingAs("1", () => POST(new Request(`http://app.test/api/authz/${path}`,
+      { method: "POST", body, headers: { "content-type": "application/json" } })));
+    const answers = [
+      await get("3", "perms"), await get("3", "perms?ids=1"), await get("1", "shares?id=1"),
+      await send("perms", "{"), await send("share", "null"), await send("perms", "[1]"),
+      await post("1", "perms", { ids: [1] }), await post("1", "share", { type: 5, id: "1", relation: "viewer" }),
+      await post("1", "request", { type: "", id: "1", relation: "viewer", reason: "the review" }),
+    ];
+    const bad = (detail: string) => [400, "application/problem+json",
+      { type: "https://rowstile.dev/problems/bad-argument", title: "Bad Request", status: 400, detail }];
+    expect(await Promise.all(answers.map(async (r) => [r.status, r.headers.get("content-type"), await r.json()]))).toEqual([
+      ...Array(3).fill(bad("say which type: ?type=...")),
+      ...Array(3).fill(bad("the body is a JSON object: {\"type\": ..., ...}")),
+      ...Array(3).fill(bad("say which type: {\"type\": ..., ...}")),
+    ]);
   });
 
   test("events: told of each change, pinged, and listening ends once when the page goes", async () => {

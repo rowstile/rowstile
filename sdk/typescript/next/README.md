@@ -62,7 +62,8 @@ export async function register() {
   signed-in read inside `"use cache"` or `unstable_cache` fails instead of being cached for the next user.
   Reads as nobody may be cached.
 - `authzRoutes({ calls, changes })` in `app/api/authz/[...authz]/route.ts` serves `@rowstile/react`:
-  permissions for a list, shares, access requests, live updates.
+  permissions for a list, shares, access requests, live updates. A request that names no type, or a body
+  that isn't a JSON object, is 400.
 
 ## More
 

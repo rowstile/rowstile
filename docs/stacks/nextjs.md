@@ -220,7 +220,7 @@ Run that work after it, or in a transaction of its own on another connection. Th
 ## Buttons, sharing and live updates (React)
 
 `authzRoutes()` is what the React kit calls: permissions for a list, shares, access requests, and live updates
-from the change feed.
+from the change feed. A request that names no type, or a body that isn't a JSON object, is 400.
 
 ```ts
 // app/api/authz/[...authz]/route.ts
