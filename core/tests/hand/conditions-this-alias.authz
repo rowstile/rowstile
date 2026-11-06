@@ -72,7 +72,7 @@ test "this. names the row, whatever the condition's subquery calls its table"
   as user 1 sees 0 {SELECT x FROM authz.list('file', 'read') x WHERE x IN ('14', '15')}
   as user 1 sees 0 {SELECT x FROM authz.list('file', 'reach') x WHERE x IN ('14', '15')}
   as user 2 sees 1 {SELECT FROM authz.explain('folder', 4, 'read', '1') e WHERE e LIKE '    no   {not exists (select 1 from app.marks r %'}
-  as user 1 sees 0 {SELECT FROM authz.explain('folder', 3, 'view') WITH ORDINALITY x(e, n) WHERE n = 1 AND e LIKE 'yes%'}
+  as user 1 sees 1 {SELECT FROM authz.explain('folder', 3, 'view') WITH ORDINALITY x(e, n) WHERE n = 1 AND e LIKE 'no%'}
   user 1 can open file 11
   user 1 cannot open file 13
   as user 1 sees 1 {SELECT FROM app.files WHERE id IN (11, 13)}

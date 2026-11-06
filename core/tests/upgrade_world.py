@@ -236,20 +236,20 @@ def every_check(checker: Checker) -> dict[tuple[str, ...], bool]:
     return out
 
 
-def sampled(value: Answer) -> dict[str, Answer]:
-    """An answer about a sample of the rows (authz.can on TABLESAMPLE'd ids: [[id, answer], ...]), by id."""
+def by_id(value: Answer) -> dict[str, Answer]:
+    """An answer of authz.can on every row ([[id, answer], ...]) by id: each database lists its rows in its own
+    order."""
     return {str(x[0]): x[1] for x in value} if isinstance(value, list) else {}
 
 
 def differences(a: Snapshot, b: Snapshot) -> list[str]:
-    """Each of difftest's answers that differs between two snapshots; those about a sample of the rows (which differs
-    from one snapshot to the next) on the rows both asked about."""
+    """Each of difftest's answers that differs between two snapshots; those of authz.can on every row compared by
+    id, whole (a row one database answers for and the other doesn't is a difference)."""
     out: list[str] = []
     for key in sorted(set(a) | set(b), key=repr):
         x, y = a.get(key), b.get(key)
         if "can" in key[:2] and x is not None and y is not None:
-            sx, sy = sampled(x), sampled(y)
-            x, y = ({i: s[i] for i in set(sx) & set(sy)} for s in (sx, sy))
+            x, y = by_id(x), by_id(y)
         if x != y:
             out.append(f"{key}: {x!r:.160}, a new database: {y!r:.160}")
     return out
