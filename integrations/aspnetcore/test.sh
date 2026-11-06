@@ -16,6 +16,10 @@ NAME=rowstile-conformance-aspnetcore
 PORT=${CONFORMANCE_PORT:-25510}
 export PYTHON=${PYTHON:-python3}
 export CONFORMANCE_HERE=$PWD DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+# no build server outlives the run (MSBuild's nodes and server, the C# compiler's): one would keep the files the run
+# holds open, a lock the caller took around it too, and the next run would wait on it. The builds the checks start
+# (Check 14's) take these from the environment
+export MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER=1 UseSharedCompilation=false
 command -v dotnet >/dev/null || { echo "FAIL  no dotnet: this suite needs the .NET 10 SDK"; exit 1; }
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker rm -f -v "$NAME" >/dev/null 2>&1
@@ -24,6 +28,7 @@ LOG=$(mktemp -d)
 done_() {
   [ -n "${KEEP:-}" ] || { [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"; docker rm -f -v "$NAME" >/dev/null 2>&1; }
   rm -rf "$LOG"
+  dotnet build-server shutdown >/dev/null 2>&1   # and any a build started all the same
 }
 trap done_ EXIT
 for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
