@@ -17105,6 +17105,34 @@ class FilemanagerTestScript(unittest.TestCase):
         self.assertEqual(run_example_test_script("filemanager", uv=1, keep="1")[:2], (1, [*self.UP]))
 
 
+class ExampleServices(unittest.TestCase):
+    """An example's docker-compose.yml runs its migrations in a service of their own, which ends before the app
+    starts: only that service (and the maintenance jobs', where there is one) holds the admin's URL, never the app,
+    whose image runs the app alone."""
+
+    APPS = ("filemanager",)
+
+    def test_only_the_migrations_hold_the_admins_url(self) -> None:
+        for app in self.APPS:
+            folder = os.path.join(os.path.dirname(ROOT), "examples", app)
+            with open(os.path.join(folder, "docker-compose.yml"), encoding="utf-8") as fh:
+                text = fh.read()
+            services = dict(
+                zip(re.findall(r"(?m)^  ([\w-]+):\n", text), re.split(r"(?m)^  [\w-]+:\n", text)[1:], strict=True)
+            )
+            holding = sorted(name for name, body in services.items() if "_ADMIN_URL:" in body)
+            self.assertEqual([n for n in holding if n not in ("migrate", "maintenance")], [], app)
+            self.assertIn("migrate", holding, app)
+            if "maintenance" in services:  # run by hand or on a schedule, not by `docker compose up`
+                self.assertIn("profiles: [maintenance]", services["maintenance"], app)
+            self.assertRegex(services["migrate"], r'command: \["python", "/\w+/db/migrate\.py"\]', app)
+            self.assertIn("migrate: {condition: service_completed_successfully}", services["app"], app)
+            self.assertRegex(services["app"], r"_DATABASE_URL: postgresql://\w+_app:", app)
+            with open(os.path.join(folder, "backend", "Dockerfile"), encoding="utf-8") as fh:
+                cmd = re.findall(r"(?m)^CMD (.*)$", fh.read())
+            self.assertEqual(cmd, ['["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]'], app)
+
+
 class PublicSurface(unittest.TestCase):
     """examples/public_surface.py, which each example's check_public_surface.py runs: the app uses only rowstile's
     public surface. It reads every text file, matches names as Postgres reads them, and leaves alone only what

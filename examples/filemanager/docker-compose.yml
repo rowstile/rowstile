@@ -2,6 +2,10 @@
 # file contents, and the app.
 #   docker compose up -d --build            # everything; the app on http://localhost:8000
 #   docker compose up -d db storage         # just the services, for running the backend on the host
+#   docker compose run --rm maintenance     # the maintenance jobs, once (run it on a schedule)
+# The migrations run in a service of their own, which ends before the app starts, and the maintenance jobs in
+# another, started by hand: only they hold the database's admin password. The app holds only fm_app's, which
+# row-level security applies to.
 services:
   db:
     build: {context: ../.., dockerfile: core/Dockerfile, args: {PG_MAJOR: "16"}}
@@ -17,14 +21,27 @@ services:
     volumes: [files:/data]
     # the app makes its bucket at start: it waits until RustFS answers, not only until it has started
     healthcheck: {test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9000/health"], interval: 2s, retries: 30}
-  app:
+  migrate:
     build: {context: ../.., dockerfile: examples/filemanager/backend/Dockerfile}
-    depends_on: {db: {condition: service_healthy}, storage: {condition: service_healthy}}
+    command: ["python", "/fm/db/migrate.py"]
+    depends_on: {db: {condition: service_healthy}}
     environment:
       FM_ADMIN_URL: postgresql://postgres:postgres@db:5432/filemanager
       FM_APP_PASSWORD: fm_app
+  app:
+    build: {context: ../.., dockerfile: examples/filemanager/backend/Dockerfile}
+    depends_on: {migrate: {condition: service_completed_successfully}, storage: {condition: service_healthy}}
+    environment:
       FM_DATABASE_URL: postgresql://fm_app:fm_app@db:5432/filemanager
       FM_S3_ENDPOINT: http://storage:9000
       FM_S3_PUBLIC_ENDPOINT: http://localhost:29000
     ports: ["8000:8000"]
+  maintenance:
+    build: {context: ../.., dockerfile: examples/filemanager/backend/Dockerfile}
+    command: ["python", "-m", "app.maintenance"]
+    profiles: [maintenance]        # not started by `docker compose up`: `docker compose run --rm maintenance`
+    depends_on: {db: {condition: service_healthy}, storage: {condition: service_healthy}}
+    environment:
+      FM_ADMIN_URL: postgresql://postgres:postgres@db:5432/filemanager
+      FM_S3_ENDPOINT: http://storage:9000
 volumes: {db: {}, files: {}}

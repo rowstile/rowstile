@@ -15,5 +15,6 @@ COPY examples/filemanager/backend/ ./
 COPY examples/filemanager/db/ /fm/db/
 COPY --from=web /web/dist /fm/frontend/dist
 ENV PATH=/fm/backend/.venv/bin:$PATH
-# migrations and the policy first, as the database owner; then the app, as fm_app
-CMD ["sh", "-c", "python /fm/db/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# the app, as fm_app. The migrations and the policy run before it, as the database's admin, in a service of their
+# own (docker-compose.yml: python /fm/db/migrate.py), so the app never holds the admin's password
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
