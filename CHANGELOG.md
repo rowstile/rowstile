@@ -102,8 +102,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   diagram didn't have.
 - `rowstile client go`, `csharp`, `ruby`, `rbs` and `elixir` give no name to a type or a permission whose name there
   would be one the file or the SDK uses already, as for two names spelled the same: Go's `ObjectType` (object's
-  `type`), C#'s classes `Permission` and `ObjectType` (which hid the SDK's), Ruby's modules `Rowstile`, `Hash`,
-  `Array` and `String`, and Elixir's `Rowstile` and `Kernel`. Before, the file didn't compile. `rowstile client
+  `type`), C#'s classes `Permission` and `ObjectType` (which hid the SDK's) and the names of object's own members
+  (`ToString`, `GetHashCode`, `GetType`, `Equals`: a class hid them), Ruby's modules `Rowstile`, `Hash`, `Array`
+  and `String`, and Elixir's `Rowstile` and `Kernel`. Before, the file didn't compile. `rowstile client
   zero` names the readers tables of two types camelCase spells the same (`a_b`, `aB`) as each type is written.
 - `authz.ctx(key)` is NULL for a key the transaction didn't set, also on a connection where an earlier
   transaction set it (Postgres then reads it as `''`), and for a key set to `''`: a condition or a caveat that

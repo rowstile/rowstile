@@ -207,7 +207,7 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   ([ASP.NET Core and EF Core](../stacks/aspnetcore.md)): a class for each type, holding its `ObjectType` and its
   permissions (`Policy.Note.Edit`), which the SDK's calls take, so a misspelled one doesn't compile. A name is the
   policy's in PascalCase (`org_unit` is `OrgUnit`); two that would get the same, `doc` and `Doc`, get none, and
-  the file says so. A transaction is one principal's: in EF Core, work for someone else inside one signed in
+  neither does one that would hide what every class inherits (`to_string`: `ToString`); the file says so. A transaction is one principal's: in EF Core, work for someone else inside one signed in
   already (one `BeginSignedInAsync` began on the context's connection too) throws an `InvalidOperationException`
   before any SQL is sent, and so does work in a `TransactionScope`. It may change before it is supported.
 - **Ruby: preview.** `rowstile client ruby` writes the policy's names as constants (`Authz::Note::EDIT`), and
