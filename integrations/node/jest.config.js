@@ -1,6 +1,7 @@
 // Jest runs the built tests (tsc -p ., in test.sh: build/tests), as ES modules (node --experimental-vm-modules),
-// on two workers, each with a test database of its own (tests/workers.test.ts). The SDK's packages are measured as
-// the app imports them, their built files, reported on their sources (test.sh builds them with source maps).
+// on two workers (tests/conformance.test.ts and tests/package.test.ts), each with a test database of its own. The
+// SDK's packages are measured as the app imports them, their built files, reported on their sources (test.sh builds
+// them with source maps).
 /** @type {import("jest").Config} */
 export default {
   rootDir: "../..",

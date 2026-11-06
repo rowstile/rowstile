@@ -1,5 +1,5 @@
 // Neon's serverless driver (preview): its Pool talks to Postgres over WebSockets, here through Neon's wsproxy in
-// front of the suite's Postgres (test.sh), with @rowstile/pg. Checks 1, 2, 4, 5, 6 and 7 through it: on the
+// front of the suite's Postgres (test.sh), with @rowstile/pg. Checks 1, 2, 4, 5, 6, 7 and 9 through it: on the
 // Node.js runtime (app/api/neon, one pool for the server, a pool of one on SERVER_ONE), on the edge runtime
 // (edge/, an app of its own: a pool for each request), and in this process. With POOLER=pgbouncer the proxy goes through
 // PgBouncer, as Neon's pooled URL does.
