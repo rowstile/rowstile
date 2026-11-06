@@ -346,6 +346,27 @@ CREATE TRIGGER authz_folder_col_audit_trunc AFTER TRUNCATE ON app.folders FOR EA
 
 
 --
+-- Name: TRIGGER authz_folder_col_audit_trunc ON folders; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_folder_col_audit_trunc ON app.folders IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
+-- Name: folders authz_folder_col_audit_trunc_first; Type: TRIGGER; Schema: app; Owner: -
+--
+
+CREATE TRIGGER authz_folder_col_audit_trunc_first BEFORE TRUNCATE ON app.folders FOR EACH STATEMENT EXECUTE FUNCTION authz_int.folder__col_audit_trunc();
+
+
+--
+-- Name: TRIGGER authz_folder_col_audit_trunc_first ON folders; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_folder_col_audit_trunc_first ON app.folders IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
 -- Name: folders authz_folder_col_audit_upd; Type: TRIGGER; Schema: app; Owner: -
 --
 
@@ -378,6 +399,27 @@ CREATE TRIGGER authz_message_col_audit_row AFTER UPDATE ON app.inbox FOR EACH RO
 --
 
 CREATE TRIGGER authz_message_col_audit_trunc AFTER TRUNCATE ON app.inbox FOR EACH STATEMENT EXECUTE FUNCTION authz_int.message__col_audit_trunc();
+
+
+--
+-- Name: TRIGGER authz_message_col_audit_trunc ON inbox; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_message_col_audit_trunc ON app.inbox IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
+-- Name: inbox authz_message_col_audit_trunc_first; Type: TRIGGER; Schema: app; Owner: -
+--
+
+CREATE TRIGGER authz_message_col_audit_trunc_first BEFORE TRUNCATE ON app.inbox FOR EACH STATEMENT EXECUTE FUNCTION authz_int.message__col_audit_trunc();
+
+
+--
+-- Name: TRIGGER authz_message_col_audit_trunc_first ON inbox; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_message_col_audit_trunc_first ON app.inbox IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 
 --
@@ -416,6 +458,27 @@ CREATE TRIGGER authz_note_col_audit_trunc AFTER TRUNCATE ON app.notes FOR EACH S
 
 
 --
+-- Name: TRIGGER authz_note_col_audit_trunc ON notes; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_note_col_audit_trunc ON app.notes IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
+-- Name: notes authz_note_col_audit_trunc_first; Type: TRIGGER; Schema: app; Owner: -
+--
+
+CREATE TRIGGER authz_note_col_audit_trunc_first BEFORE TRUNCATE ON app.notes FOR EACH STATEMENT EXECUTE FUNCTION authz_int.note__col_audit_trunc();
+
+
+--
+-- Name: TRIGGER authz_note_col_audit_trunc_first ON notes; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_note_col_audit_trunc_first ON app.notes IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
 -- Name: notes authz_note_col_audit_upd; Type: TRIGGER; Schema: app; Owner: -
 --
 
@@ -451,6 +514,27 @@ CREATE TRIGGER authz_project_col_audit_trunc AFTER TRUNCATE ON app.projects FOR 
 
 
 --
+-- Name: TRIGGER authz_project_col_audit_trunc ON projects; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_project_col_audit_trunc ON app.projects IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
+-- Name: projects authz_project_col_audit_trunc_first; Type: TRIGGER; Schema: app; Owner: -
+--
+
+CREATE TRIGGER authz_project_col_audit_trunc_first BEFORE TRUNCATE ON app.projects FOR EACH STATEMENT EXECUTE FUNCTION authz_int.project__col_audit_trunc();
+
+
+--
+-- Name: TRIGGER authz_project_col_audit_trunc_first ON projects; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_project_col_audit_trunc_first ON app.projects IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
 -- Name: projects authz_project_col_audit_upd; Type: TRIGGER; Schema: app; Owner: -
 --
 
@@ -476,6 +560,27 @@ CREATE TRIGGER authz_rel_audit_1_ins AFTER INSERT ON app.members REFERENCING NEW
 --
 
 CREATE TRIGGER authz_rel_audit_1_trunc AFTER TRUNCATE ON app.members FOR EACH STATEMENT EXECUTE FUNCTION authz_int.rel_audit_1_trunc();
+
+
+--
+-- Name: TRIGGER authz_rel_audit_1_trunc ON members; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_rel_audit_1_trunc ON app.members IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
+-- Name: members authz_rel_audit_1_trunc_first; Type: TRIGGER; Schema: app; Owner: -
+--
+
+CREATE TRIGGER authz_rel_audit_1_trunc_first BEFORE TRUNCATE ON app.members FOR EACH STATEMENT EXECUTE FUNCTION authz_int.rel_audit_1_trunc();
+
+
+--
+-- Name: TRIGGER authz_rel_audit_1_trunc_first ON members; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_rel_audit_1_trunc_first ON app.members IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 
 --
@@ -507,6 +612,27 @@ CREATE TRIGGER authz_rel_audit_2_trunc AFTER TRUNCATE ON app.project_services FO
 
 
 --
+-- Name: TRIGGER authz_rel_audit_2_trunc ON project_services; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_rel_audit_2_trunc ON app.project_services IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
+-- Name: project_services authz_rel_audit_2_trunc_first; Type: TRIGGER; Schema: app; Owner: -
+--
+
+CREATE TRIGGER authz_rel_audit_2_trunc_first BEFORE TRUNCATE ON app.project_services FOR EACH STATEMENT EXECUTE FUNCTION authz_int.rel_audit_2_trunc();
+
+
+--
+-- Name: TRIGGER authz_rel_audit_2_trunc_first ON project_services; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_rel_audit_2_trunc_first ON app.project_services IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
 -- Name: project_services authz_rel_audit_2_upd; Type: TRIGGER; Schema: app; Owner: -
 --
 
@@ -532,6 +658,27 @@ CREATE TRIGGER authz_service_col_audit_ins AFTER INSERT ON app.services REFERENC
 --
 
 CREATE TRIGGER authz_service_col_audit_trunc AFTER TRUNCATE ON app.services FOR EACH STATEMENT EXECUTE FUNCTION authz_int.service__col_audit_trunc();
+
+
+--
+-- Name: TRIGGER authz_service_col_audit_trunc ON services; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_service_col_audit_trunc ON app.services IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
+-- Name: services authz_service_col_audit_trunc_first; Type: TRIGGER; Schema: app; Owner: -
+--
+
+CREATE TRIGGER authz_service_col_audit_trunc_first BEFORE TRUNCATE ON app.services FOR EACH STATEMENT EXECUTE FUNCTION authz_int.service__col_audit_trunc();
+
+
+--
+-- Name: TRIGGER authz_service_col_audit_trunc_first ON services; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_service_col_audit_trunc_first ON app.services IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 
 --
@@ -602,6 +749,27 @@ CREATE TRIGGER authz_user_col_audit_ins AFTER INSERT ON app.users REFERENCING NE
 --
 
 CREATE TRIGGER authz_user_col_audit_trunc AFTER TRUNCATE ON app.users FOR EACH STATEMENT EXECUTE FUNCTION authz_int.user__col_audit_trunc();
+
+
+--
+-- Name: TRIGGER authz_user_col_audit_trunc ON users; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_user_col_audit_trunc ON app.users IS 'rowstile: for a TRUNCATE of the tables under its table too';
+
+
+--
+-- Name: users authz_user_col_audit_trunc_first; Type: TRIGGER; Schema: app; Owner: -
+--
+
+CREATE TRIGGER authz_user_col_audit_trunc_first BEFORE TRUNCATE ON app.users FOR EACH STATEMENT EXECUTE FUNCTION authz_int.user__col_audit_trunc();
+
+
+--
+-- Name: TRIGGER authz_user_col_audit_trunc_first ON users; Type: COMMENT; Schema: app; Owner: -
+--
+
+COMMENT ON TRIGGER authz_user_col_audit_trunc_first ON app.users IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 
 --
@@ -916,6 +1084,7 @@ ALTER TABLE app.projects ENABLE ROW LEVEL SECURITY;
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261106130412'),
 ('20261106113611'),
 ('20261105211940'),
 ('20261105205430'),

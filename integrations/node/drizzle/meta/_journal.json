@@ -162,6 +162,13 @@
       "when": 1793964967884,
       "tag": "0022_authz_anyone_shares_and_key_types",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793970248540,
+      "tag": "0023_authz_governance_records",
+      "breakpoints": true
     }
   ]
 }

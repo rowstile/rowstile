@@ -150,7 +150,7 @@
 
 always | 9806e3e2d712
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
-function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
+function authz.announce_timed_shares() | d54dfc65af0d shape=73a521b1
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | ff3dc82d6ec2 shape=77f3e79f
 function authz.break_glass(p_type text, p_id uuid, p_relation text, p_reason text, p_duration interval) | a1a184cb7abc shape=3b6da0b2
 function authz.can(p_type text, p_id text, p_perm text) | 7f9de6005502 shape=220bc89f
@@ -171,7 +171,7 @@ function authz.delete_role(p_role bigint) | b4c64d8168eb shape=7c823e86
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 8689b2108a84 shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | e98f52f28997 shape=1223ad2f
-function authz.lint() | 1c61c2ec85cb shape=54cb1505
+function authz.lint() | 09c86686199a shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | ada360afe39f shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
@@ -187,7 +187,7 @@ function authz.perms_of(p_type text, p_ids text[]) | 6cb4d6d6f68e shape=00a7b763
 function authz.principal() | 5efd25b5d994 shape=bda73c60
 function authz.request_access(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 5f24b90aefb6 shape=ab39b58e
 function authz.request_access(p_type text, p_id uuid, p_relation text, p_reason text, p_duration interval) | 3351f44b53b7 shape=40a06ee2
-function authz.review_decide(p_review bigint, p_item int, p_keep boolean) | e7b5234590bf shape=76724fb2
+function authz.review_decide(p_review bigint, p_item int, p_keep boolean) | cb7c972d81fc shape=76724fb2
 function authz.review_items(p_review bigint) | 9f111fa185c9 shape=fc0e6cb7
 function authz.revoke_api_key(p_id bigint) | 428658670110 shape=590521c4
 function authz.revoke_link(p_type text, p_id text, p_link text) | 9f1e3334d1ec shape=6418747f
@@ -342,14 +342,14 @@ function authz_gen."hd.workspaces:update:why"(p_row "hd"."workspaces", p_stored 
 function authz_int."comment__col_audit_del"() | 0e130ff2f1d9 shape=b1a916b8
 function authz_int."comment__col_audit_ins"() | 61df66992923 shape=c823503a
 function authz_int."comment__col_audit_row"() | 3bbe05c80005 shape=f5610ddb
-function authz_int."comment__col_audit_trunc"() | e205b8450a6b shape=0c48e7ad
+function authz_int."comment__col_audit_trunc"() | 577a4c378c53 shape=0c48e7ad
 function authz_int."comment__col_audit_upd"() | 71105e5acbe4 shape=4e5b2e33
 function authz_int."comment__view__who"(p_id uuid) | a79c4c702491 shape=1e7a536d
 function authz_int."comment__view__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | f89c47d623e6 shape=0e2ebd89
 function authz_int."customer_org__col_audit_del"() | ef217105ef74 shape=b0860a36
 function authz_int."customer_org__col_audit_ins"() | 957db87c0402 shape=c7d66156
 function authz_int."customer_org__col_audit_row"() | 0090ddc4de46 shape=abd35fb2
-function authz_int."customer_org__col_audit_trunc"() | 50af1f99f703 shape=c170b001
+function authz_int."customer_org__col_audit_trunc"() | 3809501ff21d shape=c170b001
 function authz_int."customer_org__col_audit_upd"() | 0da5ebcfe39d shape=9902cfd3
 function authz_int."customer_org__manage__who"(p_id uuid) | 52df133b453c shape=2d0e171b
 function authz_int."customer_org__manage__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | a9e6deffd13f shape=235d08ca
@@ -404,7 +404,7 @@ function authz_int."hd.workspaces:seen"(p_id uuid) | 66e7d9b04565 shape=c46e91fb
 function authz_int."integration__col_audit_del"() | f83050b83212 shape=38c432b2
 function authz_int."integration__col_audit_ins"() | a1e3f06dc631 shape=9956f188
 function authz_int."integration__col_audit_row"() | 129102b2fb88 shape=798b3f2b
-function authz_int."integration__col_audit_trunc"() | df5b3abd97b9 shape=1fd2164c
+function authz_int."integration__col_audit_trunc"() | 0ab575052a1a shape=1fd2164c
 function authz_int."integration__col_audit_upd"() | 27ed352d430d shape=f801b8ad
 function authz_int."integration__keys_gone"() | b3dbd3d82434 shape=5e63d5f0
 function authz_int."integration__keys_gone_all"() | c8f5d501a46f shape=960f840e
@@ -419,38 +419,38 @@ function authz_int."integration__view__why"(p_id uuid, p_depth int, p_seen text[
 function authz_int."leadership__col_audit_del"() | b3d411fd0294 shape=65b67d06
 function authz_int."leadership__col_audit_ins"() | 00ad06c92e17 shape=e53bd88c
 function authz_int."leadership__col_audit_row"() | 869fc235acb5 shape=4c8ddaa3
-function authz_int."leadership__col_audit_trunc"() | e3d564b65a00 shape=1a4ad370
+function authz_int."leadership__col_audit_trunc"() | fdc8656c74c6 shape=1a4ad370
 function authz_int."leadership__col_audit_upd"() | 8473bbcd649e shape=d1963a29
 function authz_int."membership__col_audit_del"() | c7558ea0579e shape=41bc195b
 function authz_int."membership__col_audit_ins"() | 11bbb0213a48 shape=35407a17
 function authz_int."membership__col_audit_row"() | 31edcca4deef shape=1a410f20
-function authz_int."membership__col_audit_trunc"() | 6f5ec90a83be shape=16b0496a
+function authz_int."membership__col_audit_trunc"() | 8b783d7fe106 shape=16b0496a
 function authz_int."membership__col_audit_upd"() | e971ab1907c6 shape=2aef2bec
 function authz_int."rel_audit_1_del"() | e90daded2ee7 shape=ca2c96f6
 function authz_int."rel_audit_1_ins"() | 16b23bbd5b15 shape=b10e83cf
-function authz_int."rel_audit_1_trunc"() | 2d66351e94ee shape=95453c8d
+function authz_int."rel_audit_1_trunc"() | f7b0f509f444 shape=95453c8d
 function authz_int."rel_audit_1_upd"() | d27d8e081afa shape=ebc0a1d0
 function authz_int."rel_audit_2_del"() | dd7999d27d6d shape=4fcddc5e
 function authz_int."rel_audit_2_ins"() | 5f8705a11f25 shape=6b6ccb7f
-function authz_int."rel_audit_2_trunc"() | bda35a45493c shape=b50b49ff
+function authz_int."rel_audit_2_trunc"() | 717d40b76a7d shape=b50b49ff
 function authz_int."rel_audit_2_upd"() | b4a91091dd95 shape=bdeab240
 function authz_int."rel_audit_3_del"() | 89d46295068c shape=c2a2a400
 function authz_int."rel_audit_3_ins"() | 50eaf8196752 shape=db6140b7
-function authz_int."rel_audit_3_trunc"() | b061d9a1cdae shape=faac66ca
+function authz_int."rel_audit_3_trunc"() | 54ca1613d202 shape=faac66ca
 function authz_int."rel_audit_3_upd"() | d5ef2763ea87 shape=db6c71dd
 function authz_int."rel_audit_4_del"() | 42f23e954d91 shape=89566234
 function authz_int."rel_audit_4_ins"() | 4ae5815112f1 shape=7b254781
-function authz_int."rel_audit_4_trunc"() | fef568ac441c shape=56f5555a
+function authz_int."rel_audit_4_trunc"() | 0cfc367cae11 shape=56f5555a
 function authz_int."rel_audit_4_upd"() | da98f5bd8856 shape=85a84650
 function authz_int."rel_audit_5_del"() | 0c7ca8c2aa4e shape=82310774
 function authz_int."rel_audit_5_ins"() | bf82ee7e66a4 shape=d24b5d12
-function authz_int."rel_audit_5_trunc"() | 26fba08467b8 shape=1efc7d25
+function authz_int."rel_audit_5_trunc"() | ba17c7d7fc07 shape=1efc7d25
 function authz_int."rel_audit_5_upd"() | c177e6a26aca shape=6c1d0821
 function authz_int."support_grant__check_943f02b9f4"(p_row "hd"."support_access") | 1f3dd64e3f32 shape=85efe57c
 function authz_int."support_grant__col_audit_del"() | 4db374469340 shape=1615aa99
 function authz_int."support_grant__col_audit_ins"() | 85ff6ab04c85 shape=1c9aad5e
 function authz_int."support_grant__col_audit_row"() | 0857a459f1a2 shape=1c4e5d7a
-function authz_int."support_grant__col_audit_trunc"() | 4b124605a95b shape=b61bb2b0
+function authz_int."support_grant__col_audit_trunc"() | 449464c9d48e shape=b61bb2b0
 function authz_int."support_grant__col_audit_upd"() | 9fb175bbe846 shape=49d1cc9b
 function authz_int."sync:comment"(p_ids uuid[]) | bbe44ff94019 shape=9aced0c4
 function authz_int."sync:comment.view"(p_ids uuid[]) | dcf27b83a56c shape=a4b6239f
@@ -470,7 +470,7 @@ function authz_int."sync_keys:user"(p_ids text[]) | d23749cdabd3 shape=88eb3651
 function authz_int."team__col_audit_del"() | 55a5aab35d8f shape=11d3b90b
 function authz_int."team__col_audit_ins"() | 564e1dcb610f shape=af978119
 function authz_int."team__col_audit_row"() | f59c4fcfedc9 shape=ba488e96
-function authz_int."team__col_audit_trunc"() | c02683c0de8b shape=381203bc
+function authz_int."team__col_audit_trunc"() | f64cd974e2ca shape=381203bc
 function authz_int."team__col_audit_upd"() | 0967d3a7187e shape=140c8259
 function authz_int."team__forget"() | 3ee65c87bfe5 shape=8418a4fe
 function authz_int."team__forget_all"() | b37921254459 shape=64a8189c
@@ -502,7 +502,7 @@ function authz_int."ticket__cc__who"(p_id uuid) | fd80883beaa6 shape=32e8b214
 function authz_int."ticket__col_audit_del"() | e8968ba8f6a3 shape=22874a3a
 function authz_int."ticket__col_audit_ins"() | c6ce474f99f3 shape=9ca354c4
 function authz_int."ticket__col_audit_row"() | 36ca5affe68d shape=f27df45d
-function authz_int."ticket__col_audit_trunc"() | 973a0c75241e shape=6809ee0d
+function authz_int."ticket__col_audit_trunc"() | c2e6200a171e shape=6809ee0d
 function authz_int."ticket__col_audit_upd"() | 340089664079 shape=38d46fc0
 function authz_int."ticket__forget"() | 3d214e378d96 shape=1dbeb6f9
 function authz_int."ticket__forget_all"() | 1bca9173f331 shape=937e5e71
@@ -524,7 +524,7 @@ function authz_int."ticket__work__why"(p_id uuid, p_depth int, p_seen text[], p_
 function authz_int."user__col_audit_del"() | 550865ecbaed shape=fc64ec43
 function authz_int."user__col_audit_ins"() | 51b037fe507a shape=dba70c6d
 function authz_int."user__col_audit_row"() | 8e7d140afa3c shape=da434128
-function authz_int."user__col_audit_trunc"() | 417be7f14246 shape=f87e3f72
+function authz_int."user__col_audit_trunc"() | da6fd969089c shape=f87e3f72
 function authz_int."user__col_audit_upd"() | f77b56aca502 shape=9e749ca9
 function authz_int."user__forget"() | 3dca5926f2d5 shape=4753fdb6
 function authz_int."user__forget_all"() | fb64375cbc74 shape=1ea7139a
@@ -548,7 +548,7 @@ function authz_int."workspace__agent__who"(p_id uuid) | fd031e184059 shape=b94dc
 function authz_int."workspace__agent__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | 883f90902b2a shape=ab3d6e65
 function authz_int."workspace__col_audit_del"() | 0b35567e401f shape=01377bc5
 function authz_int."workspace__col_audit_ins"() | 03787e6a687f shape=198a04de
-function authz_int."workspace__col_audit_trunc"() | 680167a0ed50 shape=2f742328
+function authz_int."workspace__col_audit_trunc"() | c69a9e8b78b8 shape=2f742328
 function authz_int."workspace__col_audit_upd"() | e323aa42b1c5 shape=c6a1a6d3
 function authz_int."workspace__connected__who"(p_id uuid) | 1206d70400ef shape=a935c5ba
 function authz_int."workspace__connected__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | f0cc81a4e6f1 shape=25feb23b
@@ -587,19 +587,19 @@ function authz_int.hmac_sha256(p_key bytea, p_msg bytea) | 33edf164bad5 shape=4d
 function authz_int.hold(p_type text, p_id text) | 3122469f8567 shape=bc067713
 function authz_int.jit_off() | 888eef7af8da shape=35e4d2a9
 function authz_int.key_owner_given(p_type text, p_id text) | d54307169a8f shape=f19edf58
-function authz_int.keys_gone(p_type text, p_ids text[]) | ec35000c78b8 shape=e47f75f7
+function authz_int.keys_gone(p_type text, p_ids text[]) | 916efd46b7da shape=e47f75f7
 function authz_int.link_relations(p_type text, p_id text) | 9a47fb2992d0 shape=8bbe4201
 function authz_int.list(p_type text, p_perm text) | f61b0d5c955e shape=057ee12e
 function authz_int.manage_perm(p_type text, p_relation text, p_subject text) | 09bf2a459153 shape=5b4aa64c
 function authz_int.mark_row(p_type text, p_id text) | a3fe56708926 shape=267bf94f
 function authz_int.may_inspect(p_type text, p_id text) | c144ba24c8dd shape=0942af2e
 function authz_int.may_manage(p_type text, p_id text, p_relation text, p_subject text) | 98e4f9e55ff5 shape=4b7f1aa2
-function authz_int.on_role() | 374a49793145 shape=e9d1adac
-function authz_int.on_role_permissions() | 6223f05b396c shape=0026fdba
-function authz_int.on_share() | 0856cdef73f8 shape=56b3e887
+function authz_int.on_role() | 4d53dc69d795 shape=e9d1adac
+function authz_int.on_role_permissions() | f2f96fc11b5c shape=0026fdba
+function authz_int.on_share() | baea27e87dbf shape=56b3e887
 function authz_int.one_principal(p_type text, p_id text) | 5e54ec7be2c7 shape=c1834ccb
 function authz_int.policy_path() | e79bf262c639 shape=79d267c2
-function authz_int.requests_gone(p_type text, p_ids text[]) | ba4366db286f shape=3524efd2
+function authz_int.requests_gone(p_type text, p_ids text[]) | 0b20ad44b67b shape=3524efd2
 function authz_int.role_gone() | beab44fb9bb2 shape=970d6f43
 function authz_int.role_owned(p_type text, p_id text, p_owner_type text, p_owner_id text) | f9358c9855e4 shape=4a4c60e9
 function authz_int.role_owner_type(p_object_type text) | 9839cf3177ae shape=1632cfb5
@@ -620,6 +620,7 @@ function authz_int.sync_dirty(p_type text, p_ids text[]) | 35332187fe3e shape=42
 function authz_int.sync_process() | a128c94190d9 shape=bbf006cf
 function authz_int.sync_refresh(p_hash text, p_force boolean) | 7e6482b18426 shape=5328af1d
 function authz_int.sync_spread(p_tx bigint, p_round int) | 0f0b7412195a shape=53f27788
+function authz_int.truncate_once(p_relid oid, p_key text, p_before boolean) | b8b9cd8950d0 shape=2dde8aeb
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
 function authz_int.visible(p_type text, p_id text) | 1697178faeca shape=e14964bd
 function authz_int.writable() | dce4bbfe1638 shape=2260a03a
@@ -673,7 +674,7 @@ rls "hd"."users" | a4789d0a69af
 rls "hd"."workspaces" | 9bb0c1581746
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
-step base | 0191e50ac02f
+step base | bf512c1cc69c
 step cascades | a8260bb56332
 step grant_api | 032f588abd80
 step grant_functions | 3637593e777d
@@ -702,22 +703,26 @@ table authz_int.sync_moved | c49c430f9bba shape=6c60da1e
 table authz_int.sync_queued | 360d686b7075 shape=360d686b
 table authz_int.sync_todo | 5530cc58dc54 shape=80f2cd19
 table authz_int.trees | d60273318cdb shape=02db6ec7
+table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 792f565ea964 shape=b6d5b497
 tree team__parent__tree | aa91799276d4d4594c8ae8544af23883
 trigger "authz_comment_col_audit_del" ON "hd"."comments" | acd8165d405c
 trigger "authz_comment_col_audit_ins" ON "hd"."comments" | 5413fcc0e27f
 trigger "authz_comment_col_audit_row" ON "hd"."comments" | a636a0768e9d
-trigger "authz_comment_col_audit_trunc" ON "hd"."comments" | 4e5f1047778a
+trigger "authz_comment_col_audit_trunc" ON "hd"."comments" | f7cbc5263dc8
+trigger "authz_comment_col_audit_trunc_first" ON "hd"."comments" | dbe2865b3dca
 trigger "authz_comment_col_audit_upd" ON "hd"."comments" | 2a24b26f5698
 trigger "authz_customer_org_col_audit_del" ON "hd"."customer_orgs" | d20b3df7912f
 trigger "authz_customer_org_col_audit_ins" ON "hd"."customer_orgs" | 47e2ad06a416
 trigger "authz_customer_org_col_audit_row" ON "hd"."customer_orgs" | 29b96359ec89
-trigger "authz_customer_org_col_audit_trunc" ON "hd"."customer_orgs" | a73ccabc2300
+trigger "authz_customer_org_col_audit_trunc" ON "hd"."customer_orgs" | 42a1170c7939
+trigger "authz_customer_org_col_audit_trunc_first" ON "hd"."customer_orgs" | 52a54e66aff4
 trigger "authz_customer_org_col_audit_upd" ON "hd"."customer_orgs" | bc3d5d458f7c
 trigger "authz_integration_col_audit_del" ON "hd"."integrations" | ae977bbe3377
 trigger "authz_integration_col_audit_ins" ON "hd"."integrations" | 443a4a049dff
 trigger "authz_integration_col_audit_row" ON "hd"."integrations" | a6d989bf7bcd
-trigger "authz_integration_col_audit_trunc" ON "hd"."integrations" | 44ae82bfc17a
+trigger "authz_integration_col_audit_trunc" ON "hd"."integrations" | 75ca291a56e5
+trigger "authz_integration_col_audit_trunc_first" ON "hd"."integrations" | 41f6e2cc5f1a
 trigger "authz_integration_col_audit_upd" ON "hd"."integrations" | dd345b20f968
 trigger "authz_integration_keys_gone_del" ON "hd"."integrations" | 5eda49ea244b
 trigger "authz_integration_keys_gone_id" ON "hd"."integrations" | b33822b800c5
@@ -727,37 +732,45 @@ trigger "authz_integration_keys_gone_trunc_first" ON "hd"."integrations" | f522a
 trigger "authz_leadership_col_audit_del" ON "hd"."team_leads" | e4e6efd7d132
 trigger "authz_leadership_col_audit_ins" ON "hd"."team_leads" | 266c438d74a5
 trigger "authz_leadership_col_audit_row" ON "hd"."team_leads" | e9ba416ca321
-trigger "authz_leadership_col_audit_trunc" ON "hd"."team_leads" | 49ab2682654a
+trigger "authz_leadership_col_audit_trunc" ON "hd"."team_leads" | 257bbc3c5351
+trigger "authz_leadership_col_audit_trunc_first" ON "hd"."team_leads" | f77c253f96e3
 trigger "authz_leadership_col_audit_upd" ON "hd"."team_leads" | dda7143909b6
 trigger "authz_membership_col_audit_del" ON "hd"."team_members" | c8219c5403d6
 trigger "authz_membership_col_audit_ins" ON "hd"."team_members" | aec0d454d438
 trigger "authz_membership_col_audit_row" ON "hd"."team_members" | 735b60e48fd9
-trigger "authz_membership_col_audit_trunc" ON "hd"."team_members" | a0ef5ded04ee
+trigger "authz_membership_col_audit_trunc" ON "hd"."team_members" | d3da4291a7e1
+trigger "authz_membership_col_audit_trunc_first" ON "hd"."team_members" | 165d58e7f58f
 trigger "authz_membership_col_audit_upd" ON "hd"."team_members" | a4ec2e501bdc
 trigger "authz_rel_audit_1_del" ON "hd"."integrations" | b005acbfd589
 trigger "authz_rel_audit_1_ins" ON "hd"."integrations" | d6aab761710a
-trigger "authz_rel_audit_1_trunc" ON "hd"."integrations" | d6103b2e6a02
+trigger "authz_rel_audit_1_trunc" ON "hd"."integrations" | e52ae3a98470
+trigger "authz_rel_audit_1_trunc_first" ON "hd"."integrations" | f01dc46b638a
 trigger "authz_rel_audit_1_upd" ON "hd"."integrations" | c8255d0c6be6
 trigger "authz_rel_audit_2_del" ON "hd"."support_access" | 3cb15be08a00
 trigger "authz_rel_audit_2_ins" ON "hd"."support_access" | bfbd29a2c050
-trigger "authz_rel_audit_2_trunc" ON "hd"."support_access" | a62d0d9d825b
+trigger "authz_rel_audit_2_trunc" ON "hd"."support_access" | b25cbcdcae91
+trigger "authz_rel_audit_2_trunc_first" ON "hd"."support_access" | f909c1ed7957
 trigger "authz_rel_audit_2_upd" ON "hd"."support_access" | 825bbb3d449c
 trigger "authz_rel_audit_3_del" ON "hd"."team_leads" | 06169fdff169
 trigger "authz_rel_audit_3_ins" ON "hd"."team_leads" | 19d4f375272d
-trigger "authz_rel_audit_3_trunc" ON "hd"."team_leads" | 5d17f5b2296b
+trigger "authz_rel_audit_3_trunc" ON "hd"."team_leads" | 4133e426c017
+trigger "authz_rel_audit_3_trunc_first" ON "hd"."team_leads" | 48ff0caa8962
 trigger "authz_rel_audit_3_upd" ON "hd"."team_leads" | 146c704e8f30
 trigger "authz_rel_audit_4_del" ON "hd"."team_members" | c0def25a3224
 trigger "authz_rel_audit_4_ins" ON "hd"."team_members" | 1177d5df84dd
-trigger "authz_rel_audit_4_trunc" ON "hd"."team_members" | 9160b5d374bf
+trigger "authz_rel_audit_4_trunc" ON "hd"."team_members" | 0eaa7ae861ee
+trigger "authz_rel_audit_4_trunc_first" ON "hd"."team_members" | 920f31711002
 trigger "authz_rel_audit_4_upd" ON "hd"."team_members" | ba4881fe8c9d
 trigger "authz_rel_audit_5_del" ON "hd"."users" | 70957ff323b4
 trigger "authz_rel_audit_5_ins" ON "hd"."users" | 86e665b96902
-trigger "authz_rel_audit_5_trunc" ON "hd"."users" | 4b25bf48947d
+trigger "authz_rel_audit_5_trunc" ON "hd"."users" | 3c6c6e897bae
+trigger "authz_rel_audit_5_trunc_first" ON "hd"."users" | b1d8a156c1c9
 trigger "authz_rel_audit_5_upd" ON "hd"."users" | 45f9d115366d
 trigger "authz_support_grant_col_audit_del" ON "hd"."support_access" | 9da53185da6c
 trigger "authz_support_grant_col_audit_ins" ON "hd"."support_access" | 27fc497b01ef
 trigger "authz_support_grant_col_audit_row" ON "hd"."support_access" | 2ae0bb8c005e
-trigger "authz_support_grant_col_audit_trunc" ON "hd"."support_access" | 88230a0cc0e0
+trigger "authz_support_grant_col_audit_trunc" ON "hd"."support_access" | fba9dd0abf91
+trigger "authz_support_grant_col_audit_trunc_first" ON "hd"."support_access" | 1272975d9a28
 trigger "authz_support_grant_col_audit_upd" ON "hd"."support_access" | a9cec30577c4
 trigger "authz_team__parent__tree_del" ON "hd"."teams" | 47203577cb11 tree=team__parent__tree
 trigger "authz_team__parent__tree_ins" ON "hd"."teams" | 82400a2c6f89 tree=team__parent__tree
@@ -766,7 +779,8 @@ trigger "authz_team__parent__tree_upd" ON "hd"."teams" | a0ca5a6326c8 tree=team_
 trigger "authz_team_col_audit_del" ON "hd"."teams" | d27f229e2726
 trigger "authz_team_col_audit_ins" ON "hd"."teams" | 8f6db26a2618
 trigger "authz_team_col_audit_row" ON "hd"."teams" | 45498a55cbf6
-trigger "authz_team_col_audit_trunc" ON "hd"."teams" | 95abb25a39a5
+trigger "authz_team_col_audit_trunc" ON "hd"."teams" | 169c16ef06c1
+trigger "authz_team_col_audit_trunc_first" ON "hd"."teams" | cb262fddcf82
 trigger "authz_team_col_audit_upd" ON "hd"."teams" | 5755941bf12e
 trigger "authz_team_forget_del" ON "hd"."teams" | 8aee03970e54
 trigger "authz_team_forget_id" ON "hd"."teams" | 2db0bb4bac26
@@ -776,7 +790,8 @@ trigger "authz_team_forget_trunc_first" ON "hd"."teams" | 902516c5dcd3
 trigger "authz_ticket_col_audit_del" ON "hd"."tickets" | 4991982ddd36
 trigger "authz_ticket_col_audit_ins" ON "hd"."tickets" | 5c03e86976e5
 trigger "authz_ticket_col_audit_row" ON "hd"."tickets" | a7f2fb86b978
-trigger "authz_ticket_col_audit_trunc" ON "hd"."tickets" | 547540b6c47b
+trigger "authz_ticket_col_audit_trunc" ON "hd"."tickets" | 935ac10f0c6b
+trigger "authz_ticket_col_audit_trunc_first" ON "hd"."tickets" | de99039a4341
 trigger "authz_ticket_col_audit_upd" ON "hd"."tickets" | 5007191a9e36
 trigger "authz_ticket_forget_del" ON "hd"."tickets" | 97b3e4361dd3
 trigger "authz_ticket_forget_id" ON "hd"."tickets" | 4fbc7225574d
@@ -802,7 +817,8 @@ trigger "authz_update_after team_id" ON "hd"."tickets" | 6097f6e63804
 trigger "authz_user_col_audit_del" ON "hd"."users" | 9ae67208d86e
 trigger "authz_user_col_audit_ins" ON "hd"."users" | d6ced640b96a
 trigger "authz_user_col_audit_row" ON "hd"."users" | 550ec86a1f82
-trigger "authz_user_col_audit_trunc" ON "hd"."users" | e9778943913f
+trigger "authz_user_col_audit_trunc" ON "hd"."users" | bfb31592a439
+trigger "authz_user_col_audit_trunc_first" ON "hd"."users" | 32730f95c1aa
 trigger "authz_user_col_audit_upd" ON "hd"."users" | 99fbe09fb421
 trigger "authz_user_forget_del" ON "hd"."users" | 7a0c34ec66bc
 trigger "authz_user_forget_id" ON "hd"."users" | 546c08c55ea5
@@ -816,15 +832,18 @@ trigger "authz_user_keys_gone_trunc" ON "hd"."users" | 9a9c1c02bb6e
 trigger "authz_user_keys_gone_trunc_first" ON "hd"."users" | 12f1642a43a4
 trigger "authz_workspace_col_audit_del" ON "hd"."workspaces" | b10f7da66ea2
 trigger "authz_workspace_col_audit_ins" ON "hd"."workspaces" | 63b6fbed8b3e
-trigger "authz_workspace_col_audit_trunc" ON "hd"."workspaces" | 8612c9f3c523
+trigger "authz_workspace_col_audit_trunc" ON "hd"."workspaces" | b9bd2dc4f6b1
+trigger "authz_workspace_col_audit_trunc_first" ON "hd"."workspaces" | 4b91115a9bb9
 trigger "authz_workspace_col_audit_upd" ON "hd"."workspaces" | af7d90c5e128
 trigger authz_audit_append_only ON authz.audit | b7dda6de8867
 trigger authz_audit_no_truncate ON authz.audit | fa619d666219
 trigger authz_role_audit ON authz.roles | d4799a1152c8
 trigger authz_role_gone ON authz.roles | c1f1e6ba7c5c
 trigger authz_role_perm_audit ON authz.role_permissions | 00c06f622ad5
+trigger authz_role_perm_audit_upd ON authz.role_permissions | 02f009713160
 trigger authz_role_perm_feed_del ON authz.role_permissions | 718bb2791f0d
 trigger authz_role_perm_feed_ins ON authz.role_permissions | 8eadbd50d772
+trigger authz_role_perm_feed_upd ON authz.role_permissions | ede74bd93e90
 trigger authz_share_audit ON authz.shares | 71f2e2c3290d
 trigger authz_shares_canon ON authz.shares | 01de580f7b5b
 trigger authz_sync_commit ON authz_int.sync_queued | 99d556cf901d
