@@ -1482,8 +1482,15 @@ BEGIN
   END LOOP;
 END $gi$;"""
         ] + [
-            f"CREATE INDEX IF NOT EXISTS {q(n)} ON authz.shares ((object_id::{t.pktype}), relation) "
-            f"WHERE object_type = {lit(t.name)};"
+            # Postgres builds an index from the rows a transaction open since before still sees, deleted ones too:
+            # shares deleted as AZ627 says, whose ids the key can't read, stop it until that transaction ends
+            f"-- @object index authz.{q(n)}\nDO $si$\nBEGIN\n"
+            f"  CREATE INDEX IF NOT EXISTS {q(n)} ON authz.shares ((object_id::{t.pktype}), relation) "
+            f"WHERE object_type = {lit(t.name)};\n"
+            "EXCEPTION WHEN invalid_text_representation THEN\n"
+            f"  RAISE EXCEPTION '%: shares of {t.name} whose ids a {t.pktype} can''t read were deleted, but a "
+            f"transaction open since before still sees them, and so does the index applying makes of their ids: "
+            f"apply again once it ends, as rowstile help AZ627 says [AZ627]', {lit(str(t.loc))};\nEND $si$;"
             for t, n in zip(typed, index_names, strict=True)
         ]
         canonical = CANONICAL_SHARES if any(t.pktype != "text" or t.composite for t in self.types.values()) else ""

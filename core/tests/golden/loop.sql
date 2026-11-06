@@ -720,11 +720,41 @@ BEGIN
     EXECUTE format('DROP INDEX authz.%I', i.relname);
   END LOOP;
 END $gi$;
-CREATE INDEX IF NOT EXISTS "shares_obj_user_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'user';
-CREATE INDEX IF NOT EXISTS "shares_obj_org_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'org';
-CREATE INDEX IF NOT EXISTS "shares_obj_setting_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'setting';
-CREATE INDEX IF NOT EXISTS "shares_obj_email_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'email';
-CREATE INDEX IF NOT EXISTS "shares_obj_domain_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'domain';
+-- @object index authz."shares_obj_user_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_user_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'user';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of user whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 7';
+END $si$;
+-- @object index authz."shares_obj_org_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_org_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'org';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of org whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 9';
+END $si$;
+-- @object index authz."shares_obj_setting_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_setting_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'setting';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of setting whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 15';
+END $si$;
+-- @object index authz."shares_obj_email_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_email_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'email';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of email whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 20';
+END $si$;
+-- @object index authz."shares_obj_domain_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_domain_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'domain';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of domain whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 24';
+END $si$;
 
 -- Scopes: what a token may do (policy 'scope' lines; 'read' is built in unless redefined)
 CREATE TABLE authz_int.scope_items (scope text, kind text, qual text, word text);

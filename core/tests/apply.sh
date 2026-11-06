@@ -963,7 +963,23 @@ out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags.authz" 2>&1)
 case "$out" in *"line 5: 1 shares of tag name ids a bigint can't read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]"*)
   ok "applying after a key's type changed is refused while shares name ids it can't read, and says where to read what to do";;
   *) bad "shares whose ids the new key can't read" "$out";; esac
+# deleted as AZ627 says, while a transaction open since before still sees them: an index Postgres builds reads them
+# too, so applying is refused again, and says to wait for it
+RACE_DB=$KDB race
+PGAPPNAME=key_snapshot K -c "BEGIN ISOLATION LEVEL REPEATABLE READ" -c "SELECT count(*) FROM authz.shares" -c "$HOLD" \
+  -c "COMMIT" >/dev/null &
+RACE_DB=$KDB held key_snapshot
 K -c "DELETE FROM authz.shares WHERE object_type = 'tag' AND NOT pg_input_is_valid(object_id, 'bigint')" >/dev/null
+out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags.authz" 2>&1)
+RACE_DB=$KDB go
+wait $!
+case "$out" in *"line 5: shares of tag whose ids a bigint can't read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]"*)
+  ok "... and while a transaction open since before they were deleted still sees them, it says to apply once that ends";;
+  *) bad "shares deleted while a transaction still sees them" "$out";; esac
+# (the server's other sessions, the suites beside this one, can see them as long: the table is written again,
+# without them)
+K -c "CREATE TEMP TABLE kept AS SELECT * FROM authz.shares" -c "TRUNCATE authz.shares" \
+  -c "INSERT INTO authz.shares SELECT * FROM kept" >/dev/null
 before=$(tagged)
 out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags.authz" 2>&1)
 [ "$before" = "0013>3 012>4 013>3 12>4" ] && [ "$out" = "$T/tags.authz: applied" ] && [ "$(tagged)" = "12>4 13>3" ] &&

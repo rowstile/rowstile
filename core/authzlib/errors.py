@@ -825,7 +825,9 @@ CODES = {
         "row deleted before can name an id the new type can't read, such as `abc` for a bigint. Applying makes an "
         "index of each type's shares by its key, which can't hold that id. Such a share gives nothing, since no row "
         "has that id. Delete those shares, then apply again; for a type `doc` whose key is now a bigint: "
-        "`DELETE FROM authz.shares WHERE object_type = 'doc' AND NOT pg_input_is_valid(object_id, 'bigint')`.",
+        "`DELETE FROM authz.shares WHERE object_type = 'doc' AND NOT pg_input_is_valid(object_id, 'bigint')`. "
+        "Postgres builds an index from every row a transaction still open sees, so while one that began before the "
+        "delete is open, applying is refused again, and says so: apply once it ends.",
         when="apply",
     ),
     "AZ701": Code(

@@ -270,7 +270,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - Applying after a type's key changed type (text to bigint, say) is refused while shares of rows gone before name
   ids the new key can't read, with the line of the type and how many (AZ627, whose page gives the statement that
   deletes them). It failed with `invalid input syntax for type bigint`, and nothing said which shares or what to
-  do.
+  do. Applying right after deleting them, while a transaction that began before is still open, is refused too, and
+  says to apply again once it ends: Postgres builds the index from the rows that transaction still sees.
 - A share with `anyone` is stored with the id `*` and no relation, whatever `authz.share` was given: sharing with
   `''` and with `'*'` makes one share, `authz.unshare` with any id removes it (also once the policy no longer
   shares with anyone), and `authz.who` counts one made with `''`. Applying gives the shares with anyone stored

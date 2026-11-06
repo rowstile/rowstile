@@ -859,12 +859,48 @@ BEGIN
     EXECUTE format('DROP INDEX authz.%I', i.relname);
   END LOOP;
 END $gi$;
-CREATE INDEX IF NOT EXISTS "shares_obj_user_uuid" ON authz.shares ((object_id::uuid), relation) WHERE object_type = 'user';
-CREATE INDEX IF NOT EXISTS "shares_obj_org_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'org';
-CREATE INDEX IF NOT EXISTS "shares_obj_team_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'team';
-CREATE INDEX IF NOT EXISTS "shares_obj_project_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'project';
-CREATE INDEX IF NOT EXISTS "shares_obj_folder_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'folder';
-CREATE INDEX IF NOT EXISTS "shares_obj_doc_uuid" ON authz.shares ((object_id::uuid), relation) WHERE object_type = 'doc';
+-- @object index authz."shares_obj_user_uuid"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_user_uuid" ON authz.shares ((object_id::uuid), relation) WHERE object_type = 'user';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of user whose ids a uuid can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 5';
+END $si$;
+-- @object index authz."shares_obj_org_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_org_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'org';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of org whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 7';
+END $si$;
+-- @object index authz."shares_obj_team_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_team_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'team';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of team whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 13';
+END $si$;
+-- @object index authz."shares_obj_project_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_project_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'project';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of project whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 19';
+END $si$;
+-- @object index authz."shares_obj_folder_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_folder_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'folder';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of folder whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 29';
+END $si$;
+-- @object index authz."shares_obj_doc_uuid"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_doc_uuid" ON authz.shares ((object_id::uuid), relation) WHERE object_type = 'doc';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of doc whose ids a uuid can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 44';
+END $si$;
 
 -- Scopes: what a token may do (policy 'scope' lines; 'read' is built in unless redefined)
 CREATE TABLE authz_int.scope_items (scope text, kind text, qual text, word text);
