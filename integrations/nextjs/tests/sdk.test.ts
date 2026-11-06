@@ -80,6 +80,14 @@ describe("@rowstile/client", () => {
     const translated = refusal({ code: "42501", message: words, routine: "ExecWithCheckOptions" });
     expect(translated && [translated.message, translated.table, translated.command, translated.code]).toEqual([words, undefined, undefined, "AZ709"]);
     expect(refusal({ code: "42501", message: "keine Berechtigung für Tabelle notes", routine: "aclcheck_error" })).toBeNull();
+    // a restrictive policy of the app's own: Postgres names it (with a quote in its name here), and says no more
+    const named = (message: string) => {
+      const r = refusal({ code: "42501", message });
+      return r && [r.table, r.command, r.why, r.message];
+    };
+    const upsert = 'new row violates row-level security policy "a" b" (USING expression) for table "notes"';
+    const merge = 'target row violates row-level security policy "only_mine" (USING expression) for table "notes"';
+    expect([named(upsert), named(merge)]).toEqual([["notes", "update", [], upsert], ["notes", undefined, [], merge]]);
   });
 
   test("what counts as a changed row, and what one that didn't change was", () => {
@@ -237,6 +245,26 @@ describe("the runtime's functions over pg", () => {
         'target row violates row-level security policy (USING expression) for table "notes": MERGE matched a row ' +
         "the update or delete rule doesn't let this user change"]);
     } finally {
+      await p.end();
+    }
+  });
+
+  // a restrictive policy of the app's own (authz.lint() reports it): its refusal is a refusal too, a 403, in Postgres's
+  // words, which name the policy and no rule of rowstile's
+  test("a restrictive policy of the app's own refuses, over pg: Refused, in Postgres's words", async () => {
+    const p = new pg.Pool({ connectionString: APP });
+    const owner = new pg.Client({ connectionString: OWNER });
+    await owner.connect();
+    try {
+      await owner.query("CREATE POLICY short_notes ON app.notes AS RESTRICTIVE FOR UPDATE TO conf_app USING (true) " +
+        "WITH CHECK (length(body) < 10)");
+      const long = await actingAs("3", () => rowstile(p).query("UPDATE app.notes SET body = 'a long body' WHERE id = 4"))
+        .catch((e: unknown) => e);
+      expect(long instanceof Refused && [long.table, long.command, long.why, long.message, problemOf(long)?.status]).toEqual(
+        ["notes", undefined, [], 'new row violates row-level security policy "short_notes" for table "notes"', 403]);
+    } finally {
+      await owner.query("DROP POLICY IF EXISTS short_notes ON app.notes");
+      await owner.end();
       await p.end();
     }
   });
