@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import sys
 import typing
+import weakref
 from collections.abc import Callable, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
@@ -87,7 +88,8 @@ Result = TypeVar("Result")
 TypeName = TypeVar("TypeName", bound=str)
 PermissionName = TypeVar("PermissionName", bound=str)
 
-_users: dict[Engine, Callable[[], Who] | None] = {}  # each engine install() was given (the sync one): its user()
+# each engine install() was given (the sync one): its user(). Held weakly: an engine the app lets go is freed
+_users: weakref.WeakKeyDictionary[Engine, Callable[[], Who] | None] = weakref.WeakKeyDictionary()
 _orm_events = False
 # a row an ORM flush updates or deletes: (the table, update or delete, the row's key, and the mapper whose rows
 # SQLAlchemy writes together: the base one, for every table of an inheritance)

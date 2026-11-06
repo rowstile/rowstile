@@ -4,6 +4,7 @@ checks run of the SDK (sdk/python/rowstile), and fails unless they run every lin
 
 import asyncio
 import contextvars
+import gc
 import importlib
 import io
 import os
@@ -12,6 +13,7 @@ import re
 import subprocess
 import sys
 import threading
+import weakref
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from types import MappingProxyType
@@ -238,6 +240,18 @@ def test_install_once_and_user_when_nothing_else_says() -> None:
     finally:
         engine.dispose()
     assert asked == ["user()"]
+
+
+def test_an_installed_engine_is_freed_once_the_app_lets_it_go() -> None:
+    # an app that makes engines as it goes (one a tenant, one a test): install() keeps none of them alive
+    engine = authz_sa.install(create_engine(SYNC), user=lambda: 2)
+    with engine.connect() as conn:
+        assert projects(conn) == [2, 3]
+    engine.dispose()
+    freed = weakref.ref(engine)
+    del engine, conn  # the connection names its engine
+    gc.collect()
+    assert freed() is None
 
 
 ALREADY = "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: "
