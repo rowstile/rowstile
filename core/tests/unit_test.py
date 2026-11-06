@@ -55,7 +55,8 @@ from authzlib import (  # noqa: E402
 from authzlib.compiler import strongly_connected  # noqa: E402
 from authzlib.conditions import Scalar  # noqa: E402
 from authzlib.connection import Row, Value  # noqa: E402
-from authzlib.review import Group, Review  # noqa: E402
+from authzlib.review import Group  # noqa: E402
+from authzlib.review import Review as ReviewData  # noqa: E402  (the test class Review is another)
 from authzlib.versions import STAGES, VERSION, pypi, spelled, stage  # noqa: E402
 
 sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -352,7 +353,7 @@ class ThisRow(unittest.TestCase):
         """An apostrophe inside E'...', $$...$$, a quoted name or a comment ends nothing: the subquery after it is
         code. Read as a quote's end, it would pair with the next quote and hide the subquery, and a rule would then
         run the condition with the app role's rights."""
-        from authzlib.parse import Loc, PolicyError
+        from authzlib.parse import Loc
         from authzlib.sqlutil import check_stable_condition, on_row, reads_more, reads_tables, sql_code
 
         sub = "not exists (select 1 from app.blocks b where b.kind = 'mute')"
@@ -397,7 +398,7 @@ class ThisRow(unittest.TestCase):
         a column, read whole."""
         from authzlib.conditions import tokens
         from authzlib.database import BARE
-        from authzlib.parse import Loc, PolicyError
+        from authzlib.parse import Loc
         from authzlib.sqlutil import (
             check_stable_condition,
             fold,
@@ -470,7 +471,7 @@ class ThisRow(unittest.TestCase):
         """The language's reference and AZ305's page name what a condition that limits inheritance can't read, and
         the check refuses each, as the page writes it, and nothing else: no name of its own is missing there."""
         from authzlib.errors import CODES
-        from authzlib.parse import Loc, PolicyError
+        from authzlib.parse import Loc
         from authzlib.sqlutil import TIME_WORDS, UNSTABLE_CALLS, UNSTABLE_WORDS, check_stable_condition
 
         with open(os.path.join(os.path.dirname(ROOT), "docs", "reference", "language.md"), encoding="utf-8") as fh:
@@ -549,8 +550,6 @@ class Golden(unittest.TestCase):
     def test_a_migration(self) -> None:
         # a permission added to the docs app, as rowstile migrate writes it after the first; the build it names
         # changes with every change to authzlib/, and isn't kept
-        from authzlib import migrate
-
         text = read(POLICIES["docs"])
         new = replaced(
             text,
@@ -1827,7 +1826,6 @@ class ClientNames(unittest.TestCase):
         clash += "type note = app.notes\n  owner : user = owner_id\n  can note = owner\n  can equals = owner\n  can view = owner\n"
         lines = [x.strip() for x in database.client("csharp", clash).split("\n")]
         self.assertIn("// policy would be Policy: it has no name here, use new Permission(...)", lines)
-        self.assertNotIn("public static class Policy\n", lines)
         for said in ("note would be Note", "equals would be Equals"):
             self.assertIn(f"// {said}: it has no name here, use new Permission(...)", lines)
         self.assertIn('public static readonly Permission View = new(Type, "view");', lines)
@@ -2166,11 +2164,14 @@ class ClientNames(unittest.TestCase):
         self.assertEqual(
             len(re.findall(r"^const (\w+) =", made, re.M)), len(set(re.findall(r"^const (\w+) =", made, re.M)))
         )
-        # a policy that syncs nothing has the keys table alone, and no filter
+        # a policy that syncs nothing has the keys table alone, and no filter: its one import has no relationships
         made = database.client("zero", self.CASES)
         self.assertIn("export const syncTables = [keys] as const;", made)
         self.assertIn("export const readable = {} as const;", made)
-        self.assertNotIn("relationships", made.split("\n")[7])
+        self.assertEqual(
+            [x for x in made.split("\n") if x.startswith("import ")],
+            ['import { string, table } from "@rocicorp/zero";'],
+        )
 
     def test_share_takes_caveat_args_as_a_dict(self) -> None:
         sent: list[Sequence[object]] = []
@@ -3267,7 +3268,6 @@ class Command(unittest.TestCase):
         # the options the command takes (it refuses the others) are those its usage names, and those the reference's
         # table names (docs/reference/tools.md), and --db where it reads a database. The usage names the arguments it
         # takes, and the table the policy file where the usage does
-        import features
         import mcp
 
         listed = features.usage()
@@ -3603,8 +3603,6 @@ class Statements(unittest.TestCase):
     """Reading the compiled SQL back as statements, the way psql does (the migrations work on them)."""
 
     def test_nested_comments_quoted_names_and_what_it_refuses(self) -> None:
-        from authzlib import statements
-
         sql = (
             "CREATE TABLE a (x int); /* outer /* inner; */ still a comment; */\n"
             'CREATE TABLE "b;""c" (y int);\n'
@@ -3683,7 +3681,7 @@ class Statements(unittest.TestCase):
         )
         self.assertEqual(made("CREATE FUNCTION app.fé(a int) RETURNS int AS $$ $$"), ("function", "app.fé(a int)"))
         # the same letters as a condition's reading (sqlutil.py; statements.py imports nothing of ours)
-        from authzlib import sqlutil, statements
+        from authzlib import sqlutil
 
         self.assertEqual(statements.LETTER, sqlutil.LETTER)
 
@@ -3745,8 +3743,6 @@ class Migrations(unittest.TestCase):
     """What rowstile migrate writes, without a database (tests/migrate_test.py applies them)."""
 
     def setUp(self) -> None:
-        from authzlib import migrate
-
         self.migrate = migrate
         self.text = read(POLICIES["docs"])
 
@@ -4401,9 +4397,7 @@ class Review(unittest.TestCase):
         tests_after: dict[str, str] | None = None,
         lock: bool = True,
         worlds: int = 40,
-    ) -> Review:
-        from authzlib import migrate
-
+    ) -> ReviewData:
         base_lock = migrate.lock_of(database.migratable(self.text, {})[1]) if lock else None
         return self.review.review(
             (self.text, {}, tests_before or {}), (new, {}, tests_after or {}), base_lock, None, None, worlds=worlds
@@ -4421,8 +4415,6 @@ class Review(unittest.TestCase):
         self.assertNotRegex(self.review.text(r), r"(?m)^\s+changed\s")
         # with its first migration (a lock file at the head, none at the base): the tables it locks are the app's,
         # not the ones rowstile keeps (its audit trail's triggers, its shares')
-        from authzlib import migrate
-
         head_lock = migrate.lock_of(database.migratable(text, {})[1])
         [m] = self.review.review(None, (text, {}, {}), None, head_lock, None, worlds=10)["deploy"]["migrations"]
         self.assertEqual(
@@ -4749,7 +4741,7 @@ rules app.folders
   update : edit
 """
 
-    def small(self, old: str, new: str, files: dict[str, str] | None = None) -> Review:
+    def small(self, old: str, new: str, files: dict[str, str] | None = None) -> ReviewData:
         self.assertIn(old, self.SMALL)
         return self.review.review(
             (self.SMALL, files or {}, {}), (self.SMALL.replace(old, new), files or {}, {}), worlds=40
@@ -5202,8 +5194,6 @@ rules app.folders
 
     def test_a_lock_another_version_wrote_is_current_when_nothing_changes(self) -> None:
         # a pull request that upgrades rowstile, whose lock file says the new version: no migration, and not behind
-        from authzlib import migrate
-
         lock = migrate.lock_of(database.migratable(self.text, {})[1])
         old = replaced(lock, f"# rowstile {authzlib.__version__}:", "# rowstile 0.0.9:")
         for base_lock, head_lock in ((old, lock), (lock, old)):
@@ -5529,7 +5519,7 @@ rules app.files
   update after : folder.edit
 """
 
-    def watched(self, old: str, new: str, base: str | None = None) -> Review:
+    def watched(self, old: str, new: str, base: str | None = None) -> ReviewData:
         base = base or self.WATCHED
         self.assertIn(old, base)
         return self.review.review((base, {}, {}), (base.replace(old, new), {}, {}), worlds=50)
@@ -5649,8 +5639,6 @@ rules app.files
     def test_deploy_names_the_tables_found_as_it_runs(self) -> None:
         # a trigger on each table an inheritance condition reads: the DO block finds those tables in the database,
         # and says what it locks
-        from authzlib import migrate
-
         policy = (
             "app role app_user\ntype user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
             "  owner  : user = owner_id\n"
@@ -6684,7 +6672,6 @@ class Wire(unittest.TestCase):
         session starts; answer: what it answers (a text, and its type) to one statement the client then sends,
         whose text is seen["query"]. address: where it listens (127.0.0.2: a name its certificates don't have)."""
         import base64
-        import hashlib
         import hmac
         import ssl
         import struct
@@ -7171,8 +7158,6 @@ class Wire(unittest.TestCase):
                 self.assertEqual(self.pgwire._signature_hash(ssl.PEM_cert_to_DER_cert(fh.read())), hashed, name)
 
     def test_each_way_a_server_asks_for_the_password(self) -> None:
-        import hashlib
-
         wrong = self.pgwire.ProtocolError
 
         def connect(port: int, password: str | None = "secret") -> None:
@@ -7350,8 +7335,6 @@ class Wire(unittest.TestCase):
         savepoint or looking for the policy's condition that failed doesn't put another error in their place."""
         import select
         import struct
-
-        from authzlib import database
 
         pgwire, said = self.pgwire, self.said
         # as Postgres sends it
@@ -8576,7 +8559,7 @@ class Confidence(unittest.TestCase):
             self.assertEqual(data.pairs[("user", "self", 0, "user", "")], [(i, i) for i in data.ids["user"]])
 
     def test_prove_says_when_none_is_found(self) -> None:
-        from authzlib import evaluate, prove
+        from authzlib import prove
 
         text = read(POLICIES["docs"]).replace(
             "never folder: share and not org.member", "never folder: edit and not view"
@@ -8731,8 +8714,6 @@ class Confidence(unittest.TestCase):
         # the column values it reads for a world were kept by the world's id(): once that world was gone, another
         # could be made at its address and read the first one's rows (prove counted a counterexample that wasn't).
         # Every id the same here: the rows must still be the second world's
-        from authzlib import evaluate
-
         pol = parse_policy(self.HEAD + "type doc = app.docs\n  can view = {published}\n", "p.authz")
 
         def world(published: bool) -> evaluate.Data:
@@ -8754,8 +8735,6 @@ class Confidence(unittest.TestCase):
         return [r["holds"] for r in prove.prove(parse_policy(self.HEAD + text, "p.authz"), worlds)]
 
     def same(self, before: str, after: str, worlds: int = 200) -> bool:
-        from authzlib import evaluate
-
         a, b = parse_policy(self.HEAD + before, "a.authz"), parse_policy(self.HEAD + after, "b.authz")
         return evaluate.compare(a, b, worlds) is None
 
@@ -9003,7 +8982,7 @@ class Confidence(unittest.TestCase):
     def test_a_link_to_every_user_reads_as_one(self) -> None:
         # a share to user:* is to every signed-in user, not to one: its subject is '*' in every world, as in
         # authz.shares, and the counterexample says user:*
-        from authzlib import evaluate, prove
+        from authzlib import prove
 
         text = (
             "type folder = app.folders\n  viewer : user:* shared\n  owner : user = owner_id\n  can share = nobody\n"
@@ -9026,8 +9005,6 @@ class Confidence(unittest.TestCase):
     def test_a_world_says_what_each_link_and_role_names(self) -> None:
         # who a link or a custom role is given to, as the policy writes it, and whose role it is; which rows a where
         # keeps, none here; and with types, only those types' rows
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD.replace("app.users\n", "app.users where {active}\n")
             + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
@@ -9075,8 +9052,6 @@ class Confidence(unittest.TestCase):
     def test_a_difference_is_shown_in_the_smallest_world_it_shows_in(self) -> None:
         # a viewer taken away: the folder's parent plays no part, so the world shown has no parent link, though
         # the world it was found in had one; it is one world, as each policy reads it
-        from authzlib import evaluate
-
         base = (
             self.HEAD + "type folder = app.folders\n  parent : folder = parent_id\n  owner : user = owner_id\n"
             "  viewer : user = app.folder_viewers(folder_id -> user_id)\n  can view = owner or viewer or parent.view\n"
@@ -9118,8 +9093,6 @@ class Confidence(unittest.TestCase):
 
     def test_one_world_as_two_policies_read_it_is_made_smaller_as_one(self) -> None:
         # a link both read goes from both at once; a condition or a column only one reads, from that one
-        from authzlib import evaluate
-
         ids = {"user": ["1"], "doc": ["1"]}
         q = ("doc", "q", 0, "user", "")
         a = evaluate.Data(ids=ids, valid=ids, pairs={q: [("1", "1")]}, columns={"doc": {"1": {"x": None}}})
@@ -9155,8 +9128,6 @@ class Confidence(unittest.TestCase):
         # a type moved to another table, roles no longer limited by `from`, or a type that signs in now: more than
         # permissions and rules changed, so no narrower comparison is made (None); and a policy without conditions
         # has no corners
-        from authzlib import evaluate
-
         base = (
             self.HEAD + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
             "type doc = app.docs\n  owner : user = owner_id\n  org : org = org_id\n  roles : user from org\n"
@@ -9177,8 +9148,6 @@ class Confidence(unittest.TestCase):
     def test_a_corner_leaves_a_link_tables_where_to_its_rows(self) -> None:
         # a corner says which of the permissions' conditions hold: a link table's where is a condition on the
         # table's rows, read or drawn there, even where a permission's condition has its text
-        from authzlib import evaluate
-
         doc = self.HEAD + "type doc = app.docs\n  reader : user = app.doc_readers(doc_id -> user_id)"
         pol = parse_policy(doc + " where {active}\n  can view = reader and {active}\n", "p.authz")
         found = evaluate.corners([pol])
@@ -9249,8 +9218,6 @@ class Confidence(unittest.TestCase):
         # a deny inside inheritance is split into a hidden view__base and `view__base and not hidden` (compiling
         # does it, and the review compares compiled policies): widening the inheritance changes only the hidden
         # one, which isn't compared itself; view, which reads it, is
-        from authzlib import Compiler, evaluate
-
         folder = (
             "type folder = app.folders\n  owner : user = owner_id\n  editor : user = editor_id\n"
             "  parent : folder = parent_id\n  blocked : user = blocked_id\n"
@@ -9295,8 +9262,6 @@ class Confidence(unittest.TestCase):
     def test_a_condition_on_who_is_signed_in_is_listed_with_the_where_that_says_it_too(self) -> None:
         # a type's where on authz.uid() and a permission that asks it again: the where adds nothing, and the
         # listed worlds (alone here) say the two policies are the same
-        from authzlib import evaluate
-
         doc = "type doc = app.docs{}\n  owner : user = owner_id\n  can view = owner and {{editor_id = authz.uid()}}\n"
         a = parse_policy(self.HEAD + doc.format(" where {editor_id = authz.uid()}"), "a.authz")
         b = parse_policy(self.HEAD + doc.format(""), "b.authz")
@@ -9305,8 +9270,6 @@ class Confidence(unittest.TestCase):
     def test_the_listing_stops_where_its_steps_are_spent(self) -> None:
         # past its budget of steps (made small here), the listing stops once every world of one link is listed,
         # not before, and says how far it got
-        from authzlib import evaluate
-
         policy = self.approve()
         a = parse_policy(self.HEAD + policy + "  can approve = owner and legal and finance and security and privacy\n")
         b = parse_policy(
@@ -9322,8 +9285,6 @@ class Confidence(unittest.TestCase):
             )
 
     def test_a_long_and_of_links_widened_is_found(self) -> None:
-        from authzlib import evaluate
-
         # a dense world has as many rows of each type as it is large: every pair of them may hold the links
         self.assertEqual(evaluate.World("s", 4, density=0.75).ids("doc"), ["1", "2", "3", "4"])
         folder = (
@@ -9359,7 +9320,7 @@ class Confidence(unittest.TestCase):
         # a share that reaches three folders down, widened to four: only five folders in a row show it, and a drawn
         # world has four at most; the worlds have chains one link longer than the policies read (a dozen of them, however
         # few are drawn: 40 drawn here, not 200)
-        from authzlib import evaluate, prove
+        from authzlib import prove
 
         levels = "".join(f"  can v{i} = v{i - 1} or parent.v{i - 1}\n" for i in (1, 2, 3))
         # a project a folder may sit in, as its parent, holds nothing of its own
@@ -9394,8 +9355,6 @@ class Confidence(unittest.TestCase):
     def test_a_corner_leaves_drawn_what_has_too_many_values_to_try(self) -> None:
         # four columns of nine values each (the seven named, one none of them names, NULL): more combinations than a
         # corner tries, so their values stay as the world drew them
-        from authzlib import evaluate
-
         cond = " and ".join(f"{c} in (1, 2, 3, 4, 5, 6, 7)" for c in "abcd")
         pol = parse_policy(
             self.HEAD + f"type doc = app.docs\n  owner : user = owner_id\n  can view = owner and {{{cond}}}\n",
@@ -9408,8 +9367,6 @@ class Confidence(unittest.TestCase):
     def test_the_first_difference_comes_with_its_world_as_each_policys_data(self) -> None:
         # what tests/rewrites.py loads into a database, to see it answer as the review says: a permission's
         # difference, or a rule's
-        from authzlib import evaluate
-
         doc = "type doc = app.docs\n  owner : user = owner_id\n  viewer : user = viewer_id\n  can view = owner"
         for change, rule, what in (
             (" or viewer", "owner", "doc.view"),
@@ -9428,8 +9385,6 @@ class Confidence(unittest.TestCase):
     def test_a_worlds_column_a_relation_reads_holds_its_links_id(self) -> None:
         # {parent_id is null} and the parent link are one fact: the rows a world gives the database (tests/small.py
         # load_sql) have the column the link says, in drawn worlds and in chains
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD + "type folder = app.folders\n  owner : user = owner_id\n  parent : folder = parent_id\n"
             "  can view = owner or parent.view\n  can top = owner and {parent_id is null}\n",
@@ -9444,8 +9399,6 @@ class Confidence(unittest.TestCase):
 
     def test_a_chain_world_nests_groups_in_a_chain_too(self) -> None:
         # a team inside the next one, as a folder inside the next: what a policy reads at the end of a long nesting
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD + "type team = app.teams\n  member : user = owner_id\n"
             "  member : team#member = app.team_links(team_id -> sub_id)\n  can view = member\n",
@@ -9457,8 +9410,6 @@ class Confidence(unittest.TestCase):
 
     def test_a_dense_world_gives_most_of_the_custom_roles_it_could(self) -> None:
         # as it holds most of the links it could (DENSITIES); a drawn one gives a few (World.ROLE)
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
             "type doc = app.docs\n  org : org = org_id\n  roles : user from org\n  can view = roles\n",
@@ -9478,8 +9429,6 @@ class Confidence(unittest.TestCase):
 
     def test_a_policy_that_reads_two_links_deep_is_tried_on_chains(self) -> None:
         # a file's folder's org's members: two links deep, so beside the dense worlds a dozen chains of four
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD
             + "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n  can view = member\n"
@@ -9497,8 +9446,6 @@ class Confidence(unittest.TestCase):
     def test_a_corner_chooses_as_many_values_as_it_tries(self) -> None:
         # four columns of eight values each (the six named, one none of them names, NULL): just as many combinations
         # as a corner tries, so it chooses them, and the condition it says holds holds on every row
-        from authzlib import evaluate
-
         cond = " and ".join(f"{c} in (1, 2, 3, 4, 5, 6)" for c in "abcd")
         pol = parse_policy(
             self.HEAD + f"type doc = app.docs\n  owner : user = owner_id\n  can view = owner and {{{cond}}}\n",
@@ -9513,8 +9460,6 @@ class Confidence(unittest.TestCase):
         # a corner chooses together the values of columns that conditions read together. The rewrite reads b1
         # beside b2, the policy b1 alone: chosen for each policy's own conditions, a row's b1 differed between them,
         # and a rewrite that changes nothing showed a difference ({not b1} held before, on a row with b1 true)
-        from authzlib import evaluate
-
         doc = "type doc = app.docs\n  r : user = owner_id\n  can p = r and {b1}\n  can q = {not b1}"
         before, after = doc + "\n", doc + " or ({b1 and b2} and nobody)\n"
         self.assertTrue(self.same(before, after))
@@ -9569,8 +9514,6 @@ class Confidence(unittest.TestCase):
         )
         self.assertEqual(self.proofs(folder + "owner and {owner_id = 7}\ninvariants\n  never folder: edit\n"), [False])
         # a key of text: a text is an id
-        from authzlib import evaluate
-
         text = "app role app_user\ntype user = app.users (id text)\n" + folder.replace(
             "app.folders", "app.folders (id text)"
         )
@@ -9623,8 +9566,6 @@ class Confidence(unittest.TestCase):
     def test_a_corner_chooses_the_columns_a_condition_reads_beside_a_relations(self) -> None:
         # the corner where {owner_id is not null and a and b} holds: on each row with an owner (its link), a and b
         # are chosen so that it holds there
-        from authzlib import evaluate
-
         cond = "owner_id is not null and a and b"
         pol = parse_policy(
             self.HEAD + f"type doc = app.docs\n  owner : user = owner_id\n  can view = owner or {{{cond}}}\n", "p.authz"
@@ -9662,8 +9603,6 @@ class Confidence(unittest.TestCase):
         # a row of a document is of two classes ({a} holds or not); with no link, then each document's owner. A world
         # that is another with its rows renamed is listed once: two documents of one owner, both {a} or one of them
         # or neither (3), and of two owners (3); three: 14. Every one of them, then: a document has one owner
-        from authzlib import evaluate
-
         doc = self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n  can view = "
         a, b = parse_policy(doc + "owner and {a}\n", "a.authz"), parse_policy(doc + "{a} and owner\n", "b.authz")
         listing = evaluate.Listing((a, b))
@@ -9698,8 +9637,6 @@ class Confidence(unittest.TestCase):
         # two folders, each with its owner: swapping the folders and the users gives the same links. But a column a
         # condition compares with authz.uid() holds a user's id, which a renaming doesn't change: "each folder made by
         # the other's owner" is a world of its own, not "each made by its owner" renamed
-        from authzlib import evaluate
-
         doc = self.HEAD + "type folder = app.folders\n  owner : user = owner_id\n  can view = "
         a = parse_policy(doc + "owner and {creator_id = authz.uid()}\n", "a.authz")
         b = parse_policy(doc + "{creator_id = authz.uid()} and owner\n", "b.authz")
@@ -9723,8 +9660,6 @@ class Confidence(unittest.TestCase):
     def test_the_listing_stops_however_many_classes_its_rows_have(self) -> None:
         # five flags on users and five on folders: 32 classes of each, so the worlds of one link (an owner) are
         # 32 x 32. The listing stops at LISTED_AT_MOST for each drawn world, and says how far it got
-        from authzlib import evaluate
-
         n = 5
         head = (
             self.HEAD.replace("app.users\n", "app.users\n  can u = " + " or ".join(f"{{b{i}}}" for i in range(n)))
@@ -9752,8 +9687,6 @@ class Confidence(unittest.TestCase):
         # link could make left it at fewer links
         import time
 
-        from authzlib import evaluate
-
         doc = self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n  can view = "
         others = "".join(f"type t{i} = app.t{i}\n  owner : user = owner_id\n  can see = owner\n" for i in range(12))
         a, b = parse_policy(doc + "owner\n" + others, "a.authz"), parse_policy(doc + "owner or owner\n" + others, "b")
@@ -9773,8 +9706,6 @@ class Confidence(unittest.TestCase):
 
     def test_a_listed_world_shares_with_everyone_and_by_link(self) -> None:
         # a share names a row of its subject's type, or `*` (every user, anyone), or a link's token: the one asked with
-        from authzlib import evaluate
-
         doc = self.HEAD + "type doc = app.docs\n  viewer : user, user:*, anyone, link shared by view\n  can view = "
         a, b = parse_policy(doc + "viewer\n", "a.authz"), parse_policy(doc + "viewer and signed_in\n", "b.authz")
         listing = evaluate.Listing((a, b))
@@ -9800,8 +9731,6 @@ class Confidence(unittest.TestCase):
     def test_the_listing_says_where_it_took_some_values_only(self) -> None:
         # four columns of nine values each (the seven named, one none of them names, NULL), read by one condition:
         # more combinations than a row's classes are made from, so only the first are, and the review says so
-        from authzlib import evaluate
-
         cond = " and ".join(f"{c} in (1, 2, 3, 4, 5, 6, 7)" for c in "abcd")
         doc = self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n  can view = "
         a, b = (
@@ -9843,8 +9772,6 @@ class Confidence(unittest.TestCase):
             evaluate.Reference(pol)
 
     def test_the_evaluator_refuses_data_it_cannot_read(self) -> None:
-        from authzlib import evaluate
-
         with self.assertRaisesRegex(ValueError, "not the evaluator's data"):
             evaluate.Data.of({("idz", "doc"): ["1"]})
         # a condition it doesn't read as a fact about the row, with no rows said to hold it
@@ -11266,7 +11193,6 @@ class Rewrites(unittest.TestCase):
             self.assertIn(left, (None, "a"))
 
     def test_a_policys_rewrites_each_rewrite_one_permission_or_select_rule(self) -> None:
-        import genpolicy
         import rewrites
 
         spec = genpolicy.make(1)
@@ -16545,7 +16471,6 @@ class Respelling(unittest.TestCase):
 
     def setUp(self) -> None:
         sys.path.insert(0, os.path.join(ROOT, "tests"))
-        import genpolicy
 
         self.g = genpolicy
 
@@ -16865,7 +16790,6 @@ class Worlds(unittest.TestCase):
         """Worlds where the app signs each user in with what they sent: an API key or a JWT, tried under the
         connection's settings, the refusal kept and the user then signed in as elsewhere."""
         import base64
-        import hashlib
         import hmac
         import time
 
@@ -17073,7 +16997,6 @@ class GeneratedShapes(unittest.TestCase):
 
     def setUp(self) -> None:
         sys.path.insert(0, os.path.join(ROOT, "tests"))
-        import genpolicy
 
         self.g = genpolicy
 
