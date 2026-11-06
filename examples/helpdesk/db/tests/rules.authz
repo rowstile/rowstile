@@ -91,6 +91,9 @@ test "a requester solves and reopens, but never a closed ticket"
   as user $cy refused {UPDATE hd.tickets SET status = 'pending' WHERE id = $t}
   as user $al allowed {UPDATE hd.tickets SET status = 'closed' WHERE id = $t}
   as user $cy refused {UPDATE hd.tickets SET status = 'open' WHERE id = $t}
+  -- and no one dates a ticket again (the inbox's order)
+  as user $cy refused {UPDATE hd.tickets SET created_at = now() + interval '1 year' WHERE id = $t}
+  as user $al refused {UPDATE hd.tickets SET created_at = now() + interval '1 year' WHERE id = $t}
 
 test "customers don't see internal notes, nor the agents' notes on them"
   given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
@@ -114,6 +117,9 @@ test "customers don't see internal notes, nor the agents' notes on them"
   as user $cy refused {SELECT notes FROM hd.users}
   as user $cy refused {UPDATE hd.users SET notes = 'nice' WHERE id = $cy}
   as user $cy allowed {UPDATE hd.users SET name = 'Cy L.' WHERE id = $cy}
+  -- the address is how the email intake knows a sender: an admin changes it, not the customer
+  as user $cy refused {UPDATE hd.users SET email = 'di@mail2' WHERE id = $cy}
+  as user $ann allowed {UPDATE hd.users SET email = 'cy@mail2' WHERE id = $cy}
 
 test "a customer org's people see each other's tickets when it says so"
   given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
@@ -201,3 +207,5 @@ test "the email intake: its key makes tickets and customers, and nothing more"
   as integration $mail with scope intake allowed {INSERT INTO hd.comments (ticket_id, integration_id, body) VALUES ($t, $mail, 're: help')}
   as integration $mail with scope intake refused {INSERT INTO hd.tickets (workspace_id, subject, requester_id) VALUES ($b, 'x', $xu)}
   as integration $mail with scope intake refused {UPDATE hd.tickets SET subject = 'x' WHERE id = $t}
+  -- a reply, never an internal note
+  as integration $mail with scope intake refused {INSERT INTO hd.comments (ticket_id, integration_id, internal, body) VALUES ($t, $mail, true, 'a note')}

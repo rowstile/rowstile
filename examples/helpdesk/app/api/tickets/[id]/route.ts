@@ -26,10 +26,12 @@ export const GET = route(async (_req: Request, { params }: Params) => {
   return Response.json(found);
 });
 
-// status, subject, team or assignee: which of them the user may change, and to what, is the policy's
+// status, subject, team or assignee: which of them the user may change, and to what, is the policy's. Only those
+// fields are written, whatever else the body holds (the policy refuses the other columns too)
 export const PATCH = route(async (req: Request, { params }: Params) => {
   const { id } = await params;
-  const data = await body<{ status?: string; subject?: string; teamId?: string | null; assigneeId?: string | null }>(req);
-  await inTx((tx) => tx.ticket.update({ where: { id }, data, select: { id: true } }));
+  const { status, subject, teamId, assigneeId } =
+    await body<{ status?: string; subject?: string; teamId?: string | null; assigneeId?: string | null }>(req);
+  await inTx((tx) => tx.ticket.update({ where: { id }, data: { status, subject, teamId, assigneeId }, select: { id: true } }));
   return Response.json({ id });
 });

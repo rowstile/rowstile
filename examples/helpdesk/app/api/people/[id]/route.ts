@@ -14,9 +14,11 @@ export const GET = route(async (_req: Request, { params }: Params) => {
   return person ? Response.json(person) : Response.json({ title: "not found" }, { status: 404 });
 });
 
+// a name, or the agents' notes: only those fields are written, whatever else the body holds (not the address: it
+// is how the email intake knows who sent a mail, and the policy lets only an admin change it)
 export const PATCH = route(async (req: Request, { params }: Params) => {
   const { id } = await params;
-  const data = await body<{ name?: string; notes?: string }>(req);
-  await inTx((tx) => tx.user.update({ where: { id }, data, select: { id: true } }));
+  const { name, notes } = await body<{ name?: string; notes?: string }>(req);
+  await inTx((tx) => tx.user.update({ where: { id }, data: { name, notes }, select: { id: true } }));
   return Response.json({ id });
 });
