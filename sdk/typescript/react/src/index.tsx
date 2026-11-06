@@ -93,8 +93,10 @@ async function call<R>(s: Settings, path: string, body?: object): Promise<R> {
   return out as R;
 }
 
-// an id as the database writes it: a composite key as a row, every field quoted; a key of one column given as
-// an array is that value (idText in @rowstile/client)
+// an id as the database compares it, as idText in @rowstile/client writes it (a copy: that package loads
+// node:async_hooks, which a browser lacks): a composite key as a row, every field quoted; a key of one column given
+// as an array is that value. Not as the database writes a row ((1,2): idShown). The answers are looked up by this
+// text because authz.perms_of answers each id as it was sent
 const key = (id: Id): string => (Array.isArray(id)
   ? id.length === 1 ? String(id[0]) : "(" + id.map((v) => '"' + String(v).replace(/["\\]/g, (c) => "\\" + c) + '"').join(",") + ")"
   : String(id));
