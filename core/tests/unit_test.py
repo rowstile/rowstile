@@ -13012,6 +13012,25 @@ class StackPages(unittest.TestCase):
                     wrong.append(f"{named or 'a block'}: {shown[0]}")
         return wrong
 
+    def test_the_kotlin_version_is_the_one_the_module_is_built_with(self) -> None:
+        """The Kotlin module's README and its page name the Kotlin its pom builds it with, and the one before it, the
+        oldest an app may be on (a compiler reads what the next version wrote); the Ktor app builds with it too."""
+
+        def version(pom: str) -> str:
+            with open(os.path.join(self.REPO, *pom.split("/")), encoding="utf-8") as fh:
+                found = re.search(r"<kotlin\.version>(\d+)\.(\d+)\.\d+</kotlin\.version>", fh.read())
+            assert found is not None, pom
+            return f"{found.group(1)}.{found.group(2)}"
+
+        built = version("sdk/java/rowstile-kotlin/pom.xml")
+        self.assertEqual(version("integrations/ktor/pom.xml"), built)
+        major, minor = built.split(".")
+        oldest = f"{major}.{int(minor) - 1}"
+        for doc in ("sdk/java/rowstile-kotlin/README.md", "docs/stacks/ktor.md"):
+            with open(os.path.join(self.REPO, *doc.split("/")), encoding="utf-8") as fh:
+                text = " ".join(fh.read().split())
+            self.assertIn(f"Kotlin {oldest} or newer: the module is built with Kotlin {built},", text, doc)
+
     def blocks(self, page: str) -> list[tuple[str, str]]:
         """A page's code blocks: (language, text)."""
         with open(os.path.join(self.REPO, "docs", "stacks", page), encoding="utf-8") as fh:

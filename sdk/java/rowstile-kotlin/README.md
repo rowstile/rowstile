@@ -6,7 +6,8 @@ The Kotlin module of [the Java SDK](../README.md), for Kotlin apps on a rowstile
 from coroutines, Exposed's transactions signed in, and a Ktor plugin that signs in each request's transactions and
 answers refusals with problem details. It holds no rowstile logic, nor any of the Java SDK's: its `Authz`,
 `Principal`, `Refused`, `NotFound` and `Problem` are the Java SDK's, and Kotlin adds the idioms around them. Java 21
-or newer; built with Kotlin 2.4, as Ktor 3.6 and Exposed 1.6 are, and apps on Kotlin 2.2 or newer read it.
+or newer, and Kotlin 2.3 or newer: the module is built with Kotlin 2.4, and a compiler reads what the next version
+wrote.
 
 Artifact `dev.rowstile:rowstile-kotlin`. Its packages:
 

@@ -15,7 +15,8 @@
     signed in, a Ktor plugin that signs in each request and answers refusals with problem details (403, 404).</description>
 
   <properties>
-    <!-- the Kotlin that Ktor 3.6, Exposed 1.6 and Spring Boot 4.1 are built with: apps on Kotlin 2.2 or newer read it -->
+    <!-- the Kotlin it is built with: apps on the version before it or newer read it, as its README and
+         docs/stacks/ktor.md say (core/tests/unit_test.py checks they do) -->
     <kotlin.version>2.4.21</kotlin.version>
     <!-- the compiler in Maven's own process: no daemon left behind, none to connect to -->
     <kotlin.compiler.daemon>false</kotlin.compiler.daemon>
