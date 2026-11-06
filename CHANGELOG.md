@@ -543,6 +543,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Upgrading
 
+- An Axum app's `impl SignIn` writes `async fn principal(&self, request: &mut Parts) -> Result<Principal, Error>`
+  where it wrote `fn principal(&self, request: &Parts) -> Result<Principal, Error>`; the body stays as it was.
 - A condition with a string, a quoted name or a dollar quote over several lines is refused (AZ114): write it on
   one line, a line break in a string as `E'\n'`.
 - A type, a relation or a permission whose name starts or ends with `_` is refused (AZ107), with the line it is
