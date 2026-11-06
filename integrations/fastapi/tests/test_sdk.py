@@ -126,6 +126,26 @@ def test_a_job_in_a_plain_function() -> None:
     assert report.__name__ == "report"
 
 
+def test_jobs_leave_nothing_behind_in_the_context() -> None:
+    """A worker (Celery's, RQ's) runs every job in one thread, in one context: a job, decorated or a block, leaves
+    nothing in it, however many run."""
+
+    @rowstile.job(2)
+    def one() -> Principal | None:
+        return rowstile.current()
+
+    def both() -> None:
+        assert one() == Principal("user", "2")
+        with rowstile.job(1) as me:
+            assert rowstile.current() == me
+
+    both()
+    before = len(contextvars.copy_context())
+    for _ in range(100):
+        both()
+    assert len(contextvars.copy_context()) == before
+
+
 def test_one_job_block_entered_side_by_side() -> None:
     # one job(who) entered by two threads at once, the first in leaving after the second came in: each leaves its
     # own block, and each thread is back to whom it acted for before
