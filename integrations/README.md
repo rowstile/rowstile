@@ -64,7 +64,8 @@ database worker, PHPUnit with paratest, PHPStan). Check 15 is Next.js's alone.
 `electric` (a preview) is the sync engine's suite, on the sync index: Electric behind a small Express app, whose
 shape routes are `@rowstile/client`'s `electricShape` on the shapes `rowstile client electric` writes, nginx as a
 cache in front of it, and the checks on Vitest with Electric's own client. Every user's shapes of the files and the
-folders stay open, live, and after each step each holds exactly the ids `authz.list` gives that user:
+folders stay open, live, and after each step each holds exactly the ids `authz.list` gives that user, once a write
+after the step (a rename of one of its rows) has reached it, so a row that comes late is seen:
 
 - E1. The first snapshot.
 - E2. A share made: the row arrives live. Revoked: it leaves.
@@ -79,13 +80,17 @@ folders stay open, live, and after each step each holds exactly the ids `authz.l
 - E10. Answers vary on who asks, and nginx never gives one user's answer to another.
 - E11. Writes through the app arrive in the shapes; a refused one is 403, a hidden row 404.
 - E12. Lint finds Electric's role without BYPASSRLS, a member of the app role, or reading a masked column;
-  `rowstile apply`, `reapply` and a changed policy leave the shapes as they are (the same handles, no
-  `must-refetch`), and `authz.sync_verify()` is true.
+  `rowstile apply`, `reapply` and a changed policy leave the shapes as they are (the files' and the folders': the
+  same handles, no `must-refetch`), and `authz.sync_verify()` is true.
 - E13. A masked column is never in a shape, even when the client asks for it (in `columns` or a subset's filter).
 - E14. A user deleted: their keys go, and their shape empties.
 - E15. A session limited by scopes (an API key's), or viewing as someone, is refused (403).
 - E16. Keyed by folder: a folder moved out of reach and back writes no file's readers, and the shapes follow.
 - E17. After commit: with the worker stopped, a share waits; started again, it arrives.
+- A client that leaves while an answer streams (a live shape over SSE) ends that answer alone: the app answers the
+  next request.
+- The worker (the same in the three sync engines' apps, which a unit test holds alike): a run that fails waits as
+  long as between two runs before the next, and a stop settles whoever waits for a run.
 
 And the stack's checks that apply: 1 (E1), 4 (a pool of one), 5 (E8), 11 (a fresh database migrates with the
 app's SQL migrations, the policy's tests pass, the lock file is current) and 13 (the app refuses to start on the
@@ -106,7 +111,8 @@ on 17 and 18, and on 16 with the app through PgBouncer (Electric's own connectio
 superuser: Zero runs without event triggers), the app's publication, a small Express app with Zero's query and
 mutate endpoints on the module `rowstile client zero` writes, and the checks on Vitest with Zero's own client in
 Node. Every user's queries of the files, the folders and the notes stay open, live, and after each step each holds
-exactly the ids `authz.list` gives that user. The checks are Electric's, numbered alike, where Zero meets them:
+exactly the ids `authz.list` gives that user, once a write after the step has reached it, as Electric's do. The checks
+are Electric's, numbered alike, where Zero meets them:
 
 - Z1 to Z7. As E1 to E7: the first sync, a share made and revoked, a folder moved out and back, a team left, a
   sub-team moved, a share that ends (at the next `authz.sync_tick()`), `confidential` set.
@@ -118,15 +124,18 @@ exactly the ids `authz.list` gives that user. The checks are Electric's, numbere
 - Z11. Writes through Zero's mutators, in a transaction the mutate endpoint signed in: an allowed one arrives in the
   queries; a refused one comes back as an error, in the database's words, and changes nothing.
 - Z12. Lint finds Zero's role without BYPASSRLS, a member of the app role, or reading a masked column; `rowstile
-  apply`, `reapply` and a changed policy leave the clients connected and their queries following changes.
+  apply`, `reapply` and a changed policy leave the clients connected all along (no reset: zero-cache's replication
+  slot is the same) and their queries following changes.
 - Z13. The masked body is in neither the publication nor a client; a publication that carries it is in lint.
 - Z14. A user deleted: their keys go, and their queries empty.
 - Z15. A session limited by scopes (an API key's) gets `needs-auth`, and so does a key that isn't one; a key
-  without scopes syncs its user's rows.
+  without scopes syncs its user's rows. Revoked, it is refused to a client that connects with it, while an open
+  client's queries go on following changes (zero-cache asks the endpoints again only for a new query or connection).
 - Z16. Keyed by folder: a folder moved out of reach and back writes no file's readers, and the queries follow.
 - Z17. After commit: with the worker stopped, a share waits; started again, it arrives.
 
-And the stack's checks that apply: 1 (Z1), 4 (someone the app doesn't know syncs nothing), 5 (Z8), 11 and 13. It runs
+And the stack's checks that apply: 1 (Z1), 4 (the app again with a pool of one, its endpoints called as one user, then
+nobody, then another: each query's filter and each mutation's sign-in is the asker's), 5 (Z8), 11 and 13. It runs
 whole in each of the index's modes, as Electric's does, a job each on every pull request; every night on 17 and 18,
 and on 16 with the app through PgBouncer (zero-cache's own connection stays direct).
 
@@ -134,11 +143,12 @@ and on 16 with the app through PgBouncer (zero-cache's own connection stays dire
 service on a role of its own, its bucket storage in a database of its own, the publication `powersync` (the mirrors
 and the keys), the streams `rowstile client powersync` writes, a small Express app that gives the clients their
 tokens and takes their writes, and the checks on Vitest with PowerSync's own client in Node. Every user's files,
-folders and notes stay open, live, and after each step each holds exactly the ids `authz.list` gives that user:
+folders and notes stay open, live, and after each step each holds exactly the ids `authz.list` gives that user, once
+a write after the step has reached it, as Electric's do:
 
 - P1 to P7. As E1 to E7: the first sync, a share made and revoked, a folder moved out and back, a team left, a
   sub-team moved, a share that ends (at the next `authz.sync_tick()`), `confidential` set.
-- P8. A token another key signed is refused by the service.
+- P8. The app's token, which lasts five minutes, is taken by the service; the same signed with another key is refused.
 - P9. Not signed in: the app gives no token, and the client gets no row.
 - P10. The client is synced no `readers` and no masked column, and its buckets are the keys its user holds.
 - P11. Writes through the app arrive; a refused one from a client's upload queue is the app's 403, with AZ709.
@@ -146,11 +156,14 @@ folders and notes stay open, live, and after each step each holds exactly the id
   and a changed policy keep the mirrors, and the clients go on syncing.
 - P14. A user deleted: their keys go, and their tables empty; the app gives them no token.
 - P15. A session limited by scopes (an API key's) gets no token, and a key that isn't one is 401 (AZ703); a key
-  without scopes syncs its user's rows.
+  without scopes syncs its user's rows. Revoked, it gets no new token, while the one it has goes on syncing until it
+  ends.
 - P17. After commit: with the worker stopped, a share waits; started again, it arrives.
 
-And the stack's checks that apply: 1 (P1), 3 (P9), 11 (with the streams `rowstile client` writes from the migrated
-database, as committed) and 13. It runs whole in the two modes a mirror takes, `copied` and `after` (a mirrored line
+And the stack's checks that apply: 1 (P1), 3 (P9), 4 (the app again with a pool of one, asked for tokens and sent
+writes as one user, then nobody, then another: each token names the asker, each write is judged as theirs), 11 (with
+the streams `rowstile client` writes from the migrated database, as committed) and 13 (and the app refuses to start
+without a key of 32 characters at least to sign tokens with). It runs whole in the two modes a mirror takes, `copied` and `after` (a mirrored line
 can't be keyed by folder), a job each on every pull request; every night on 17 and 18, and on 16 with the app through
 PgBouncer (the service's own connection stays direct).
 
