@@ -69,7 +69,8 @@ tests hold each rule:
 - Postgres's own row-level security refusal (`new row violates row-level security policy for table "notes"`: an
   insert read back without the select rule, an upsert, a MERGE) is a refusal, a 403, in any language. The SDKs
   tell it by the function in Postgres that raised it (`ExecWithCheckOptions`, the error's routine field), not by
-  its words. On a server whose `lc_messages` isn't English, the table and the rule it names are in words the
+  its words. Those words name the table without its schema, and so does the refusal: `notes`, where a rule's
+  refusal says `app.notes`. Through Prisma, the TypeScript SDK adds the schema back from the models. On a server whose `lc_messages` isn't English, the table and the rule it names are in words the
   SDKs don't read, so the refusal names neither. PHP's driver gives the server's text and not that field: in
   PHP, the refusal in another language stays a database error. Set the app role's messages to English there
   (`ALTER ROLE app_user SET lc_messages = 'C'`, by a superuser).

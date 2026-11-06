@@ -217,7 +217,9 @@ In your framework's error handler, `problemOf(e)` (in `@rowstile/client`) gives 
 for any driver's error that is a refusal (403, with the rule and the reason) or a hidden row (404), a call the
 database says names something that isn't there (404, AZ708) or lacks an argument or has a wrong one (400,
 AZ710), a call that needs someone signed in or a login refused (401, AZ714 and AZ703), a move inside itself
-(409, AZ713), and `null` for anything else. A problem's fields are its own, not under a `body`: `status`, `type`, `title` and `detail` (the database's words), and a refusal's `table`, `command`, `why` (the reason, a line each) and `code`. `problemResponse(e)` is the same as a Fetch `Response`, for Hono and other frameworks built
+(409, AZ713), and `null` for anything else. A refusal that Postgres raises itself (an insert read back without
+the select rule, an upsert, a MERGE) names its table without the schema, `inbox` and not `app.inbox`: Postgres's
+words don't give it. A problem's fields are its own, not under a `body`: `status`, `type`, `title` and `detail` (the database's words), and a refusal's `table`, `command`, `why` (the reason, a line each) and `code`. `problemResponse(e)` is the same as a Fetch `Response`, for Hono and other frameworks built
 on it.
 
 ## Tests on Jest

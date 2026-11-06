@@ -297,7 +297,9 @@ export const POST = route(async (req: Request, { params }: Params) => {
 ## Next.js with pg, without Prisma
 
 An app on plain `pg` (node-postgres) takes `@rowstile/pg` where this page has `@rowstile/prisma`; the rest
-holds: `route()`, `action()`, `checkAtStart`, the React kit. Leave Prisma and `@rowstile/prisma@next` out
+holds: `route()`, `action()`, `checkAtStart`, the React kit. But a refusal that Postgres raises itself (an insert
+read back without the select rule, an upsert, a MERGE) names its table without the schema there, `inbox` and
+not `app.inbox`: Postgres's words don't give it, and `@rowstile/prisma` adds it from the models. Leave Prisma and `@rowstile/prisma@next` out
 of the install: `@rowstile/pg@next` is there already, for the live updates. The pool connects as the app role, with a URL of its own, and `authz(pool, { user })`
 signs each transaction in as the request's user (`requestUser`: your session's user id, as above):
 
