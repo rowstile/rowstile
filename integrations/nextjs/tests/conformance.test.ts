@@ -817,11 +817,18 @@ describe("without Prisma", () => {
     }
   });
 
-  test("Drizzle: inIds on a key with a length", () => {
+  test("Drizzle: inIds on a key with a length; a type's name, and nothing else", () => {
     const t = pgSchema("app").table("t", { a: varchar("a", { length: 30 }), b: numeric("b", { precision: 10, scale: 0 }) });
     expect(() => inIds(t.a, "project", "edit")).not.toThrow();
     expect(() => inIds(t.b, "project", "edit")).not.toThrow();
+    // the names of several words Postgres has, as Drizzle writes a column's type
+    for (const name of ["double precision", "character varying(20)", "bit varying", "timestamp(3) with time zone",
+      "time without time zone", "integer[]"]) {
+      expect(() => drizzleIds("project", "edit", name), name).not.toThrow();
+    }
     expect(() => drizzleIds("project", "edit", "text); DROP TABLE x; --")).toThrow("not a type name");
+    // words with spaces between them are no type's name: they would change the subquery
+    expect(() => drizzleIds("project", "edit", "text union select owner_id from app.projects where true or")).toThrow("not a type name");
   });
 });
 

@@ -106,10 +106,15 @@ export function withAuthz<Tx extends Executes>(db: Transacts<Tx>, options: Optio
   };
 }
 
+// A type's name, as Drizzle writes a column's: one word, or one of the names of several words Postgres has; with its
+// length or precision if it has one (varchar(30), numeric(10, 0), timestamp(3) with time zone), and [] for an array.
+// Nothing else: it is written into the SQL as it is
+const TYPE_NAME =
+  /^(?:double precision|character varying|bit varying|[a-z_][a-z0-9_]*)(?:\(\s*\d+\s*(?:,\s*\d+\s*)?\))?(?: with(?:out)? time zone)?(?:\[\])?$/i;
+
 /** The ids the signed-in user holds perm on, as a subquery of the key's type (bigint by default). */
 export function ids<T extends ObjectType>(type: T, perm: Permission<T>, keyType = "bigint"): SQL {
-  // a type's name, with its length or precision if it has one: varchar(30), numeric(10, 0)
-  if (!/^[a-z_][a-z0-9_ ]*(\(\s*\d+\s*(,\s*\d+\s*)?\))?(\[\])?$/i.test(keyType)) throw new Error(`not a type name: ${keyType}`);
+  if (!TYPE_NAME.test(keyType)) throw new Error(`not a type name: ${keyType}`);
   return sql`(SELECT authz_ids.x::${sql.raw(keyType)} FROM authz.list(${type}, ${perm}) AS authz_ids(x))`;
 }
 
