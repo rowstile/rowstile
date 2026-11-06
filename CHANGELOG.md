@@ -88,6 +88,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   name passed.
 - The PHP SDK's `assertRefused($fn, $command)` asks for the rule's command itself (`select`, `insert`, `update` or
   `delete`). Before, any start of it passed: `'ins'`, and `''` for any refusal.
+- The PHP SDK's `php artisan rowstile:check` refuses a connection that signs no transaction in: a pgsql connection
+  another package's class made instead of rowstile's. `Rowstile\Laravel\SignsIn` is the trait that signs them in,
+  for a class of the app's that extends that package's.
 - In a Laravel app, a model whose update or delete changed no row is asked about in the transaction the statement
   ran in, one of its own when none is open. Before, outside `DB::transaction`, the question ran in a second
   transaction, and its answer was about the row as it was then.
@@ -553,6 +556,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The PHP SDK reads rowstile's code from the HINT the server wrote, never from text in the message or a DETAIL that
   looks like a HINT line (a value echoed back with a line break in it), and only where the HINT ends with it.
   Before, such a value could give an error another code, and another status.
+- The PHP SDK's `SignIn` middleware writes a streamed response (`response()->stream`, `streamDownload`,
+  `StreamedJsonResponse`) as the request's principal. Before, the body was written once the request acted for no
+  one, and its queries failed (AZ701).
+- The PHP SDK's `SignIn` says what is wrong when finding who the request acts for reads a table with rules (the
+  users table, read by Laravel's guard before anyone is signed in): a `LogicException` that names it. Before, it was
+  the not-signed-in error.
 - The PHP SDK answers a `ModelNotFoundException` that names no model (made without `setModel`) as Laravel does, a
   404. Before, it was a 500. One for several ids (`findOrFail([1, 2])`) names none of them, instead of `(1,2)`.
 - In a Laravel app, a model's `increment`, `decrement`, `incrementEach`, `decrementEach` and `forceDelete` that

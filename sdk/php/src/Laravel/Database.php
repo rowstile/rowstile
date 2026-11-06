@@ -7,9 +7,12 @@ namespace Rowstile\Laravel;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
 use PDO;
+use Rowstile\ConnectionProblem;
 use Rowstile\Querier;
 use Rowstile\Queries;
 use Rowstile\Rowstile;
+
+use function class_uses_recursive, in_array;
 
 /**
  * A Querier over a Laravel connection (the default one, or the one named), which signs its transactions in while the
@@ -41,11 +44,18 @@ final class Database implements Querier
     }
 
     /**
-     * Throws ConnectionProblem when the connection skips row-level security (the owner's, a superuser's): php artisan
-     * rowstile:check runs it, before the app is served.
+     * Throws ConnectionProblem when the connection skips row-level security (the owner's, a superuser's), or signs no
+     * transaction in (another package made it, without SignsIn): php artisan rowstile:check runs it, before the app is
+     * served.
      */
     public static function check(?string $connection = null): void
     {
+        $made = DB::connection($connection);
+        if (!in_array(SignsIn::class, class_uses_recursive($made), true)) {
+            throw new ConnectionProblem([$made::class." signs no transaction in: another package's connection class "
+                ."replaced rowstile's for pgsql. Give a class of yours that extends it Rowstile\\Laravel\\SignsIn, and make "
+                .'pgsql connections with it (Connection::resolverFor)']);
+        }
         Rowstile::check(new self($connection));
     }
 }

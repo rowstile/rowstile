@@ -9,13 +9,18 @@ use App\Models\Project;
 use Authz\NotePermission;
 use Authz\ProjectPermission;
 use Illuminate\Auth\GenericUser;
+use Illuminate\Auth\SessionGuard;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Contracts\Session\Session;
+use Illuminate\Database\Connection as BaseConnection;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Events\TransactionBeginning;
+use Illuminate\Database\PostgresConnection;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -27,6 +32,8 @@ use PHPUnit\Framework\Attributes\TestDox;
 use Rowstile\CallError;
 use Rowstile\ConnectionProblem;
 use Rowstile\Laravel\Builder;
+use Rowstile\Laravel\Connection;
+use Rowstile\Laravel\Database;
 use Rowstile\Laravel\HasRules;
 use Rowstile\Laravel\SignIn;
 use Rowstile\NotFound;
@@ -38,6 +45,7 @@ use Rowstile\Refused;
 use Rowstile\Rowstile;
 use Rowstile\Testing\Databases;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Tests\TestCase;
 
 /**
@@ -466,6 +474,56 @@ final class SdkTest extends TestCase
         // inside one: the statement and the question in it, no other
         self::assertInstanceOf(Refused::class, self::thrown(static fn () => Rowstile::actingAs(3, static fn (): bool => DB::transaction(static fn (): bool => $note->update(['body' => 'x'])))));
         self::assertSame(2, $begun);
+    }
+
+    #[TestDox('a streamed response is written as the request\'s user')]
+    public function test_streamed(): void
+    {
+        self::assertSame("2\n3\n", $this->get('/notes/export', $this->as('2'))->streamedContent());
+        // a streamed response with no body yet: as it is
+        $empty = new StreamedResponse();
+        self::assertSame($empty, (new SignIn())->handle(Request::create('/'), static fn (): StreamedResponse => $empty));
+        self::assertNull($empty->getCallback());
+    }
+
+    #[TestDox("the request's user, read by Laravel's session guard, from a table with no rules; a table with rules can't be read before")]
+    public function test_the_session_guard(): void
+    {
+        SignIn::using(null);
+        config(['auth.guards.web' => ['driver' => 'session', 'provider' => 'rows'], 'auth.providers.rows' => ['driver' => 'database', 'table' => 'app.users']]);
+        $user = function (): Principal {
+            Auth::forgetGuards();
+            $guard = Auth::guard('web');
+            self::assertInstanceOf(SessionGuard::class, $guard);
+            $this->app->make(Session::class)->put($guard->getName(), 2);
+            return SignIn::who(Request::create('/'));
+        };
+        self::assertEquals(Principal::user(2), $user());
+        config(['auth.providers.rows.table' => 'app.notes']);
+        $read = self::thrown($user);
+        self::assertInstanceOf(\LogicException::class, $read);
+        self::assertStringContainsString("the tables Laravel's guard reads (the users, Sanctum's tokens) can't have rules", $read->getMessage());
+        self::assertTrue(Rowstile::notSignedIn($read->getPrevious() ?? $read));
+        // another error, as it is
+        SignIn::using(static fn (): never => throw new QueryFailed());
+        self::assertInstanceOf(QueryFailed::class, self::thrown(static fn () => SignIn::who(Request::create('/'))));
+    }
+
+    #[TestDox("rowstile:check refuses a connection another package made, which signs nothing in")]
+    public function test_another_connection_class(): void
+    {
+        BaseConnection::resolverFor('pgsql', static fn (PDO|\Closure $pdo, string $database, string $prefix, array $config): PostgresConnection => new PostgresConnection($pdo, $database, $prefix, $config));
+        config(['database.connections.plain' => config('database.connections.pgsql')]);
+        try {
+            $problem = self::thrown(static fn () => Database::check('plain'));
+        } finally {
+            DB::purge('plain');
+            BaseConnection::resolverFor('pgsql', static fn (PDO|\Closure $pdo, string $database, string $prefix, array $config): Connection => new Connection($pdo, $database, $prefix, $config));
+        }
+        self::assertInstanceOf(ConnectionProblem::class, $problem);
+        self::assertStringContainsString("Illuminate\\Database\\PostgresConnection signs no transaction in: another package's connection class", $problem->getMessage());
+        self::assertInstanceOf(Connection::class, DB::connection('plain'));
+        DB::purge('plain');
     }
 
     #[TestDox('a model not found, with no key, is 404 naming its table')]
