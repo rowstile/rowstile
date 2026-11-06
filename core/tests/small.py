@@ -873,7 +873,7 @@ def load_sql(pol: Policy, data: evaluate.Data, principals: bool = True, rows_dec
             continue
         values: dict[str, dict[str, str]] = {i: {} for i in data.ids[t.name]}
         for i, cols in data.columns.get(t.name, {}).items():
-            values[i] |= {c: sql_value(v) for c, v in cols.items()}
+            values[i] |= {c: sql_value(v) for c, v in cols.items() if c != t.pk}  # (the key: the row's id)
         for r in t.relations.values():
             for k, src in enumerate(r.sources):
                 for st, sr in src.subjects:
@@ -882,6 +882,8 @@ def load_sql(pol: Policy, data: evaluate.Data, principals: bool = True, rows_dec
                         if not isinstance(src.column, str):
                             raise Unloadable("a key of several columns")
                         for o, s in pairs:
+                            if src.column == t.pk:
+                                continue  # (a relation that reads the row's own key: it names the row, its id)
                             values[o][src.column] = ident(st, s)
                             if src.type_col:
                                 values[o][src.type_col] = lit(st)

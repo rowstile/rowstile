@@ -9577,6 +9577,33 @@ class Confidence(unittest.TestCase):
                 told += edits[0] != edits[1]
         self.assertGreater(told, 0)
 
+    def test_a_condition_on_the_key_reads_the_rows_own_id(self) -> None:
+        # `{id = 2}` holds on the row whose id is 2, as the database says: the key column is the row's id, in every
+        # world (drawn, a corner, listed), never a value drawn beside it; the worlds hold the ids the conditions name
+        import small
+        from authzlib import evaluate
+
+        folder = "type folder = app.folders\n  owner : user = owner_id\n  can view = owner or "
+        pol = parse_policy(self.HEAD + folder + "{id = 2}\n", "p.authz")
+        drawn = list(evaluate.worlds_to_try([pol], 60, "s"))
+        listed = list(itertools.islice(evaluate.Listing([pol]).worlds(), 500))
+        for w in drawn + listed:
+            data = w.data(pol)
+            ref = evaluate.Reference(pol)
+            mine = {o for o, s in data.pairs[("folder", "owner", 0, "user", "")] if s == "1"}
+            self.assertEqual(ref.evaluate(data, "1")[("folder", "view")], mine | ({"2"} & set(data.ids["folder"])))
+            # ... and made as rows, the key is written once, as the row's id
+            rows, _ = small.load_sql(pol, data)
+            self.assertNotRegex(rows, r'\("id", [^)]*"id"')
+        # a row 7 is in the worlds where a condition names it
+        plain = "type folder = app.folders\n  owner : user = owner_id\n  can view = "
+        self.assertFalse(self.same(plain + "owner\n", plain + "owner or ({id = 7} and signed_in)\n"))
+        # no id lies between two whole numbers: `> 1` and `>= 2` are one on a bigint key
+        self.assertTrue(self.same(plain + "owner and {id > 1}\n", plain + "owner and {id >= 2}\n"))
+        # a key of two columns names no one column: its columns are drawn as any other
+        two = "type folder = app.folders (org_id bigint, id bigint)\n  owner : user = owner_id\n  can view = owner and "
+        self.assertFalse(self.same(two + "{id = 2}\n", two + "{id <> 2}\n"))
+
     def test_a_corner_chooses_the_columns_a_condition_reads_beside_a_relations(self) -> None:
         # the corner where {owner_id is not null and a and b} holds: on each row with an owner (its link), a and b
         # are chosen so that it holds there
