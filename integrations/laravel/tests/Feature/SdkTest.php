@@ -10,11 +10,15 @@ use Authz\NotePermission;
 use Authz\ProjectPermission;
 use Illuminate\Auth\GenericUser;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\ParallelTesting;
 use PDO;
 use PDOException;
@@ -419,6 +423,49 @@ final class SdkTest extends TestCase
         $text = new TextKeyProject();
         self::assertSame(['2', '3'], Rowstile::actingAs(2, static fn (): array => $text->newQuery()->permitted(ProjectPermission::View)->orderBy('id')->pluck('id')->all()));
         self::assertSame([1], Rowstile::actingAs(1, static fn (): array => Project::permitted(ProjectPermission::Edit)->where('id', '<', 3)->pluck('id')->all()));
+        // a uuid key is compared as uuid, the column as it is: its index is used
+        self::assertSame('select * from "app"."projects" where "app"."projects"."id" IN (SELECT CAST(x AS uuid) FROM authz.list(?, ?) x)', (new UuidKeyProject())->newQuery()->permitted(ProjectPermission::View)->toSql());
+    }
+
+    #[TestDox("a model's increment, decrement and forceDelete that change no row say why, as its update and delete do")]
+    public function test_counters_and_force_delete(): void
+    {
+        // cy sees ann's note 1, and may not change it
+        $refused = Rowstile::actingAs(3, static function (): array {
+            $note = Note::query()->findOrFail(1);
+            return [
+                self::thrown(static fn () => $note->increment('project_id', 0)),
+                self::thrown(static fn () => $note->decrement('project_id', 0)),
+                self::thrown(static fn () => $note->incrementEach(['project_id' => 0])),
+                self::thrown(static fn () => $note->decrementEach(['project_id' => 0])),
+                self::thrown(static fn () => SoftNote::query()->withoutGlobalScopes()->findOrFail(1)->forceDelete()),
+            ];
+        });
+        self::assertSame(array_fill(0, 5, Refused::class), array_map(static fn (\Throwable $e): string => $e::class, $refused));
+        self::assertSame(['update', 'update', 'update', 'update', 'delete'], array_map(static fn (\Throwable $e): ?string => $e instanceof Refused ? $e->command : null, $refused));
+        // ann, its author, changes it
+        self::assertSame([1, 1, 1, 1, true], Rowstile::actingAs(1, static function (): array {
+            $note = Note::query()->findOrFail(1);
+            return [
+                $note->increment('project_id', 0), $note->decrement('project_id', 0), $note->incrementEach(['project_id' => 0]),
+                $note->decrementEach(['project_id' => 0]), SoftNote::query()->withoutGlobalScopes()->findOrFail(1)->forceDelete(),
+            ];
+        }));
+    }
+
+    #[TestDox("a model's refused update is asked about in the transaction it ran in, one of its own when none is open")]
+    public function test_asked_in_the_same_transaction(): void
+    {
+        $note = Rowstile::actingAs(3, static fn (): Note => Note::query()->findOrFail(1));
+        $begun = 0;
+        Event::listen(TransactionBeginning::class, static function () use (&$begun): void {
+            $begun++;
+        });
+        self::assertInstanceOf(Refused::class, self::thrown(static fn () => Rowstile::actingAs(3, static fn (): bool => $note->update(['body' => 'x']))));
+        self::assertSame(1, $begun);
+        // inside one: the statement and the question in it, no other
+        self::assertInstanceOf(Refused::class, self::thrown(static fn () => Rowstile::actingAs(3, static fn (): bool => DB::transaction(static fn (): bool => $note->update(['body' => 'x'])))));
+        self::assertSame(2, $begun);
     }
 
     #[TestDox('a model not found, with no key, is 404 naming its table')]
@@ -478,6 +525,26 @@ final class TextKeyProject extends Model
     protected $table = 'app.projects';
 
     protected $keyType = 'string';
+}
+
+/** The projects, as a model whose key is a uuid (only its SQL is read: the projects' keys are numbers). */
+final class UuidKeyProject extends Model
+{
+    use HasRules;
+    use HasUuids;
+
+    protected $table = 'app.projects';
+}
+
+/** The notes, as a model that deletes softly (its rows are read without the scope: the notes have no deleted_at). */
+final class SoftNote extends Model
+{
+    use HasRules;
+    use SoftDeletes;
+
+    protected $table = 'app.notes';
+
+    public $timestamps = false;
 }
 
 /** An error that is none of the database's. */

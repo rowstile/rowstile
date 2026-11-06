@@ -29,7 +29,7 @@ $ids = Rowstile::transactionAs($pdo, 42, fn (PDO $pdo) => $pdo->query('SELECT id
 | Laravel | the service provider (found by package discovery) makes every `pgsql` connection sign in each transaction while the code acts for someone, a statement outside a transaction being one of its own, and refuse a statement for anyone else, or for no one, in a transaction signed in already; it answers `Refused` 403, `NotFound` and Eloquent's `ModelNotFoundException` 404, and each code a call meets as its page says (AZ703, AZ714 401; AZ708 404; AZ710 400; AZ713 409), as problem+json; `php artisan rowstile:check` refuses a connection that skips row-level security |
 | `Laravel\SignIn` | route middleware: each request acts for `SignIn::using(fn (Request $r) => ...)`'s answer, by default the user Laravel authenticated |
 | `Laravel\ActsFor` | job middleware: the job acts for its principal, whatever dispatched it |
-| `Laravel\HasRules` | a model whose update or delete changed no row raises `NotFound` or `Refused`; `Model::permitted($permission)` filters to the rows the user holds it on, in one set lookup |
+| `Laravel\HasRules` | a model whose update or delete changed no row (`save`, `delete`, `increment`, `decrement`, their `Each` forms, `forceDelete`) raises `NotFound` or `Refused`, asked in the statement's transaction; `Model::permitted($permission)` filters to the rows the user holds it on, in one set lookup |
 | `Testing\Assertions`, `Laravel\DatabasePerWorker` | PHPUnit: `asUser`, `assertRefused`, `assertNotFound`; a copy of the migrated test database for each worker (`php artisan test --parallel`) |
 
 pdo_pgsql gives an error's SQLSTATE and the server's text, not the fields that name a refused write's table and
