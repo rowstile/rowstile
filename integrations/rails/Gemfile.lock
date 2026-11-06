@@ -2,7 +2,7 @@ PATH
   remote: ../../sdk/ruby
   specs:
     rowstile (0.1.0.pre.dev)
-      activerecord (>= 8.0, < 9)
+      activerecord (~> 8.1)
       pg (>= 1.5)
 
 GEM

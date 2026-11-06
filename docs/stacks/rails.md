@@ -5,7 +5,7 @@
 **Preview.** The Ruby SDK, the `rowstile` gem, may change in any release, and it is not part of rowstile 1.0's
 frozen surface.
 
-A Rails 8 app on Active Record and the `pg` driver, served by Puma, whose migrations are Rails'. Controllers check
+A Rails 8.1 app on Active Record and the `pg` driver, served by Puma, whose migrations are Rails'. Controllers check
 nothing: each Active Record transaction signs in as the request's user, the database filters what it reads and
 refuses what it may not write, and the gem answers a refusal with 403 and a hidden row with 404.
 
