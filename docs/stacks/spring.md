@@ -123,7 +123,11 @@ Map<String, Long> edit(@PathVariable long id, @RequestBody Body b) {
 Leave the flush to the commit: a `saveAndFlush` of your own that the rules refuse is Spring's
 `ObjectOptimisticLockingFailureException`, which the starter can't tell from a row changed meanwhile. That flush
 before the commit is Hibernate's: on another JPA provider (EclipseLink), an entity's update or delete the rules
-refuse changes nothing and says nothing, so write it with `JdbcClient` and `expect` its count, as below.
+refuse changes nothing and says nothing, so write it with `JdbcClient` and `expect` its count, as below. An entity
+whose id has several columns (an `@EmbeddedId`, an `@IdClass`) is answered 403 with its table and the command, and
+no reason: Hibernate keeps the id's columns in its own order (alphabetical), which needn't be the policy's key's,
+so the starter doesn't ask the database why. For the reason, write it with `JdbcClient`, and `expect` its count
+with the key as a `List` in the policy's key order.
 
 `JdbcClient` runs in the same transactions, signed in too. An UPDATE or DELETE the rules refuse changes 0 rows
 without an error; the `Authz` bean's `expect` asks why:

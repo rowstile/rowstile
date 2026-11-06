@@ -497,6 +497,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   transaction is one principal's too: with the module on the classpath, each failed with a `ClassCastException`.
 - The Ktor plugin asks who a request is once, when its code first reads it, as its docs say: it asked again on every
   `actingFor()`.
+- The Spring starter answers a refused update or delete of an entity whose id has several columns (an `@EmbeddedId`,
+  an `@IdClass`) with a 403 that names its table and command, and no reason, instead of a 500: it sent the id's own
+  text, which the database couldn't read. Hibernate's order of the id's columns needn't be the policy's key's, so it
+  asks nothing ([Spring](docs/stacks/spring.md)).
 
 ### Upgrading
 
