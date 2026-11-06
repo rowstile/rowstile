@@ -40,15 +40,29 @@ final class Javac {
         return Files.writeString(file, text, StandardCharsets.UTF_8);
     }
 
-    /** The rowstile command (test.sh's ROWSTILE_CLI), run in {@code dir}: what it printed. */
+    /**
+     * The rowstile command (test.sh's ROWSTILE_CLI), run in {@code dir}: what it printed. Its output goes to a file, so
+     * that the wait has its limit: a command that hangs is stopped after two minutes, and the check says so.
+     */
     static String rowstile(Path dir, String... args) throws IOException, InterruptedException {
         List<String> command = new ArrayList<>(List.of(System.getenv("ROWSTILE_CLI").split(" ")));
         command.addAll(List.of(args));
-        Process p = new ProcessBuilder(command).directory(dir.toFile()).redirectErrorStream(true).start();
-        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        if (!p.waitFor(120, TimeUnit.SECONDS) || p.exitValue() != 0) {
-            throw new IllegalStateException("rowstile " + String.join(" ", args) + ": " + out);
+        Path said = Files.createTempFile("rowstile", ".out");
+        try {
+            Process p = new ProcessBuilder(command).directory(dir.toFile()).redirectErrorStream(true)
+                    .redirectOutput(said.toFile()).start();
+            boolean done = p.waitFor(120, TimeUnit.SECONDS);
+            if (!done) {
+                p.destroyForcibly().waitFor();
+            }
+            String out = Files.readString(said, StandardCharsets.UTF_8);
+            if (!done || p.exitValue() != 0) {
+                throw new IllegalStateException("rowstile " + String.join(" ", args) + ": "
+                        + (done ? "" : "no answer in two minutes: ") + out);
+            }
+            return out;
+        } finally {
+            Files.deleteIfExists(said);
         }
-        return out;
     }
 }
