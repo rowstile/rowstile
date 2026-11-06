@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from sqlalchemy.schema import SchemaItem
 
-SCHEMAS = frozenset({"authz", "authz_int", "authz_gen"})
+# rowstile's schemas: authz_sync is a policy's with sync lines (the sync index, and its mirrors)
+SCHEMAS = frozenset({"authz", "authz_int", "authz_gen", "authz_sync"})
 # Alembic's names (alembic.runtime.environment), which its configure() calls these with
 ParentNames = MutableMapping[Literal["schema_name", "table_name", "schema_qualified_table_name"], "str | None"]
 

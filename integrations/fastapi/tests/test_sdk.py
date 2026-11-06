@@ -1093,6 +1093,26 @@ def test_autogenerate_leaves_rowstiles_tables_alone_with_include_object_alone() 
         engine.dispose()
 
 
+def test_autogenerate_leaves_the_sync_indexs_tables_alone() -> None:
+    """A policy with sync lines makes schema authz_sync, and its tables: autogenerate leaves them alone, by the
+    schema's name or by its tables, as it does rowstile's other schemas."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+    from rowstile.alembic import include_name, include_object
+
+    engine = create_engine(OWNER)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("CREATE SCHEMA authz_sync"))
+            conn.execute(text("CREATE TABLE authz_sync.keys (key text PRIMARY KEY)"))
+            for opts in ({"include_name": include_name}, {"include_object": include_object}):
+                context = MigrationContext.configure(conn, opts={"include_schemas": True, **opts})
+                assert compare_metadata(context, Base.metadata) == [], opts
+            conn.rollback()  # made in this transaction alone
+    finally:
+        engine.dispose()
+
+
 def test_autogenerate_leaves_a_model_of_a_masked_view_alone_when_it_says_so() -> None:
     """A model of a masked view (app.notes_visible) marks its table: autogenerate adds no table for it. Unmarked,
     it would."""
