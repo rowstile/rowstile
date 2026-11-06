@@ -229,7 +229,9 @@ The dump can't make a database: Rails dumps it with `--no-privileges`, so it has
 policy's own rows. A database with a rowstile policy is made by its migrations alone. Rails 8 loads the dump into an
 empty database before migrating it (`db:migrate`, `db:prepare`); for a dump of a rowstile database, the gem has it
 run every migration instead. Loading the dump any other way (`db:schema:load`, `db:setup`, `db:reset`, a test
-database Rails rebuilds) raises `Rowstile::SchemaLoadRefused`, which says what to do.
+database Rails rebuilds) raises `Rowstile::SchemaLoadRefused`, which says what to do. `db:test:prepare` (which
+Rails runs before the tests while `maintain_test_schema` is on, and which a new app's CI runs) empties the test
+database before it loads the dump: the gem refuses before that, and the migrated test database is kept.
 
 `pg_dump` writes more settings at the top of the dump in newer versions: dump with one version of it, the newest,
 whatever the server's (it dumps any server older than itself). The conformance suite checks that the dump Rails
