@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -13805,20 +13806,21 @@ class BlogPosts(unittest.TestCase):
             "experiment.sql: its header says to read the middle of the three timings",
         )
         small, large = runs["200,000 files"], runs["2 million files"]
-        for said, run in (
-            ("3,410 files in the\nsmall run, 54,610 in the large one", None),
-            ("88,800 rows", small),
-            ("8,728 kB", small),
-            ("1,218,200", large),
-            ("109 MB", large),
-            ("1,365 folders", large),
-            ("2,377 walks", small),
-            ("5,461 folders", large),
+        # each figure as its run's line says it: its unit, or what the number counts there (rows inserted, rows
+        # deleted, loops of a plan's node), not the number alone (109 ms, a line's number would do)
+        for said, run, line in (
+            ("3,410 files in the\nsmall run, 54,610 in the large one", None, ""),
+            ("88,800 rows", small, r"INSERT 0 88800\n"),
+            ("8,728 kB", small, r"\| 8728 kB\n"),
+            ("1,218,200", large, r"INSERT 0 1218200\n"),
+            ("109 MB", large, r"\| 109 MB\n"),
+            ("1,365 folders", large, r"DELETE 1365\n"),
+            ("2,377 walks", small, r"loops=2377\)"),
+            ("5,461 folders", large, r"\(actual rows=5461 "),
         ):
             self.assertIn(said, text)
             if run is not None:
-                number = search(r"[\d,]+", said).group(0).replace(",", "")
-                self.assertRegex(run, rf"(?<!\d){number}(?!\d)", f"{said!r} is in no line of its run")
+                self.assertRegex(run, line, f"{said!r} is in no line of its run")
         self.assertRegex(small, r"files_user_7_sees \n-+\n\s+3410\n")
         self.assertRegex(large, r"files_user_7_sees \n-+\n\s+54610\n")
         for run in (small, large):
@@ -13922,7 +13924,10 @@ class BlogPosts(unittest.TestCase):
         self.assertIn(f"{exists_one} against {in_one.removesuffix(' ms')}.", flat)
         for said in ("2,501 files", "42,000", "40,000 of them", "400,000 shares", "about 262,000 rows"):
             self.assertIn(said, flat)
-        self.assertEqual(8 * 1024 * 1024 // 32, 262144)  # 4 MB times 2, at 32 bytes a row
+        # "about 262,000 rows": work_mem times hash_mem_multiplier (the runs' settings), at 32 bytes a row
+        for version, line in settings.items():
+            m = search(r"\|\s+\d+\s+\|\s+(\d+)MB\s+\|\s+(\d+)\n", line)
+            self.assertEqual(round(int(m.group(1)) * 1024 * 1024 * int(m.group(2)) / 32, -3), 262000, version)
         # "twice as long", "about half the time": what the table's own cells say
         cell = {n: statistics.median(t for _, t in timed(on18[n])[:3]) for n in "12356"}
         self.assertTrue(1.8 < cell["2"] / cell["1"] < 2.2)
@@ -14924,6 +14929,32 @@ class StudioPort(unittest.TestCase):
         s.listen()
         return s.getsockname()[1]
 
+    def test_on_windows_the_server_asks_for_the_port_alone(self) -> None:
+        # the branch that runs on Windows only, run here with the platform made Windows: SO_EXCLUSIVEADDRUSE asked
+        # for (a stand-in value: Linux has none), SO_REUSEADDR left off, then the address bound
+        import importlib
+        from http.server import BaseHTTPRequestHandler
+
+        import studio
+
+        self.addCleanup(importlib.reload, studio)  # (the module as this platform makes it, after)
+        with (
+            mock.patch.object(sys, "platform", "win32"),
+            mock.patch.object(socket, "SO_EXCLUSIVEADDRUSE", -5, create=True),
+        ):
+            windows = importlib.reload(studio)
+            self.assertFalse(windows.Server.allow_reuse_address)
+            server = windows.Server(("127.0.0.1", 0), BaseHTTPRequestHandler, bind_and_activate=False)
+            server.socket.close()
+            held = mock.MagicMock()
+            held.getsockname.return_value = ("127.0.0.1", 4983)
+            server.socket = held
+            server.server_bind()
+        calls = held.setsockopt.call_args_list
+        self.assertIn(mock.call(socket.SOL_SOCKET, -5, 1), calls)
+        self.assertNotIn(mock.call(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1), calls)
+        held.bind.assert_called_once_with(("127.0.0.1", 0))
+
     def test_the_socket_options_are_the_ones_meant(self) -> None:
         import studio
 
@@ -15294,43 +15325,24 @@ class PythonExtras(unittest.TestCase):
 
 
 class Licence(unittest.TestCase):
-    """The Python package, the Go module and the Zed extension ship the licence: their copies (sdk/python/LICENSE,
-    what the build takes; sdk/go/LICENSE, the module's; editor/zed/LICENSE, what Zed's registry reads) are the
-    repository's."""
+    """Each package that ships the licence ships the repository's: every SDK folder that holds a copy (a Go module,
+    a gem, a crate, a Hex package and a Composer package are their folder alone; the Python package's build takes
+    sdk/python/LICENSE), the VS Code extension (vsce packages the files package.json names, from its folder) and the
+    Zed extension (Zed's registry reads its own folder's)."""
 
     REPO = os.path.dirname(ROOT)
 
-    def test_the_python_package_has_the_repositorys_licence(self) -> None:
-        with (
-            open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as a,
-            open(os.path.join(self.REPO, "sdk", "python", "LICENSE"), encoding="utf-8") as b,
-        ):
-            self.assertEqual(a.read(), b.read(), "sdk/python/LICENSE: copy the repository's LICENSE")
-
-    def test_the_go_module_has_the_repositorys_licence(self) -> None:
-        # a Go module is its folder alone (sdk/go): the licence at the repository's root isn't in it
-        with (
-            open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as a,
-            open(os.path.join(self.REPO, "sdk", "go", "LICENSE"), encoding="utf-8") as b,
-        ):
-            self.assertEqual(a.read(), b.read(), "sdk/go/LICENSE: copy the repository's LICENSE")
-
-    def test_the_zed_extension_has_the_repositorys_licence(self) -> None:
-        # Zed's registry reads the licence in the extension's own folder: one at the repository's root doesn't count
-        with (
-            open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as a,
-            open(os.path.join(self.REPO, "editor", "zed", "LICENSE"), encoding="utf-8") as b,
-        ):
-            self.assertEqual(a.read(), b.read(), "editor/zed/LICENSE: copy the repository's LICENSE")
-
-    def test_the_vscode_extension_has_the_repositorys_licence(self) -> None:
-        # vsce packages the licence package.json's files names from the extension's folder (editor/README.md's
-        # npm run package, and the release's)
-        with (
-            open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as a,
-            open(os.path.join(self.REPO, "editor", "LICENSE"), encoding="utf-8") as b,
-        ):
-            self.assertEqual(a.read(), b.read(), "editor/LICENSE: copy the repository's LICENSE")
+    def test_every_copy_of_the_licence_is_the_repositorys(self) -> None:
+        copies = sorted(glob.glob(os.path.join(self.REPO, "sdk", "*", "LICENSE")))
+        copies += [os.path.join(self.REPO, "editor", "LICENSE"), os.path.join(self.REPO, "editor", "zed", "LICENSE")]
+        names = [os.path.relpath(c, self.REPO) for c in copies]
+        for want in ("sdk/python/LICENSE", "sdk/go/LICENSE", "sdk/ruby/LICENSE", "sdk/rust/LICENSE"):
+            self.assertIn(want, names)  # (the glob finds those it must)
+        with open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as fh:
+            licence = fh.read()
+        for path, name in zip(copies, names, strict=True):
+            with open(path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), licence, f"{name}: copy the repository's LICENSE")
 
 
 class CoverageReport(unittest.TestCase):
@@ -17617,6 +17629,64 @@ class ExampleOwners(unittest.TestCase):
                     self.assertRegex(url, rf"^postgresql://{owner}:{owner}@", (app, name))
 
 
+class HelpdeskTestScript(unittest.TestCase):
+    """examples/helpdesk/test.sh (its own containers, by docker run, not compose) takes its database, Electric and
+    their network down however the run ends, a step that stops it early too; KEEP=1 leaves the database."""
+
+    NAME = "rowstile-example-helpdesk"
+
+    def run_script(self, keep: str = "") -> tuple[int, list[str], str]:
+        """The script, copied into a tree of its own (its tools are the repository's node_modules: Prisma here
+        fails, so the run stops right after the database is made), with docker, npm and python3 that only say what
+        was asked of them: its exit status, docker's calls, what it printed."""
+        with tempfile.TemporaryDirectory() as d:
+            app = os.path.join(d, "examples", "helpdesk")
+            os.makedirs(os.path.join(app, "db"))
+            shutil.copy(os.path.join(os.path.dirname(ROOT), "examples", "helpdesk", "test.sh"), app)
+            with open(os.path.join(app, "db", "electric.sql"), "w", encoding="utf-8") as fh:
+                fh.write("")
+            tools, log = os.path.join(d, "tools"), os.path.join(d, "log")
+            os.makedirs(tools)
+            os.makedirs(os.path.join(d, "node_modules", ".bin"))
+            for path, body in (
+                (os.path.join(tools, "docker"), f'echo "docker $*" >> "{log}"'),
+                (os.path.join(tools, "npm"), ""),
+                (os.path.join(tools, "python3"), ""),
+                (os.path.join(tools, "sleep"), ""),
+                (os.path.join(d, "node_modules", ".bin", "prisma"), "exit 1"),
+            ):
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(f"#!/bin/sh\n{body}\n")
+                os.chmod(path, 0o755)
+            env = {**os.environ, "PATH": tools + os.pathsep + os.environ["PATH"], "KEEP": keep}
+            p = subprocess.run(
+                ["bash", os.path.join(app, "test.sh")], env=env, capture_output=True, text=True, timeout=60
+            )
+            with open(log, encoding="utf-8") as fh:
+                calls = fh.read().splitlines()
+        return p.returncode, calls, p.stdout + p.stderr
+
+    def test_a_run_that_stops_early_takes_its_containers_down(self) -> None:
+        rc, calls, out = self.run_script()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL  prisma migrate deploy", out)
+        self.assertTrue(any(c.startswith(f"docker run -d --name {self.NAME} ") for c in calls), calls)
+        self.assertEqual(
+            calls[-3:],
+            [
+                f"docker rm -f -v {self.NAME}-electric",
+                f"docker rm -f -v {self.NAME}",
+                f"docker network rm {self.NAME}-net",
+            ],
+            out,
+        )
+
+    def test_keep_leaves_the_database(self) -> None:
+        rc, calls, out = self.run_script(keep="1")
+        self.assertEqual((rc, calls[-1]), (1, f"docker rm -f -v {self.NAME}-electric"), out)
+        self.assertNotIn(f"docker network rm {self.NAME}-net", calls)
+
+
 class PublicSurface(unittest.TestCase):
     """examples/public_surface.py, which each example's check_public_surface.py runs: the app uses only rowstile's
     public surface. It reads every text file, matches names as Postgres reads them, and leaves alone only what
@@ -17787,7 +17857,7 @@ class PublicSurface(unittest.TestCase):
         self.assertEqual(self.found("signed in as the user (`authz.user_id`, authz.acting_user)", "README.md"), [])
 
     def test_the_examples_pass(self) -> None:
-        for app in ("filemanager", "messenger"):
+        for app in ("filemanager", "messenger", "helpdesk"):
             script = os.path.join(self.REPO, "examples", app, "check_public_surface.py")
             p = subprocess.run([sys.executable, script], capture_output=True, text=True, timeout=60)
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
@@ -18809,6 +18879,8 @@ class Delivery(unittest.TestCase):
                     self.assertIsNone(limit, f"{path}: {name}")
                 else:
                     self.assertIsNotNone(limit, f"{path}: {name}: timeout-minutes")
+                    # ten at least (CLAUDE.md): a short limit fails a slow but healthy run on a busy runner
+                    self.assertGreaterEqual(int(limit.group(1)) if limit else 0, 10, f"{path}: {name}: timeout-minutes")
         # a part's suites get more than ci.sh gives them: ci.sh stops them first, and says what was still running
         part = int(search(r"then LIMIT=(\d+); fi", read("ci.sh")).group(1))
         self.assertGreater(int(search(r"timeout-minutes: (\d+)", self.job("suites.yml", "suites")).group(1)) * 60, part)
