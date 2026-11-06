@@ -134,7 +134,9 @@ The middleware answers each with a problem body (`application/problem+json`), wo
 refused insert: `permission denied: user 3 may not update row 1 of app.notes`. A model with a `lock_version` whose
 row changed since it was read, and which the rules let the user change, raises `ActiveRecord::StaleObjectError`
 as Rails does: 409. `update_all` and `delete_all` return a count; `Rowstile.expect(count, "app.notes", "delete",
-id)` turns 0 into the same answers.
+id)` turns 0 into the same answers. Call both inside one transaction (`Note.transaction { ... }`), so that the answer
+is about the rows the statement saw: outside one, each is a transaction of its own. `connection: Note` asks on that
+model's database (`ActiveRecord::Base`'s by default).
 
 An insert that reads the new row back (`create` uses `RETURNING`) also needs the select rule: if the user may
 insert but not read the row, the 403 names the select rule. `insert!(..., returning: false)` reads nothing back.

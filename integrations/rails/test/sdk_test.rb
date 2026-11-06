@@ -42,6 +42,20 @@ class SdkTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # a model with a composite key: its columns, as a row, compared with the text authz.list gives for each (here
+  # projects' ids, which no (id,owner_id) row's text is: nothing listed)
+  class ProjectByOwner < ApplicationRecord
+    self.table_name = "app.projects"
+    self.primary_key = %w[id owner_id]
+  end
+
+  test "queries by permission on a composite key" do
+    scope = Authz.queries.permitted(ProjectByOwner.all, "project", "view")
+    assert_includes scope.to_sql, 'CAST(ROW("app"."projects"."id", "app"."projects"."owner_id") AS text) IN ' \
+                                  "(SELECT CAST(x AS text) FROM authz.list('project', 'view') x)"
+    assert_equal [], Rowstile.acting_as(1) { scope.pluck(:id) }
+  end
+
   # a transaction is one principal's: inside one signed in already, a statement while the code acts for someone else
   # (nobody too) raises before anything is sent for it, the transaction as it was. The same principal goes on (in a
   # savepoint too), and the transaction reads, writes and commits as its own
@@ -231,6 +245,15 @@ class SdkTest < ActionDispatch::IntegrationTest
       assert_not_found { Rowstile.expect(Note.where(id: 4, body: "no").update_all(body: "x"), "app.notes", "update", 4) }
       assert_equal 1, Rowstile.expect(Note.where(id: 4).update_all(body: "x"), "app.notes", "update", 4)
     end
+    # on the model's connection, or on a connection; in the statement's transaction when both are in one
+    Rowstile.acting_as(2) do
+      assert_not_found do
+        Note.transaction { Rowstile.expect(Note.where(id: 1).delete_all, "app.notes", "delete", 1, connection: Note) }
+      end
+      ApplicationRecord.with_connection do |c|
+        assert_not_found { Rowstile.expect(Note.where(id: 1).delete_all, "app.notes", "delete", 1, connection: c) }
+      end
+    end
     Rowstile.acting_as(nil) do # a table named without its schema is found on the search_path
       ApplicationRecord.with_connection { |c| c.execute("SET search_path = app") }
       found = assert_not_found { Rowstile.expect(0, "notes", "delete", 1) }
@@ -238,6 +261,21 @@ class SdkTest < ActionDispatch::IntegrationTest
     ensure
       ApplicationRecord.with_connection { |c| c.execute("RESET search_path") }
     end
+  end
+
+  # the question a refused update asks borrows the update's connection for as long as the update does: code outside
+  # Rails' executor (a thread of the app's own) keeps no connection after it
+  test "a refused update keeps no connection" do
+    leased = Thread.new do
+      Rowstile.acting_as(3) do
+        note = Note.find(1)
+        assert_refused(command: "update") { note.update!(body: "x") }
+      end
+      ApplicationRecord.connection_pool.active_connection?
+    ensure
+      ApplicationRecord.connection_pool.release_connection
+    end.value
+    assert_nil leased
   end
 
   # Postgres's own words, for a row no rule's own refusal covers: an upsert whose row is there, a MERGE

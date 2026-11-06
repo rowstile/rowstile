@@ -169,22 +169,30 @@ module Rowstile
       rowstile_why(command, e)
     end
 
+    # (on the connection the update ran on, for as long as it does: the model's)
     def rowstile_why(command, stale)
-      Rowstile.expect(0, self.class.table_name, command, id_in_database, connection: self.class.lease_connection,
-                                                                          stale: stale)
+      Rowstile.expect(0, self.class.table_name, command, id_in_database, connection: self.class, stale: stale)
     end
   end
 
   class << self
     # An UPDATE or DELETE's count of rows changed (update_all, delete_all, an execute's result): returned if it
     # changed something, else NotFound (the row is hidden, or didn't match) or Refused (the user may not, and
-    # why). In the same transaction as the statement.
+    # why). Asked as the same user, on the model's connection (connection: Note, ActiveRecord::Base by default, or a
+    # connection); in the same transaction as the statement when the two are inside one, so that the answer is about
+    # the rows the statement saw (outside one, each statement is a transaction of its own).
     #
-    #   Rowstile.expect(Note.where(id: id).delete_all, "app.notes", "delete", id)
-    def expect(changed, table, command, key, connection: ActiveRecord::Base.lease_connection, stale: nil)
+    #   Note.transaction { Rowstile.expect(Note.where(id: id).delete_all, "app.notes", "delete", id, connection: Note) }
+    def expect(changed, table, command, key, connection: ActiveRecord::Base, stale: nil)
       return changed if changed.positive?
 
-      lines, who, named = connection.select_all(EXPLAIN, "rowstile", [table, command, key_text(key)]).cast_values.first
+      binds = [table, command, key_text(key)]
+      asked = case connection
+              when ActiveRecord::ConnectionAdapters::PostgreSQLAdapter
+                connection.select_all(EXPLAIN, "rowstile", binds)
+              else connection.with_connection { |c| c.select_all(EXPLAIN, "rowstile", binds) }
+              end
+      lines, who, named = asked.cast_values.first
       verdict = verdict(named, command, key, lines, who)
       # a record with a lock_version, which the rules allow to change: it changed since it was read
       raise stale if stale && verdict.is_a?(NotFound) && !lines.nil?
@@ -235,12 +243,24 @@ module Rowstile
     end
 
     # The scope, filtered to the objects the user holds perm on: one set lookup (authz.list), never a call per
-    # row. Project.where(...) works as the scope; its key's column is compared with the listed ids.
+    # row. Project.where(...) works as the scope; its key's column is compared with the listed ids, and a composite
+    # key's columns, as a row, with the text authz.list gives for each ((1,2), as Postgres writes the row).
     def permitted(scope, type, perm)
-      key = scope.model.primary_key
-      cast = scope.model.columns_hash.fetch(key).sql_type
-      listed = Arel.sql("SELECT CAST(x AS #{cast}) FROM authz.list(?, ?) x", type, perm)
-      scope.where(scope.model.arel_table[key].in(listed))
+      model = scope.model
+      key = model.primary_key
+      if key.is_a?(Array)
+        row = Arel::Nodes::NamedFunction.new("ROW", key.map { |column| model.arel_table[column] })
+        scope.where(Arel::Nodes::NamedFunction.new("CAST", [row.as("text")]).in(listed(type, perm, "text")))
+      else
+        scope.where(model.arel_table[key].in(listed(type, perm, model.columns_hash.fetch(key).sql_type)))
+      end
+    end
+
+    private
+
+    # the ids authz.list gives, as the key's type
+    def listed(type, perm, cast)
+      Arel.sql("SELECT CAST(x AS #{cast}) FROM authz.list(?, ?) x", type, perm)
     end
   end
 end
