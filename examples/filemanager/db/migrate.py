@@ -3,9 +3,10 @@
     python db/migrate.py                 # the migrations not applied yet, in order
     python db/migrate.py --client        # ...and rewrite backend/app/authz_client.py from db/policy.authz
 
-Environment: FM_ADMIN_URL (the owner of the app's tables, or a superuser), FM_APP_PASSWORD (the
-app role's password; the role is created if missing). Making the role and setting its password, each time, take
-CREATEROLE (and the ADMIN option on fm_app if another role made it). The migrations run in one transaction.
+Environment: FM_ADMIN_URL (the owner of the app's tables, a role with CREATEROLE: db/owner.sql makes it; rowstile
+needs no superuser), FM_APP_PASSWORD (the app role's password; the role is created if missing). Setting its
+password, each time, takes the ADMIN option on fm_app too, which the role that made it has. The migrations run in
+one transaction.
 
 The policy ships as migrations too: after a change to db/policy.authz, `rowstile migrate`
 writes the next one into db/migrations (and db/policy.lock). The app uses only rowstile's public
@@ -46,6 +47,8 @@ def main() -> None:
         cur.execute("SELECT 1 FROM pg_roles WHERE rolname = 'fm_app'")
         if cur.fetchone() is None:
             cur.execute("CREATE ROLE fm_app LOGIN NOSUPERUSER NOBYPASSRLS")
+            # and its maker may switch to it (SET ROLE): rowstile test and rowstile dev look at the data as the app does
+            cur.execute("GRANT fm_app TO CURRENT_USER")
         cur.execute(sql.SQL("ALTER ROLE fm_app PASSWORD {}").format(sql.Literal(password)))
         cur.execute(
             "CREATE TABLE IF NOT EXISTS public.fm_migrations (name text PRIMARY KEY, at timestamptz DEFAULT now())"
