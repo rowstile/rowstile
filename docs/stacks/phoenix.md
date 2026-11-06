@@ -57,6 +57,13 @@ app has no sign-in, so its stands in for one, and this page doesn't show it.
   end
 ```
 
+The principal lasts the process, which on a server is the request's: Cowboy serves each request in a process of
+its own, and Bandit clears what a process holds between the requests of one connection (unless its
+`clear_process_dict: false`). In `Phoenix.ConnTest` each request runs in the test's process, so after one the test
+acts for its principal until something sets another. A LiveView is another process: its connected mount and its
+events run in the LiveView's own, which the plug never saw. Call `Rowstile.put_principal/1` there, in `mount/3` or an
+`on_mount` hook, from the session. Without it, its `transact` signs in as nobody, who sees only what `anyone` may.
+
 `Rowstile.transact(Repo, fun)` runs `fun` in a transaction signed in as whoever the request acts for, as Ecto's
 `Repo.transact/2` runs it: `{:ok, value}` commits, `{:error, reason}` rolls back. The sign-in lasts the
 transaction alone, so pools and PgBouncer in transaction mode are safe. A list shows only the user's rows:
