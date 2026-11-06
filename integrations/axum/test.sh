@@ -94,6 +94,9 @@ python3 "$ROWSTILE_CLI" test >"$T/policy-tests.log" 2>&1 &&
 rust_run "$BIN/migrate" --info "$ROWSTILE_OWNER_DSN" >"$T/info.log" 2>&1 &&
   [ "$(grep -c ': installed$' "$T/info.log")" = "$(ls migrations/*.sql | wc -l)" ] && [ "$(wc -l <"$T/info.log")" = "$(ls migrations/*.sql | wc -l)" ] &&
   echo "ok    11: ... and sqlx's list of migrations shows each one installed, as its file is" || { cat "$T/info.log"; echo "FAIL  11: sqlx migrate info"; rc=1; }
+rust_run "$BIN/migrate" --info >"$T/usage.log" 2>&1
+[ $? = 2 ] && [ "$(cat "$T/usage.log")" = "usage: migrate [--info] URL [DIR]" ] &&
+  echo "ok    11: ... and the migrator, given no URL, says how to run it" || { cat "$T/usage.log"; echo "FAIL  11: the migrator without a URL"; rc=1; }
 python3 "$ROWSTILE_CLI" migrate --check >/dev/null &&
   echo "ok    the policy's lock file is up to date" || { echo "FAIL  rowstile migrate --check"; rc=1; }
 # 12: the test database, migrated the same way (each test binary copies it)
