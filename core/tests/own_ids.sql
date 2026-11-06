@@ -4,9 +4,10 @@
 -- or both out, and a function must answer the same for both (a row function: for the row of one with the other's
 -- id, the row as stored, its flags flipped, and the user as its owner). Conditions that read other tables
 -- (<type>__check_<hash>) are in authz_int, which the app role can't name: one found here is skipped and named in the
--- summary, which adversarial.sh asks to say "skipped: none".
+-- summary, which adversarial.sh asks to say "skipped: none". A function checked is one visited: the line `compared:`
+-- says how many answers were compared for each user (none, and "0 breaches" would say nothing).
 -- psql -v users='1 2 3' -f tests/own_ids.sql   (as the tables' owner, on a policy whose keys are bigint; prints one
--- line per breach, then a summary) (tests/adversarial.sh)
+-- line per breach, then a summary and the comparisons) (tests/adversarial.sh)
 \set ON_ERROR_STOP on
 SET client_min_messages = warning;
 \pset footer off
@@ -45,11 +46,12 @@ SET ROLE app_user;
 DO $s$
 DECLARE
   u text; t record; v record; f record; x record; y record; got text; ref text; vrow jsonb;
-  variants jsonb[]; call text;
+  variants jsonb[]; call text; compared bigint;
 BEGIN
   FOREACH u IN ARRAY string_to_array(current_setting('sw.users'), ' ') LOOP
     PERFORM set_config('authz.user_id', u, false);
     DELETE FROM sw_prof;
+    compared := 0;
     FOR t IN SELECT * FROM sw_types WHERE governed LOOP
       -- what the API says of it: each permission held, and how (authz.explain, its own id left out)
       EXECUTE format('INSERT INTO sw_prof SELECT %L, s.id, array_to_string(ARRAY(SELECT p || '': '' || (SELECT string_agg(regexp_replace(l, ''(on|to) %s '' || s.id || ''\M'', ''\1 it''), '' / '')
@@ -90,6 +92,7 @@ BEGIN
                    WHERE a.type = t.type AND EXISTS (SELECT 1 FROM sw_rows r WHERE r.type = a.type AND r.id = a.id AND r.r IS NOT NULL)
                      AND EXISTS (SELECT 1 FROM sw_rows r WHERE r.type = b.type AND r.id = b.id AND r.r IS NOT NULL) LOOP
             got := pg_temp.sw_call(call, x.a); ref := pg_temp.sw_call(call, x.b);
+            compared := compared + 1;
             IF got <> ref THEN
               INSERT INTO sw_out VALUES (u, format('%s says %s for %s, %s for %s', f.sig, got, x.a, ref, x.b));
             END IF;
@@ -114,6 +117,7 @@ BEGIN
               FOR i IN 1 .. array_length(variants, 1) LOOP
                 got := pg_temp.sw_mask(pg_temp.sw_mask(pg_temp.sw_call(call, variants[i]::text), t.type, x.id), t.type, y.id);
                 ref := pg_temp.sw_mask(pg_temp.sw_mask(pg_temp.sw_call(call, (variants[i] || jsonb_build_object(t.pk, y.id::bigint))::text), t.type, y.id), t.type, x.id);
+                compared := compared + 1;
                 IF got <> ref THEN
                   INSERT INTO sw_out VALUES (u, format('%s on row %s (variant %s) says %s; with id %s: %s',
                                                        f.proname, x.id, i, left(got, 200), y.id, left(ref, 200)));
@@ -125,15 +129,20 @@ BEGIN
       END LOOP;
       INSERT INTO sw_out VALUES (u, 'checked function ' || f.proname);
     END LOOP;
+    INSERT INTO sw_out VALUES (u, 'compared ' || compared);
   END LOOP;
 END $s$;
 RESET ROLE;
-SELECT 'BREACH user ' || who || ': ' || what FROM sw_out WHERE what NOT LIKE 'checked %' AND what NOT LIKE 'skipped %' ORDER BY 1;
+SELECT 'BREACH user ' || who || ': ' || what FROM sw_out
+  WHERE what NOT LIKE 'checked %' AND what NOT LIKE 'skipped %' AND what NOT LIKE 'compared %' ORDER BY 1;
 SELECT 'checked ' || count(*) FILTER (WHERE what LIKE 'checked view%') / greatest(count(DISTINCT who), 1) || ' views, '
        || count(*) FILTER (WHERE what LIKE 'checked function%') / greatest(count(DISTINCT who), 1) || ' functions; '
-       || count(*) FILTER (WHERE what NOT LIKE 'checked %' AND what NOT LIKE 'skipped %') || ' breaches; skipped: '
+       || count(*) FILTER (WHERE what NOT LIKE 'checked %' AND what NOT LIKE 'skipped %' AND what NOT LIKE 'compared %')
+       || ' breaches; skipped: '
        || coalesce(string_agg(DISTINCT substr(what, 9), ' ') FILTER (WHERE what LIKE 'skipped %'), 'none')
 FROM sw_out;
+-- each user and the answers compared for them
+SELECT 'compared: ' || string_agg(who || ' ' || substr(what, 10), ', ' ORDER BY who) FROM sw_out WHERE what LIKE 'compared %';
 SELECT 'readable: ' || string_agg(c.relname, ' ' ORDER BY c.relname) FROM pg_class c
   WHERE c.relnamespace = 'authz_gen'::regnamespace AND c.relkind IN ('r', 'v') AND has_table_privilege('app_user', c.oid, 'SELECT');
 SELECT 'callable: ' || string_agg(p.proname, ' ' ORDER BY p.proname) FROM pg_proc p

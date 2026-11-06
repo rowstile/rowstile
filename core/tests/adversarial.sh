@@ -33,6 +33,15 @@ expect() {   # $1 label, $2 expected output (for an error, "SQLSTATE: the messag
   local got; got=$(error_of "$(psql -X -q -At -1 -U "$ATTACKER" -d "$DB" -v VERBOSITY=verbose -c "$(sign "${AS-3}")" "$@" 2>&1)")
   if agrees "$label" "$want" "$got"; then echo "ok    $label"; else echo "FAIL  $label: expected '$want', got '$got'"; fails=$((fails + 1)); fi
 }
+# An attempt on an object of authz_int: Postgres refuses the schema before it looks the name up, so the refusal alone
+# holds for a name that is gone too. The owner plans the same statement first (EXPLAIN: nothing runs), so the object
+# is there, with that name and those arguments. $1 the database; prints why not, or nothing
+owner_plans() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$1" -c "EXPLAIN $2" 2>&1 >/dev/null | head -n 1; }
+hidden() {   # $1 label, $2 the statement, tried as carol in $DB
+  local why; why=$(owner_plans "$DB" "$2")
+  if [ -n "$why" ]; then echo "FAIL  $1: the owner can't run it either, so its refusal tells nothing: $why"; fails=$((fails + 1)); return; fi
+  expect "$1" "42501: permission denied for schema authz_int" -c "$2"
+}
 
 python3 compile_policy.py example/docs.authz > $T/adversarial.sql || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null &&
@@ -90,22 +99,20 @@ expect "sharing as a user chosen by a setting" "28000: who is signed in was chan
 expect "asking can() as a user chosen by a setting" "28000: who is signed in was changed after signing in" -c "SET LOCAL authz.user_id = 5" -c "SELECT authz.can('folder', 5, 'view')"
 
 echo "-- rowstile's own tables and functions"
-expect "internal views" "42501: permission denied for schema authz_int" -c "SELECT count(*) FROM authz_int.\"folder__view\""
-expect "the closure tables" "42501: permission denied for schema authz_int" -c "SELECT count(*) FROM authz_int.\"folder__parent__tree\""
+hidden "internal views" "SELECT count(*) FROM authz_int.\"folder__view\""
+hidden "the closure tables" "SELECT count(*) FROM authz_int.\"folder__parent__tree\""
 expect "the shares table" "42501: permission denied for table shares" -c "SELECT count(*) FROM authz.shares"
 expect "writing a share directly" "42501: permission denied for table shares" \
   -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', '5', 'viewer', 'user', '3')"
 expect "the audit trail" "42501: permission denied for table audit" -c "SELECT count(*) FROM authz.audit"
 expect "the change feed" "42501: permission denied for table changes" -c "SELECT count(*) FROM authz.changes"
-expect "the lock rows" "42501: permission denied for schema authz_int" -c "UPDATE authz_int.locks SET n = 0"
-expect "a closure's refresh function" "42501: permission denied for schema authz_int" -c "SELECT authz_int.\"folder__parent__tree_rebuild\"()"
-expect "announcing fake changes" "42501: permission denied for schema authz_int" -c "SELECT authz_int.changed('folder', ARRAY['1'], 'x')"
+hidden "the lock rows" "UPDATE authz_int.locks SET n = 0"
+hidden "a closure's refresh function" "SELECT authz_int.\"folder__parent__tree_rebuild\"()"
+hidden "announcing fake changes" "SELECT authz_int.changed('folder', ARRAY['1'], 'x')"
 # The views and functions the rules read are in authz_int, whose names the app role can't use: Postgres keeps a
 # policy parsed, and checks a schema only when a name is looked up. So the rules read them and it can't
-expect "the views the rules read: the app role can't name them" "42501: permission denied for schema authz_int" \
-  -c "SELECT count(*) FROM authz_int.\"folder__viewer\""
-expect "...nor the functions the rules call" "42501: permission denied for schema authz_int" \
-  -c "SELECT authz_int.\"folder__edit__has\"(5)"
+hidden "the views the rules read: the app role can't name them" "SELECT count(*) FROM authz_int.\"folder__viewer\""
+hidden "...nor the functions the rules call" "SELECT authz_int.\"folder__edit__has\"(5)"
 readable="SELECT string_agg(c.relname, ' ' ORDER BY c.relname) FROM pg_class c
   WHERE c.relnamespace = 'authz_gen'::regnamespace AND c.relkind IN ('r', 'v') AND has_table_privilege(c.oid, 'SELECT')"
 expect "the app role reads no view of rowstile's" "policy_lines" -c "$readable"
@@ -249,23 +256,31 @@ check_views() {   # $1 label, $2 expected, rest: psql arguments
   local got; got=$(views_as_1 "$@")
   agrees "$label" "$want" "$got" && echo "ok    $label" || { echo "FAIL  $label: expected '$want', got '$got'"; fails=$((fails + 1)); }
 }
+hidden_views() {   # $1 label, $2 the statement on an object of authz_int, tried as user 1 in $C (see hidden)
+  local why; why=$(owner_plans "$C" "$2")
+  if [ -n "$why" ]; then echo "FAIL  $1: the owner can't run it either, so its refusal tells nothing: $why"; fails=$((fails + 1)); return; fi
+  check_views "$1" "42501: permission denied for schema authz_int" -c "$2"
+}
 check_views "the rules show her folders 1 5 6 7 and files 11 12" "1 5 6 7 / 11 12" \
   -c "SELECT (SELECT string_agg(id::text, ' ' ORDER BY id) FROM av.folders) || ' / ' || (SELECT string_agg(id::text, ' ' ORDER BY id) FROM av.files)"
 check_views "the app role reads no view of rowstile's, a deny's or what it inherits before the deny among them" \
   "policy_lines" -c "$readable"
-check_views "what the permission inherits before the deny, which lists the hidden folders shared with her" \
-  "42501: permission denied for schema authz_int" -c "SELECT count(*) FROM authz_int.\"folder__view__base\""
-check_views "the functions the rules call on the hidden part: not by name" "42501: permission denied for schema authz_int" \
-  -c "SELECT authz_int.\"folder__view__base__has\"(8)"
+hidden_views "what the permission inherits before the deny, which lists the hidden folders shared with her" \
+  "SELECT count(*) FROM authz_int.\"folder__view__base\""
+hidden_views "the functions the rules call on the hidden part: not by name" "SELECT authz_int.\"folder__view__base__has\"(8)"
 cond_fn=$(grep -o 'authz_int\."file__check_[0-9a-f]*"' $T/adversarial_views.sql | head -n 1)
-check_views "a condition that reads another table: not by name, for a row the caller makes up" \
-  "42501: permission denied for schema authz_int" -c "SELECT $cond_fn(ROW(99, NULL, 2, 'zebra', false)::av.files)"
+hidden_views "a condition that reads another table: not by name, for a row the caller makes up" \
+  "SELECT $cond_fn(ROW(99, NULL, 2, 'zebra', false)::av.files)"
 # each view and function it may use, as each user: none tells apart two objects that authz.can, authz.explain and the
 # rules can't (8 and 9 for user 1); the rules' explanations answer for a new row or one the user sees
-got=$(psql -X -q -At -d "$C" -v users='1 2 3' -f tests/own_ids.sql 2>&1 | grep -v '^readable\|^callable')
+# (and it compared answers for each user: a function visited with no two ids alike to compare would say nothing)
+out=$(psql -X -q -At -d "$C" -v users='1 2 3' -f tests/own_ids.sql 2>&1 | grep -v '^readable\|^callable')
+got=$(printf '%s\n' "$out" | grep -v '^compared: ')
+compared=$(printf '%s\n' "$out" | grep '^compared: ')
 agrees "own ids" "checked 0 views, 16 functions; 0 breaches; skipped: none" "$got" &&
-  echo "ok    the views and functions the app role may use tell nothing the API doesn't: 16 functions, 3 users" ||
-  { echo "FAIL  the views and functions the app role may use: $got"; fails=$((fails + 1)); }
+  [[ "$compared" =~ ^compared:\ 1\ [1-9][0-9]*,\ 2\ [1-9][0-9]*,\ 3\ [1-9][0-9]*$ ]] &&
+  echo "ok    the views and functions the app role may use tell nothing the API doesn't: 16 functions, 3 users, $compared" ||
+  { echo "FAIL  the views and functions the app role may use: $got; $compared"; fails=$((fails + 1)); }
 # folder 8 is shared with her (viewer), 9 isn't: inserting a row with either id is explained alike
 check_views "explaining an insert with a hidden row's id tells nothing of that row" "t" \
   -c "SELECT authz.explain_rule('av.folders', 'insert', NULL, '{\"id\": 8, \"owner_id\": 1}')
