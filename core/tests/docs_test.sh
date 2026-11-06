@@ -206,6 +206,8 @@ check "zenstack.md: authz.explain_rule answers user 3, who reads post 2 and may 
   "$said"
 check "zenstack.md: ... and nothing for user 1's draft, which user 3 can't read" \
   "$(as3 "SELECT authz.explain_rule('app.posts', 'update', '1') IS NULL")" "t"
+check "zenstack.md: user 3 reads post 2, which is published, and authz.explain says why" \
+  "$(as3 "SELECT authz.can('post', '2', 'view') AND EXISTS (SELECT FROM authz.explain('post', '2', 'view'))")" "t"
 # OpenFGA's and SpiceDB's documents: the page's list, the third page of fifty, runs as the app role (empty here)
 for page in openfga.md spicedb.md; do
   rm -f "$B"/*
