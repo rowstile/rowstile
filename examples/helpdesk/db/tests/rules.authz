@@ -183,6 +183,10 @@ test "the vendor's staff: by break glass only, where the workspace lets them in"
   user $sam cannot view ticket $t
   as user $sam allowed {SELECT authz.break_glass('ticket', $t::text, 'responder', 'case 7', '1 hour')}
   user $sam can work ticket $t
+  -- they work and reply on it, and change none of its fields (the row after an update must be one of the
+  -- workspace's agents or its requester may)
+  as user $sam allowed {INSERT INTO hd.comments (ticket_id, author_id, internal, body) VALUES ($t, $sam, true, 'looking')}
+  as user $sam refused {UPDATE hd.tickets SET status = 'pending' WHERE id = $t}
   -- and responder is for staff only, whoever gives it
   as user $ann refused {SELECT authz.share('ticket', $t::text, 'responder', 'user', $cy::text)}
 
@@ -238,7 +242,7 @@ test "a workspace may open its queue to every agent"
   user $oz can work ticket $t
   user $cy cannot work ticket $t
 
-test "an admin sets who is an admin, and who is active; no one changes what kind someone is"
+test "an admin sets who is an admin, and who is active; a name is its person's or an admin's; no one changes what kind someone is"
   given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
   given ann = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'admin', 'Ann', 'ann@acme') RETURNING id}
   given al = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'agent', 'Al', 'al@acme') RETURNING id}
@@ -246,6 +250,10 @@ test "an admin sets who is an admin, and who is active; no one changes what kind
   given cy = {INSERT INTO hd.users (workspace_id, kind, name, email) VALUES ($a, 'customer', 'Cy', 'cy@mail') RETURNING id}
   as user $al refused {UPDATE hd.users SET role = 'admin' WHERE id = $al}
   as user $al refused {UPDATE hd.users SET active = false WHERE id = $oz}
+  as user $al refused {UPDATE hd.users SET name = 'Oz the Great' WHERE id = $oz}
+  as user $al refused {UPDATE hd.users SET name = 'Cy the Great' WHERE id = $cy}
+  as user $oz allowed {UPDATE hd.users SET name = 'Oz H.' WHERE id = $oz}
+  as user $ann allowed {UPDATE hd.users SET name = 'Oz Hardware' WHERE id = $oz}
   as user $ann allowed {UPDATE hd.users SET role = 'admin' WHERE id = $al}
   as user $ann refused {UPDATE hd.users SET kind = 'agent', role = 'agent' WHERE id = $cy}
 
