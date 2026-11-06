@@ -59,6 +59,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `Rowstile(app, None, user=...)`, runs without SQLAlchemy installed.
 - The Python SDK's `assert_refused(fn, command=...)` asks for the rule by its whole name: `command="up"` fails for
   a refusal of the update rule, where it passed.
+- `authzRoutes()` (`@rowstile/next`) answers 400 to a request that names no type, and to a body that isn't a JSON
+  object, instead of an error, a 500.
 
 ### Removed
 
