@@ -630,6 +630,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   gives edit on a note's one project says "edit on 1 project", not "on 1 more project".
 - In a condition, a `$` right after a character beyond ASCII (an em dash, an emoji) goes on the name, as Postgres
   reads it, and opens no dollar quote. Before, the policy read the rest of the line as quoted.
+- The file manager's migrations run in a service of their own in `docker-compose.yml`, which ends before the app
+  starts, and its maintenance jobs in another (`docker compose run --rm maintenance`): the app no longer holds the
+  database's admin password, only `fm_app`'s.
 
 ### Upgrading
 

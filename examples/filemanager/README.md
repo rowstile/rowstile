@@ -12,6 +12,10 @@ that, and CI runs it against the rowstile image built from the same commit.
 
     docker compose up -d --build        # Postgres + rowstile, RustFS, the app: http://localhost:8000
 
+The migrations run first, in a service of their own (`migrate`) that ends before the app starts: it alone holds
+the database's admin password (`FM_ADMIN_URL`), and the app holds only `fm_app`'s (`FM_DATABASE_URL`), which
+row-level security applies to.
+
 Create an account on the sign-in page (open sign-up is on by default: `FM_OPEN_SIGNUP=false` turns it
 off). To work on it, the services in Docker and the rest on the host:
 
@@ -33,11 +37,12 @@ sends `/api` to the backend. The tests, from this folder:
 Compose runs no maintenance. Run the jobs on a schedule (cron, a Kubernetes CronJob), say once an hour, as the
 tables' owner. With compose, from this folder:
 
-    docker compose exec app python -m app.maintenance    # or, on the host: cd backend && uv run python -m app.maintenance
+    docker compose run --rm maintenance    # or, on the host: cd backend && uv run python -m app.maintenance
 
-They remove uploads that never finished (their rows and objects, after a day: `--uploads-older-than` says
-otherwise), what is left in the uploads' place in storage after a day, objects no file has after a day (a
-deleted file's, when deleting them failed), and sessions that ended; and they trim
+The `maintenance` service is the app's image with the admin's URL, which the app's own service doesn't have;
+`docker compose up` doesn't start it. The jobs remove uploads that never finished (their rows and objects, after a
+day: `--uploads-older-than` says otherwise), what is left in the uploads' place in storage after a day, objects no
+file has after a day (a deleted file's, when deleting them failed), and sessions that ended; and they trim
 rowstile's change feed to its last 7 days (`authz.trim_changes()`). The audit trail is kept: trim it with
 `authz.trim_audit(...)` once you have decided how long to keep it.
 
@@ -46,7 +51,7 @@ The settings, from the environment:
 | Setting | Default | |
 |---|---|---|
 | `FM_DATABASE_URL` | `postgresql://fm_app:fm_app@localhost:5432/filemanager` | the app's connection, as `fm_app`: the app refuses to start on one that skips row-level security |
-| `FM_ADMIN_URL` | none | the tables' owner, for `db/migrate.py`, the maintenance jobs and `rowstile.toml`. `db/migrate.py` makes `fm_app` and sets its password each time, so the owner needs CREATEROLE too (and the ADMIN option on `fm_app` if another role made it), or a superuser |
+| `FM_ADMIN_URL` | none | the tables' owner, for `db/migrate.py`, the maintenance jobs and `rowstile.toml`, never for the app. `db/migrate.py` makes `fm_app` and sets its password each time, so the owner needs CREATEROLE too (and the ADMIN option on `fm_app` if another role made it), or a superuser |
 | `FM_APP_PASSWORD` | none | `fm_app`'s password, which `db/migrate.py` sets (it makes the role if it is missing) |
 | `FM_S3_ENDPOINT` | `http://localhost:9000` | where the backend reaches the storage |
 | `FM_S3_PUBLIC_ENDPOINT` | `FM_S3_ENDPOINT` | where browsers reach it: signed links point there |
