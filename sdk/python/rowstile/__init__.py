@@ -9,8 +9,8 @@ package holds no rowstile logic: it calls the `authz.*` functions the policy mad
         ...                                       # every transaction in here signs in as user 42
 
 The integrations: `rowstile.fastapi` (one line: Rowstile(app, engine, user=...)), `rowstile.sqlalchemy` (sync
-and async engines, SQLModel too), `rowstile.psycopg`, `rowstile.asyncpg`, `rowstile.alembic` (autogenerate
-leaves rowstile's objects alone) and `rowstile.testing` (pytest fixtures).
+and async engines, SQLModel too), `rowstile.psycopg`, `rowstile.asyncpg`, `rowstile.django` (a preview),
+`rowstile.alembic` (autogenerate leaves rowstile's objects alone) and `rowstile.testing` (pytest fixtures).
 """
 
 from __future__ import annotations
@@ -230,7 +230,8 @@ def _for(who: Who | _Unset) -> Principal | None:
 
 
 def _name(p: Principal) -> str:
-    """A principal as the database's refusals name it: 'user 42', 'service 3', or 'nobody'."""
+    """A principal as the SDK's own messages name it: 'user 42' or 'service 3', as the database's refusals do, and
+    'nobody' (the database's refusals say 'someone not signed in')."""
     return "nobody" if p.id is None else f"{p.type} {p.id}"
 
 
