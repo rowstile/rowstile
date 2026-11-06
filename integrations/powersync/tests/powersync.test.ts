@@ -7,14 +7,14 @@
 // after commit, where a worker beside the app runs authz.sync_work() in a loop (a mirrored line can't be keyed by
 // folder: AZ811). Where a check needs the index to hold every change made so far, it waits for the worker first.
 import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { TOKEN_KID } from "../src/app.js";
 import { syncWorker, type SyncWorker } from "../src/worker.js";
-import { ADMIN, APP, Client, MODE, OWNER, POLICY, SERVER, SERVICE, USERS, listed, owner, run, seed } from "./data.js";
+import { ADMIN, APP, Client, MODE, OWNER, POLICY, SERVER, SERVER_ONE, SERVICE, USERS, listed, owner, run, seed, type Kind } from "./data.js";
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(HERE, "..", "..", "core", "cli", "rowstile_cli.py");
@@ -26,9 +26,35 @@ let worker: SyncWorker | null = null;
 /** After commit, once the worker's next run has ended: the index holds every change committed before; else at once. */
 const settled = async (): Promise<void> => worker?.ran();
 
-/** Every user's tables hold what authz.list gives them. */
+/** The users deleted (P14): their tables are held to nothing more. */
+const gone = new Set<string>();
+let barriers = 0;
+/** Every user's tables hold what authz.list gives them, once each client has had every change committed so far: a
+ *  rename of one of its rows, all in one transaction after the changes, arrives after them (a client applies a
+ *  checkpoint of all its buckets at once). A client that holds no file nor folder has none to rename: it is held to
+ *  what it holds when asked. */
 async function asListed(): Promise<void> {
-  for (const user of USERS) await live[user]!.listed();
+  await settled();                                               // after commit: the index has the changes first
+  const want: { user: string; ids: Record<Kind, number[]> }[] = [];
+  for (const user of USERS.filter((u) => !gone.has(u))) {
+    const ids = { file: await listed(user, "file"), folder: await listed(user, "folder"), note: await listed(user, "note") };
+    want.push({ user, ids });
+  }
+  const mark = ` #${++barriers}`;
+  const barrier = want.map((w) => w.ids.file.length ? ["file", w.ids.file[0]!] as const
+    : w.ids.folder.length ? ["folder", w.ids.folder[0]!] as const : null);
+  const ids = (kind: Kind) => [...new Set(barrier.flatMap((r) => (r?.[0] === kind ? [r[1]] : [])))];
+  await run(`WITH files AS (UPDATE app.files SET name = regexp_replace(name, ' #[0-9]+$', '') || $1 WHERE id = ANY($2::int[]))
+    UPDATE app.folders SET name = regexp_replace(name, ' #[0-9]+$', '') || $1 WHERE id = ANY($3::int[])`,
+    [mark, ids("file"), ids("folder")]);
+  for (const [i, w] of want.entries()) {
+    if (barrier[i]) {
+      const [kind, renamed] = barrier[i]!;
+      await live[w.user]!.until(async () => String((await live[w.user]!.row(kind, renamed))?.name).endsWith(mark),
+        `${kind} ${renamed} renamed after the changes`);
+    }
+    for (const kind of Object.keys(w.ids) as Kind[]) await live[w.user]!.holds(kind, w.ids[kind]);
+  }
 }
 
 beforeAll(async () => {
@@ -57,11 +83,16 @@ test("P1: the first sync of each user's tables is what authz.list gives them", a
 });
 
 test("P2: a share made: the row arrives live; revoked: it leaves", async () => {
-  await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '2')");
-  await live["2"]!.holds("file", [1, 2, 3, 4, 6]);
-  await run("SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '2')");
-  await live["2"]!.holds("file", [1, 2, 3, 6]);
-  await asListed();
+  const unshare = "SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '2')";
+  try {
+    await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '2')");
+    await live["2"]!.holds("file", [1, 2, 3, 4, 6]);
+    await run(unshare);
+    await live["2"]!.holds("file", [1, 2, 3, 6]);
+    await asListed();
+  } finally {
+    await run(unshare);
+  }
 });
 
 test("P3: a folder moved out of reach: the files below it leave; moved back: they return", async () => {
@@ -139,17 +170,24 @@ test("P7: confidential set: the file leaves those who saw it only through its fo
   await asListed();
 });
 
-// P8: the service checks the token, which only the app signs: one signed with another key syncs nothing
+// P8: the service checks the token, which only the app signs: the app's own is taken, and the same signed with another
+// key is refused. The app's lasts five minutes: the service believes it until then
 test("P8: a token the app didn't sign is refused by the service", async () => {
-  const now = Math.floor(Date.now() / 1000);
-  const b64 = (s: string) => Buffer.from(s).toString("base64url");
-  const head = b64(JSON.stringify({ alg: "HS256", typ: "JWT", kid: TOKEN_KID }));
-  const body = b64(JSON.stringify({ sub: "1", aud: "powersync", iat: now, exp: now + 600 }));
-  const { createHmac } = await import("node:crypto");
+  const given = (await (await fetch(`${SERVER}/api/powersync/token`, { method: "POST", headers: { "x-user": "1" } })).json()) as { token: string };
+  const [head, body] = given.token.split(".") as [string, string, string];
+  const claims = JSON.parse(Buffer.from(body, "base64url").toString()) as { sub: string; iat: number; exp: number };
+  expect([claims.sub, claims.exp - claims.iat]).toEqual(["1", 300]);
   const forged = `${head}.${body}.${createHmac("sha256", "another key").update(`${head}.${body}`).digest("base64url")}`;
-  const r = await fetch(`${SERVICE}/sync/stream`, { method: "POST", headers: { authorization: `Token ${forged}`, "content-type": "application/json" },
-    body: JSON.stringify({ raw_data: true }) });
-  expect(r.status).toBe(401);
+  /** The service's answer to a sync request with the token (the stream itself left unread). */
+  const stream = async (token: string) => {
+    const stop = new AbortController();
+    const r = await fetch(`${SERVICE}/sync/stream`, { method: "POST", signal: stop.signal,
+      headers: { authorization: `Token ${token}`, "content-type": "application/json" }, body: JSON.stringify({ raw_data: true }) });
+    stop.abort();
+    return r.status;
+  };
+  expect(await stream(given.token)).toBe(200);
+  expect(await stream(forged)).toBe(401);
 });
 
 // P9 (and the stack's 3): nobody signed in: the app gives no token, and the client gets no row
@@ -255,6 +293,7 @@ test("P12: lint, then rowstile apply and reapply leave the clients syncing", asy
 test("P14: a user deleted: their keys go, and their tables empty", async () => {
   await live["4"]!.listed();
   await run("DELETE FROM app.team_members WHERE user_id = 4; DELETE FROM app.users WHERE id = 4");
+  gone.add("4");                                                 // held to nothing more from now on
   await live["4"]!.holds("file", []);
   await live["4"]!.holds("folder", []);
   const keys = (await run("SELECT count(*)::int AS n FROM authz_sync.keys WHERE principal_id = '4'")).rows as { n: number }[];
@@ -278,10 +317,20 @@ test("P15: a session limited by scopes gets no token; a key without scopes syncs
   const unknown = await fetch(`${SERVER}/api/powersync/token`, { method: "POST", headers: { "x-api-key": "ak_nothing" } });
   expect([unknown.status, ((await unknown.json()) as { code: string }).code]).toEqual([401, "AZ703"]);
   const whole = new Client("2", await key(""));
+  const unshare = "SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '2')";
   try {
     await whole.holds("file", await listed("2", "file"));
+    // the key revoked: the app gives it no token now, but the service believes the one it gave until it ends, so
+    // the client goes on syncing until then (five minutes)
+    await run(`SELECT authz.act_as('user', '2');
+      SELECT authz.revoke_api_key((SELECT max(id) FROM authz.api_keys WHERE user_id = '2' AND scopes = ''))`);
+    const again = await fetch(`${SERVER}/api/powersync/token`, { method: "POST", headers: { "x-api-key": whole.key! } });
+    expect([again.status, ((await again.json()) as { code: string }).code]).toEqual([401, "AZ703"]);
+    await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '2')");
+    await whole.holds("file", [1, 2, 3, 4, 6]);
   } finally {
     await whole.close();
+    await run(unshare);
   }
 });
 
@@ -308,5 +357,30 @@ test.runIf(MODE === "after")("P17: after commit, a share arrives once the worker
   }
   await live["3"]!.holds("file", [5]);
   await run("UPDATE app.files SET name = 'e' WHERE id = 5");
+  await asListed();
+});
+
+// the stack's 4: the app with a pool of one connection, asked for tokens and sent writes as one user, then nobody,
+// then another: each token names whoever asked, and each write is judged as theirs
+test("4: a pooled connection carries no one over", async () => {
+  const sub = async (r: Response) =>
+    (JSON.parse(Buffer.from(((await r.json()) as { token: string }).token.split(".")[1]!, "base64url").toString()) as { sub: string }).sub;
+  for (const user of ["1", "3", null, "5", "3", "1"]) {
+    const r = await fetch(`${SERVER_ONE}/api/powersync/token`, { method: "POST", headers: user === null ? {} : { "x-user": user } });
+    if (user === null) expect(r.status).toBe(401);
+    else expect([user, await sub(r)]).toEqual([user, user]);
+  }
+  const rename = (user: string, name: string) => fetch(`${SERVER_ONE}/api/files/1`,
+    { method: "PATCH", headers: { "x-user": user, "content-type": "application/json" }, body: JSON.stringify({ name }) });
+  try {
+    expect((await rename("1", "pooled")).status).toBe(200);
+    const refused = await rename("2", "bo's");                     // bo reads file 1, but may not edit it
+    expect([refused.status, ((await refused.json()) as { code: string }).code]).toEqual([403, "AZ709"]);
+    expect((await rename("1", "pooled again")).status).toBe(200);
+    const [{ name }] = (await run("SELECT name FROM app.files WHERE id = 1")).rows as { name: string }[];
+    expect(name).toBe("pooled again");
+  } finally {
+    await run("UPDATE app.files SET name = 'a' WHERE id = 1");
+  }
   await asListed();
 });

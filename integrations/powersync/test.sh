@@ -13,7 +13,8 @@
 #   (a mirrored line can't be keyed by folder: AZ811)
 # Check 11 first: a fresh database, migrated (the app's SQL migrations, the policy's, and the publication; after commit,
 # then the migration rowstile migrate writes from the lock file to that mode's policy), then the policy's tests, then the
-# lock files, and the clients rowstile client writes. Then the app and the service start, and the other checks run.
+# lock files, and the clients rowstile client writes. Then the app starts twice (a pool of five connections, which the
+# clients ask for tokens, and a pool of one), the service starts, and the other checks run.
 set -u
 # what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
 TMPS=()
@@ -103,19 +104,32 @@ git diff --quiet -- src/authz.gen.ts powersync/sync-config.yaml 2>/dev/null &&
   echo "ok    rowstile client writes the streams of the mirrored tables, as committed" ||
   { git diff -- src/authz.gen.ts powersync/sync-config.yaml | head -30; echo "FAIL  src/authz.gen.ts or powersync/sync-config.yaml is out of date: rowstile client"; rc=1; }
 rm -rf build && $BIN/tsc -p . >"$LOG/build.log" 2>&1 || { cat "$LOG/build.log"; echo "FAIL  the app doesn't type-check"; exit 1; }
+# the key the app signs tokens with and the service checks them with (HS256): one for each run
+export POWERSYNC_TOKEN_SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
+K=$(printf '%s' "$POWERSYNC_TOKEN_SECRET" | base64 -w0 | tr '+/' '-_' | tr -d '=')
 # 13: the app refuses to start on a connection that skips row-level security (here, the owner's)
 ROWSTILE_APP_URL=$ROWSTILE_OWNER_DSN PORT=0 timeout 60 node build/src/server.js >"$LOG/server-owner.log" 2>&1
 if [ $? = 1 ] && grep -q "an owner skips row-level security" "$LOG/server-owner.log"; then
   echo "ok    13: the app refuses to start on the owner's connection"
 else cat "$LOG/server-owner.log"; echo "FAIL  13: the app started on the owner's connection"; rc=1; fi
-# the key the app signs tokens with and the service checks them with (HS256): one for each run
-export POWERSYNC_TOKEN_SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
-K=$(printf '%s' "$POWERSYNC_TOKEN_SECRET" | base64 -w0 | tr '+/' '-_' | tr -d '=')
+# ... and without a key to sign tokens with, or with one anyone could guess
+for key in "" short; do
+  POWERSYNC_TOKEN_SECRET=$key PORT=0 timeout 60 node build/src/server.js >"$LOG/server-key.log" 2>&1
+  if [ $? = 1 ] && grep -q "POWERSYNC_TOKEN_SECRET is unset or shorter than 32 characters" "$LOG/server-key.log"; then
+    echo "ok    the app refuses to start with the token key ${key:-unset}"
+  else cat "$LOG/server-key.log"; echo "FAIL  the app started with the token key ${key:-unset}"; rc=1; fi
+done
 APP=$((PORT + 3))
 PORT=$APP node build/src/server.js >"$LOG/server.log" 2>&1 & servers+=($!)
 for _ in $(seq 60); do grep -q "^listening on $APP$" "$LOG/server.log" && break; sleep 1; done
 grep -q "^listening on $APP$" "$LOG/server.log" || { cat "$LOG/server.log"; echo "FAIL  the app doesn't start"; exit 1; }
 export CONFORMANCE_SERVER="http://localhost:$APP"
+# ... and again with a pool of one connection, which the checks call themselves (the stack's 4), at the port it says
+PG_POOL_MAX=1 PORT=0 node build/src/server.js >"$LOG/server-one.log" 2>&1 & servers+=($!)
+one() { sed -n 's/^listening on \([0-9]*\)$/\1/p' "$LOG/server-one.log"; }
+for _ in $(seq 60); do [ -n "$(one)" ] && break; sleep 1; done
+[ -n "$(one)" ] || { cat "$LOG/server-one.log"; echo "FAIL  the app with a pool of one doesn't start"; exit 1; }
+export CONFORMANCE_SERVER_ONE="http://localhost:$(one)"
 # the service: its role, the publication powersync, its storage, the streams, and the app's key
 mkdir -p "$LOG/config"
 cp powersync/sync-config.yaml "$LOG/config/sync-config.yaml"

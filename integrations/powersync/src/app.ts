@@ -12,15 +12,20 @@ import { sql } from "./db.js";
 
 export const app = express();
 
-/** The key the service checks tokens with (client_auth.jwks in its config): an HS256 secret only the two hold. */
+/** The key the service checks tokens with (client_auth.jwks in its config): an HS256 secret only the two hold. The
+ *  app doesn't start without one of 32 characters at least: with an empty key, anyone could make a token for anyone. */
 export const TOKEN_SECRET = process.env.POWERSYNC_TOKEN_SECRET ?? "";
+if (TOKEN_SECRET.length < 32) throw new Error("POWERSYNC_TOKEN_SECRET is unset or shorter than 32 characters: no token is signed with it");
 export const TOKEN_KID = "rowstile-conformance";
+/** How long a token lasts: the service believes it until then, so a key revoked or a session ended since syncs that
+ *  long. PowerSync's client asks for another when it ends, and the app asks the database again. */
+export const TOKEN_SECONDS = 300;
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
 
-/** A token for the principal, as PowerSync reads it: sub its id, principal_type its type, for an hour. */
+/** A token for the principal, as PowerSync reads it: sub its id, principal_type its type, for five minutes. */
 export function token(who: { type: string; id: string }, now = Math.floor(Date.now() / 1000)): string {
   const head = b64(JSON.stringify({ alg: "HS256", typ: "JWT", kid: TOKEN_KID }));
-  const body = b64(JSON.stringify({ sub: who.id, principal_type: who.type, aud: "powersync", iat: now, exp: now + 3600 }));
+  const body = b64(JSON.stringify({ sub: who.id, principal_type: who.type, aud: "powersync", iat: now, exp: now + TOKEN_SECONDS }));
   const sig = createHmac("sha256", TOKEN_SECRET).update(`${head}.${body}`).digest("base64url");
   return `${head}.${body}.${sig}`;
 }
@@ -47,21 +52,17 @@ const headersOf = (req: ExpressRequest) => {
 
 app.use(express.json());
 
-app.post("/api/powersync/token", async (req, res, next) => {
-  try {
-    const who = await signedIn(headersOf(req));
-    if (who.id === null) {
-      res.status(401).json({ error: "Unauthorized", detail: "sign in to sync" });
-      return;
-    }
-    if (who.limited) {
-      res.status(403).json({ error: "Forbidden", detail: "a session limited by scopes, or viewing as someone, can't sync" });
-      return;
-    }
-    res.json({ token: token({ type: who.type, id: who.id }) });
-  } catch (e) {
-    next(e);
+app.post("/api/powersync/token", async (req, res) => {
+  const who = await signedIn(headersOf(req));
+  if (who.id === null) {
+    res.status(401).json({ error: "Unauthorized", detail: "sign in to sync" });
+    return;
   }
+  if (who.limited) {
+    res.status(403).json({ error: "Forbidden", detail: "a session limited by scopes, or viewing as someone, can't sync" });
+    return;
+  }
+  res.json({ token: token({ type: who.type, id: who.id }) });
 });
 
 // the clients' writes (their upload queue), as the request's user: they arrive in the streams of those who may read them

@@ -18,6 +18,7 @@ export const OWNER = process.env.ROWSTILE_OWNER_DSN ?? "";
 export const ADMIN = process.env.ROWSTILE_ADMIN_DSN ?? "";
 export const APP = process.env.ROWSTILE_APP_URL ?? "";
 export const SERVER = process.env.CONFORMANCE_SERVER ?? "";   // the app: tokens, and the clients' writes
+export const SERVER_ONE = process.env.CONFORMANCE_SERVER_ONE ?? "";   // the app again, with a pool of one
 export const SERVICE = process.env.POWERSYNC_URL ?? "";       // the PowerSync service, which the clients sync from
 export const USERS = ["1", "2", "3", "4", "5"];
 /** The index's mode test.sh set up (SYNC_MODE): copied or after (commit), and its policy's file */
