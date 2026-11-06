@@ -140,9 +140,15 @@ export function pages(files) {
  *  @param {string} name @returns {string} */
 const ref = (name) => (name === MAIN ? MAIN : `refs/tags/${name}`);
 
+/** The environment without git's own variables (GIT_DIR, GIT_WORK_TREE, ...), which a hook or git rebase --exec
+ *  sets: a git call then works in the repository its folder is. @returns {NodeJS.ProcessEnv} */
+export function withoutGit() {
+  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+}
+
 /** @param {string} repo @param {string[]} args @returns {{ok: boolean, out: string}} */
 function git(repo, ...args) {
-  const run = spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  const run = spawnSync("git", args, { cwd: repo, encoding: "utf8", env: withoutGit() });
   if (run.error) throw run.error;
   return { ok: run.status === 0, out: run.stdout.trim() + (run.status === 0 ? "" : run.stderr.trim()) };
 }

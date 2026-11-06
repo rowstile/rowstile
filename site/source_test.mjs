@@ -4,7 +4,13 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { FOLDERS, MAIN, deployed, deploys, missing, pages, read, shownBy, take } from "./source.mjs";
+import { FOLDERS, MAIN, deployed, deploys, missing, pages, read, shownBy, take, withoutGit } from "./source.mjs";
+
+// as a git hook or git rebase --exec runs it, with git's own variables naming the repository it was started in:
+// each git call here works in the repository made for the test, named by its folder alone
+process.env.GIT_DIR = join(tmpdir(), "rowstile-site-not-this-one");
+process.env.GIT_WORK_TREE = join(tmpdir(), "rowstile-site-not-this-one");
+process.env.GIT_INDEX_FILE = join(tmpdir(), "rowstile-site-not-this-one", "index");
 
 let failed = 0;
 /** @param {string} label @param {unknown} ok @param {unknown} [detail] */
@@ -142,7 +148,7 @@ const repo = mkdtempSync(join(tmpdir(), "rowstile-site-"));
 /** @param {string[]} args */
 function git(...args) {
   const run = spawnSync("git", ["-c", "user.name=A Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-    "-c", "tag.gpgsign=false", "-c", "core.autocrlf=false", ...args], { cwd: repo, encoding: "utf8" });
+    "-c", "tag.gpgsign=false", "-c", "core.autocrlf=false", ...args], { cwd: repo, encoding: "utf8", env: withoutGit() });
   if (run.status !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr}`);
   return run.stdout.trim();
 }
