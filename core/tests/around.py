@@ -955,8 +955,8 @@ class AroundChecker(Checker):
         self.last = snap
         return snap
 
-    def check(self) -> list[str]:
-        return super().check() + login_problems(self)
+    def more_problems(self, snap: Snapshot) -> list[str]:
+        return login_problems(self)
 
 
 # what a login says when it refuses: a key (unknown, expired, revoked, or of someone who is no active row now),
@@ -966,12 +966,18 @@ REFUSALS = {"api key": ("invalid API key",), "jwt": ("the token names no active 
 
 def login_problems(checker: AroundChecker) -> list[str]:
     """Where the world signs in by token: a key or a JWT of someone who is a row now (one that passes its type's
-    where) signs them in, anyone else's is refused, by the login's own words."""
+    where) signs them in, anyone else's is refused, by the login's own words. Where no token is tried (a world that
+    doesn't sign in by one, nobody), the login says nothing."""
     w, snap = checker.world, checker.last
     problems = []
-    for u in checker.users if w.signs else []:
+    for u in checker.users:
         kind, pid = evaluate.principal_of(u, checker.types)
-        if not pid:
+        if not (w.signs and pid):
+            # (no token tried: nothing says it signed in, or refused)
+            if snap[(u, "login")] != "":
+                problems.append(
+                    f"user {u or '(nobody)'} signs in with no token, and the login says {snap[(u, 'login')]!r}"
+                )
             continue
         outcome, there = snap[(u, "login")], pid in snap[(u, "data", "valid", kind)]
         if (outcome == "ok") != there or (not there and outcome not in REFUSALS[w.signs]):
@@ -1573,6 +1579,9 @@ def run(
         code, _, err = db.run(CHANGE + sql, check=False)
         if code != 0 and not gen.refused(err):
             return [f"step {step + 1}: unexpected error", f"  {sql}", f"  {err.strip()}"]
+        wrong = checker.wrong_refusal("", sql, err) if code != 0 else None
+        if wrong:
+            return [f"step {step + 1}: {wrong}"]
     return []
 
 

@@ -12518,6 +12518,102 @@ class DifftestChanges(unittest.TestCase):
             ["user 1: authz.can('doc', ..., 'view') was asked of ['2', '999999'], not of ['1', '2', '999999']"],
         )
 
+    def test_a_loop_of_links(self) -> None:
+        # what a refusal for a move under itself must have met in the data after the change (Checker.wrong_refusal)
+        import difftest
+
+        a, b, c = ("folder", "1"), ("folder", "2"), ("project", "1")
+        self.assertFalse(difftest.reaches_itself([(a, b), (b, c)]))
+        self.assertTrue(difftest.reaches_itself([(a, b), (b, c), (c, a)]))
+        self.assertTrue(difftest.reaches_itself([(a, a)]))
+        self.assertFalse(difftest.reaches_itself([(a, c), (b, c), (("folder", "3"), a)]))
+        self.assertFalse(difftest.reaches_itself([]))
+
+    def test_every_answer_asked_is_compared(self) -> None:
+        """A snapshot's answers that no check reads, an id given twice, a kind of answer the checks look for and no
+        snapshot of a run gives: each fails, where the checks would otherwise pass without comparing them."""
+        import difftest
+
+        checker = object.__new__(difftest.Checker)
+        checker.users, checker.checks = ["1", "2", ""], 0
+        checker.answered, checker.looked_for = set(), set()
+        snap = difftest.Asked()
+        snap.update({("1", "list", "doc", "view"): ["1", "2"], ("1", "data", "ids", "doc"): ["1", "2"]})
+        snap[("2", "explain", "doc", "view")] = [["1", "yes"]]
+        self.assertEqual(snap[("1", "list", "doc", "view")], ["1", "2"])
+        self.assertEqual(snap.get(("2", "share", "doc", "viewer"), []), [])
+        # the explain answer was asked and read by nothing (the data is the reference's, not an answer)
+        self.assertEqual(
+            checker.unread(snap),
+            ["1 answers asked of the database that no check compared, such as [('2', 'explain', 'doc', 'view')]"],
+        )
+        _ = snap[("2", "explain", "doc", "view")]
+        self.assertEqual(checker.unread(snap), [])
+        # share was looked for and never there: once every user had a turn, the run says so
+        self.assertEqual(checker.quiet(), [])
+        checker.checks = 3
+        self.assertEqual(checker.quiet(), ["the checks looked for answers no snapshot of the run gave: ['share']"])
+        checker.answered.add("share")
+        self.assertEqual(checker.quiet(), [])
+        # an id given twice, by a list, a rule's rows or who
+        twice = difftest.Asked()
+        twice.update(
+            {
+                ("1", "list", "doc", "view"): ["1", "2", "1"],
+                ("scoped", "policy", "app.docs", "authz_select", "using"): ["3", "3"],
+                ("who", "doc", "view"): [["1", ["1", "1"]]],
+                ("1", "can", "doc", "view"): [["1", True], ["1", True]],
+            }
+        )
+        self.assertEqual(
+            checker.repeated(twice),
+            [
+                "1 list doc view gives ['1'] more than once",
+                "scoped policy app.docs authz_select using gives ['3'] more than once",
+                "who doc view gives ['1'] more than once",
+            ],
+        )
+        # and a run with more than half its changes refused
+        self.assertIsNone(difftest.too_many_refused(5, 8))
+        self.assertIsNotNone(difftest.too_many_refused(6, 8))
+        self.assertIsNotNone(difftest.too_many_refused(51, 100))
+
+    def test_genpolicy_goes_on_past_what_postgres_refuses(self) -> None:
+        # psql's error (the schema, the data, the compiled policy), or the checker stopping on a missing rule's
+        # policy: the policy fails, with what was said, and the next seed is run
+        import difftest
+
+        for error in (RuntimeError("psql failed:\nERROR:  division by zero"), SystemExit("1 rules, 0 policies")):
+            with mock.patch.object(genpolicy, "checks", side_effect=error):
+                problems = genpolicy.run(genpolicy.make(1), difftest.DB("unused"), 3, "/nowhere")
+            self.assertEqual(problems[0], "the checks could not go on:")
+            self.assertIn(str(error).splitlines()[-1], problems)
+        # check_invariants() giving rows for someone it doesn't ask as (an id no row has): a problem, not left unread
+        spec = next(s for s in map(genpolicy.make, range(1, 60)) if s.invariants)
+        pol = parse_policy(genpolicy.policy_text(spec), "gen.authz")
+        inv = pol.invariants[0]
+        gone = spec.spelling.ident(genpolicy.GONE)
+        checker = object.__new__(difftest.Checker)
+        checker.pol, checker.users = pol, []
+        checker.gen = genpolicy.gen_class(spec, "gen.authz", "gen.sql")(random.Random(1))
+        rows = [[f"never {inv.type}: {inv.src} (line 9)", gone, "[]"], [f"never {inv.type}: {inv.src} (x)", "x9", "[]"]]
+        db = mock.Mock(rows=mock.Mock(return_value=rows))
+        checker.db = db
+        with mock.patch.object(checker, "snapshot_data_only", create=True, return_value={}):
+            problems, _ = genpolicy.invariant_problems(checker)
+        self.assertEqual(
+            problems,
+            [f"check_invariants() gives rows for {sorted([gone, 'x9'])}, who are neither a principal's row nor nobody"],
+        )
+        # with no seed to run, the summary says so (and too few were checked)
+        p = subprocess.run(
+            [sys.executable, "tests/genpolicy.py", "--policies", "0"], cwd=ROOT, capture_output=True, text=True
+        )
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertIn("genpolicy with no seed: 0 passed, 0 failed", p.stdout)
+        self.assertIn("FAIL no seed to run: nothing checked", p.stdout)
+        self.assertNotIn("Traceback", p.stderr)
+
     def test_genpolicy_data_drawn_from_the_seed(self) -> None:
         """What genpolicy's first data and changes draw with SQL's random() is the seed's too: each script that draws
         sets the seed first, the same on every run, so `--only SEED` and the shrinking run on the same data."""
@@ -12542,6 +12638,9 @@ class DifftestChanges(unittest.TestCase):
                 self.types = self.pol.types
 
             def check(self) -> list[str]:
+                return []
+
+            def quiet(self) -> list[str]:
                 return []
 
         spec = dataclasses.replace(genpolicy.make(1), invariants=[])
