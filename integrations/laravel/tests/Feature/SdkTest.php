@@ -428,6 +428,13 @@ final class SdkTest extends TestCase
         $missing = (new ModelNotFoundException())->setModel(Note::class);
         $response = $handler->render(Request::create('/'), $missing);
         self::assertSame([404, '{"type":"https:\/\/rowstile.dev\/problems\/not-found","title":"Not Found","status":404,"detail":"app.notes not found"}'], [$response->getStatusCode(), $response->getContent()]);
+        // one key, named; several (findOrFail([...])), none: each is a key of its own
+        $detail = static fn (ModelNotFoundException $e): string|false => $handler->render(Request::create('/'), $e)->getContent();
+        self::assertSame(['{"type":"https:\/\/rowstile.dev\/problems\/not-found","title":"Not Found","status":404,"detail":"app.notes 7 not found"}', $response->getContent()], [
+            $detail((new ModelNotFoundException())->setModel(Note::class, [7])), $detail((new ModelNotFoundException())->setModel(Note::class, [1 => 7, 2 => 8])),
+        ]);
+        // one the app made without a model: Laravel's own 404
+        self::assertSame(404, $handler->render(Request::create('/'), new ModelNotFoundException())->getStatusCode());
     }
 
     #[TestDox("the test helpers: assertions, and a worker's name and database")]

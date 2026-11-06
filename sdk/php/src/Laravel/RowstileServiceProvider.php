@@ -6,6 +6,7 @@ namespace Rowstile\Laravel;
 
 use Closure;
 use Illuminate\Database\Connection as BaseConnection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Exceptions\Handler;
@@ -17,7 +18,7 @@ use Rowstile\NotFound;
 use Rowstile\Refused;
 use Rowstile\Rowstile;
 
-use function array_map, array_values, is_int;
+use function array_values, count, is_a, is_int;
 
 /**
  * rowstile in a Laravel app (found by Laravel's package discovery): every pgsql connection signs its transactions in
@@ -40,7 +41,7 @@ final class RowstileServiceProvider extends ServiceProvider
             // what reports and renders see: rowstile's errors (a refusal, a call turned down, a query nobody signed
             // in to: NotSignedIn, which says how), and a model not found as rowstile's NotFound, naming its table
             $handler->map(QueryException::class, static fn (QueryException $e): \Throwable => Rowstile::translate($e));
-            $handler->map(ModelNotFoundException::class, static fn (ModelNotFoundException $e): NotFound => self::notFound($e));
+            $handler->map(ModelNotFoundException::class, static fn (ModelNotFoundException $e): \Throwable => self::notFound($e));
             $handler->renderable(static fn (Refused|NotFound|CallError $e): JsonResponse => self::answer($e));
             // answers, not failures: never logged
             $handler->dontReport([Refused::class, NotFound::class, CallError::class]);
@@ -48,12 +49,23 @@ final class RowstileServiceProvider extends ServiceProvider
         $this->commands([CheckCommand::class]);
     }
 
-    /** @param ModelNotFoundException<\Illuminate\Database\Eloquent\Model> $e */
-    private static function notFound(ModelNotFoundException $e): NotFound
+    /**
+     * Eloquent's model not found, as rowstile's NotFound naming its table, and its key when it names one; as it is when
+     * it names no model (the app's or a package's own, made without setModel).
+     *
+     * @param ModelNotFoundException<Model> $e
+     * @return NotFound|ModelNotFoundException<Model>
+     */
+    private static function notFound(ModelNotFoundException $e): NotFound|ModelNotFoundException
     {
-        $ids = $e->getIds();
-        $id = $ids === [] ? null : Rowstile::keyText(array_values(array_map(static fn (mixed $v): string|int => is_int($v) ? $v : Rowstile::text($v), $ids)));
-        return new NotFound((new ($e->getModel()))->getTable(), $id);
+        $model = Rowstile::text($e->getModel()); // (null until setModel)
+        if (!is_a($model, Model::class, true)) {
+            return $e;
+        }
+        // (one id: the key of the row not found; several, from findOrFail([...]): each a key of its own, so none named)
+        $ids = array_values($e->getIds());
+        $id = count($ids) === 1 ? (is_int($ids[0]) ? (string) $ids[0] : Rowstile::text($ids[0])) : null;
+        return new NotFound((new $model())->getTable(), $id);
     }
 
     private static function answer(Refused|NotFound|CallError $e): JsonResponse

@@ -548,6 +548,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The PHP SDK reads rowstile's code from the HINT the server wrote, never from text in the message or a DETAIL that
   looks like a HINT line (a value echoed back with a line break in it), and only where the HINT ends with it.
   Before, such a value could give an error another code, and another status.
+- The PHP SDK answers a `ModelNotFoundException` that names no model (made without `setModel`) as Laravel does, a
+  404. Before, it was a 500. One for several ids (`findOrFail([1, 2])`) names none of them, instead of `(1,2)`.
 
 ### Upgrading
 
