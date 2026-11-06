@@ -216,11 +216,11 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   `main` requires them by name in the repository's ruleset, with `coverage` and every other job of ci.yml but the parts: a new job
   is added there by hand. `nightly.yml` (main; by hand, one job: `-f only=<job>`) — the full run on 16 in its
   parts side by side (`races` among them), every suite on 17 and 18 (with upgrades from every release from the
-  beta on), the proofs (`--proofs`) on each version, the soak (new seeds each night, one version in turn, in six
-  parts side by side; by hand, several at once on the three versions: `gh workflow run nightly.yml -f only=soak
-  -f soaks=7`), the conformance suites on 17 and 18 and on 16 through PgBouncer (`integrations/pooler.sh`), the
-  migrations `rowstile migrate` writes run by goose, dbmate, Flyway and Django (`tests/migration_tools.sh`), the grammar
-  and the parser on every small policy, the statements of rowstile's PL/pgSQL the suites run, the fuzzer, the
+  beta on), the proofs (`--proofs`) on 17 and 18 (on 16 the full run's `races` runs them), the soak (new seeds
+  each night, one version in turn, in six parts side by side; by hand, several at once on the three versions:
+  `gh workflow run nightly.yml -f only=soak -f soaks=7`), the conformance suites on 17 and 18 and on 16 through
+  PgBouncer (`integrations/pooler.sh`), the migrations `rowstile migrate` writes run by goose, dbmate, Flyway and
+  Django (`tests/migration_tools.sh`), the grammar and the parser on every small policy, the fuzzer, the
   comparison pages' readings (`readings`), and the benchmark check (`-f only=bench`; it judges speed against the
   runners' own baseline, not the gate's limits). `ci.sh` writes its logs to `/tmp`
 - `.github/workflows/scorecard.yml` — the OpenSSF Scorecard, weekly and on `main`: published at scorecard.dev

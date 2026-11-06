@@ -110,7 +110,7 @@ measured (`.ci/coverage-16/`) and says:
   apply is lost (applying makes the functions anew), unless the suite measures first, as `tests/governance.sh`,
   `tests/devx.sh` and `tests/principals.sh` do (`bash tests/coverage_functions.sh "$DB"`); a plain SQL function,
   which Postgres may inline, is listed apart too;
-- with `core/ci.sh --statements 16` (each pull request's parts on 16, and nightly), each statement and branch of rowstile's PL/pgSQL (schemas `authz`,
+- with `core/ci.sh --statements 16` (each push's and pull request's parts on 16), each statement and branch of rowstile's PL/pgSQL (schemas `authz`,
   `authz_int`, `authz_gen`) that no suite runs, by kind of function, each `RAISE` first: the coverage image has
   plpgsql_check (PGDG's package) and `--statements` preloads it with its profiler on, which counts every statement
   any session runs, in the server's shared memory.

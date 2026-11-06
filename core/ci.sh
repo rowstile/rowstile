@@ -12,7 +12,8 @@
 #   core/ci.sh --coverage 16   # (before the others) and measure what the suites run, in the image built with
 #                              # COVERAGE=1: .ci/coverage-16 holds the data, and the report (tests/coverage_report.py)
 #   core/ci.sh --statements 16 # --coverage, and each statement and branch of rowstile's PL/pgSQL the suites run
-#                              # (plpgsql_check's profiler, preloaded: tests/coverage_plpgsql.py; nightly)
+#                              # (plpgsql_check's profiler, preloaded: tests/coverage_plpgsql.py; each push's
+#                              # parts on 16, .github/workflows/suites.yml)
 # Needs Docker and bash. Builds rowstile:<version> from Dockerfile,
 # mounts the repository, runs the tests in it and removes the container. Exit status: 0 only if
 # every version passed.
