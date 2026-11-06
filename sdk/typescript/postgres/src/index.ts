@@ -6,7 +6,9 @@
  *
  * Every transaction signs in with authz.act_as() as whoever the code acts for (actingAs, a job), else user(),
  * else nobody. A refused write throws Refused (with the rule and why), the not-signed-in error (AZ701) NotSignedIn.
- * With PgBouncer in transaction mode, create the client with { prepare: false }, as postgres.js says.
+ * Behind a pooler in transaction mode that keeps no prepared statements (PgBouncer before 1.21, or with
+ * max_prepared_statements = 0; Supavisor), create the client with { prepare: false }. One that keeps them needs
+ * nothing.
  */
 import type { Sql, TransactionSql } from "postgres";
 import {

@@ -12,5 +12,6 @@ const url = process.env.ROWSTILE_APP_URL;
 export const pool = new pg.Pool({ connectionString: url, max: Number(process.env.PG_POOL_MAX ?? 5) });
 export const sql = authz(pool);                       // sql.transaction(fn), sql.query(), sql.can(), ...
 export const db = withAuthz(drizzle(pool));           // db.transaction((tx) => tx.select()...)
-// postgres.js: { prepare: false } for PgBouncer in transaction mode, as postgres.js says
-export const pgjs = postgresAuthz(postgres(url ?? "", { max: 2, prepare: false }));
+// postgres.js, with its prepared statements: PgBouncer keeps them (max_prepared_statements, ../pooler.sh). A pooler
+// that keeps none needs { prepare: false } (docs/operations.md, Behind a pooler)
+export const pgjs = postgresAuthz(postgres(url ?? "", { max: 2 }));
