@@ -1,6 +1,6 @@
 // The conformance app's tables: projects with members, notes in them, a service that reads projects, an inbox
-// people can write to but only the recipient reads, and folders inside folders. The same app as
-// integrations/fastapi.
+// people can write to but only the recipient reads, feedback on a project that only its owner reads, and folders
+// inside folders. The same app as integrations/fastapi.
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
