@@ -173,5 +173,5 @@ makes it again.
 ```
 
 It gives the copy's URL, the owner's, and the app role's for it. The copy needs nobody connected to the original.
-`rowstile::testing::refused(result, "update")` and `rowstile::testing::not_found(result)` panic unless `result` is
-one.
+`rowstile::testing::refused(result.unwrap_err(), "update")` and `rowstile::testing::not_found(result.unwrap_err())`
+panic unless the error is one: a refusal by the update rule, a row the user can't see.

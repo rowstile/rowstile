@@ -7,11 +7,15 @@ description = "rowstile for Rust apps (a preview): transactions signed in, the d
 license = "Apache-2.0"
 repository = "https://github.com/rowstile/rowstile"
 homepage = "https://rowstile.dev/stacks/axum"
-documentation = "https://docs.rs/rowstile"
 readme = "README.md"
 keywords = ["postgres", "authorization", "row-level-security", "sqlx", "axum"]
 categories = ["database", "authentication", "web-programming"]
 include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE"]
+
+# docs.rs (once the crate is on crates.io; crates.io links to it): every module, each marked with the feature it needs
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["tokio-postgres"]
