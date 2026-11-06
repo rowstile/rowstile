@@ -153,6 +153,8 @@ export class Live {
       for (const m of messages) {
         if (isControlMessage(m)) this.controls.push(m.headers.control);
         if (isControlMessage(m) && m.headers.control === "up-to-date") this.upToDate = true;
+        // refetched: the shape is empty until Electric has said again what it holds, so no wait ends on it before
+        if (isControlMessage(m) && m.headers.control === "must-refetch") this.upToDate = false;
         this.kept.apply(m);
       }
       if (this.upToDate) for (const w of this.waiting) w();
