@@ -16950,6 +16950,67 @@ class Worlds(unittest.TestCase):
                 f'ALTER DATABASE "d" SET search_path = {schema}, around_open, public;',
             )
 
+    def test_a_server_without_icu_runs_and_counts_the_same_worlds(self) -> None:
+        """Without ICU, a Turkish database is made with the C locale: world_of says so, and main asks it so for the
+        world it runs and for the pairs it counts (the ledger), alike."""
+        turkish = [seed for seed in range(1, 41) if self.a.world_of(seed)[1].database == "turkish"]
+        self.assertTrue(turkish)
+        for seed in turkish:
+            self.assertEqual(self.a.world_of(seed, icu=False)[1].database, "C")
+        text = read(os.path.join(ROOT, "tests", "around.py"))
+        main = text[text.index("\ndef main(") :]
+        self.assertEqual(main.count("world_of(seed, icu)"), 2)
+        self.assertNotIn('database="C"', main)
+
+    def test_a_change_excuses_only_the_shares_it_inserts(self) -> None:
+        """A share on no row is excused only if one of the change's own INSERTs names it (genpolicy's grant(), as
+        SHARE_INSERT reads it) and it was written since the change began: transaction ids compared modulo 2^32, as
+        Postgres compares them, whatever the epoch."""
+        inserts = 0
+        for seed in range(1, 30):
+            spec = self.g.make(seed)
+            gen = self.g.gen_class(spec, "p.authz", "s.sql")(random.Random(seed))
+            for _ in range(6):
+                sql = gen.grant(None)
+                if sql.startswith("INSERT INTO authz.shares"):
+                    inserts += 1
+                    self.assertEqual(len(self.a.SHARE_INSERT.findall(sql)), 1, sql)
+        self.assertGreater(inserts, 20)
+        epoch = 5 * 2**32
+        self.assertTrue(self.a.written_since(1000, epoch + 1000))
+        self.assertTrue(self.a.written_since(1001, epoch + 1000))
+        self.assertFalse(self.a.written_since(999, epoch + 1000))
+        self.assertTrue(self.a.written_since(3, epoch + 2**32 - 2))  # (the 32-bit id wrapped since)
+        self.assertFalse(self.a.written_since(2**32 - 3, epoch + 2**32 - 2))
+
+    def test_lint_is_asked_for_what_each_drift_gives(self) -> None:
+        """After a grant behind the policy's back, lint must report an error on what it was given on, saying who
+        holds what (a new error of another kind does not do)."""
+        said = {statement: self.a.granted(statement) for statement in self.a.grants("o")}
+        self.assertEqual(
+            said["GRANT UPDATE ON authz.settings TO app_user"], ("'authz.settings: '", "app_user holds UPDATE on it")
+        )
+        self.assertEqual(said["GRANT ALL ON authz.shares TO PUBLIC"], ("'authz.shares: '", "PUBLIC holds "))
+        self.assertEqual(said["GRANT USAGE ON SCHEMA authz_int TO o"], ("'authz_int: '", "o holds USAGE on it"))
+        self.assertEqual(
+            said["GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz TO o"], ("'authz.'", "o holds EXECUTE on it")
+        )
+        text = read(os.path.join(ROOT, "tests", "around.py"))
+        self.assertIn("may use it directly", text[text.index("\ndef drift(") : text.index("\ndef user_gone(")])
+
+
+class Interleavings(unittest.TestCase):
+    """interleave.py's options: a pair asked for by name is one of the chosen worlds' (else nothing would run, and
+    the run would say all passed)."""
+
+    def test_a_pair_no_world_has_is_refused(self) -> None:
+        for args in (["--pairs", "create-mvoe"], ["--worlds", "boxes", "--pairs", "share-delete"], ["--pairs", "move"]):
+            p = subprocess.run(
+                [sys.executable, os.path.join(ROOT, "tests", "interleave.py"), *args], capture_output=True, text=True
+            )
+            self.assertEqual(p.returncode, 2, (args, p.stderr))
+            self.assertIn("no pair", p.stderr)
+
 
 class GeneratedShapes(unittest.TestCase):
     """genpolicy's policies say now and then what no other draw does (also(), across(), perm_groups(), keys other than
