@@ -1416,11 +1416,12 @@ def cone(pols: Sequence[Policy]) -> Cone | None:
                     pass  # custom roles: the drawn worlds hold them, not the listed ones
                 case Ref(name):
                     visit(p, t, name)
-                case Arrow(rel, perm):
-                    visit(p, t, rel)
-                    for st, _ in t.relations[rel].subjects():
+                case _:
+                    assert isinstance(leaf, Arrow), f"the reference evaluator reads a policy as parsed, not {leaf!r}"
+                    visit(p, t, leaf.rel)
+                    for st, _ in t.relations[leaf.rel].subjects():
                         assert st in p.types, FOLLOWS
-                        visit(p, p.types[st], perm)
+                        visit(p, p.types[st], leaf.perm)
 
     for p, t, expr in start:
         walk(p, t, expr)
