@@ -15,8 +15,8 @@ stack passes ([`integrations/ktor/test.sh`](../../integrations/ktor/test.sh)). T
 
 ## Install
 
-Java 21 or newer; the module is built with Kotlin 2.4, as Ktor 3.6 and Exposed 1.6 are, and apps on Kotlin 2.2 or newer read it. It
-(`dev.rowstile:rowstile-kotlin`) brings the Java SDK and kotlinx.coroutines; the app has Ktor (its Authentication
+Java 21 or newer, and Kotlin 2.3 or newer: the module is built with Kotlin 2.4, and a compiler reads what the next
+version wrote. It (`dev.rowstile:rowstile-kotlin`) brings the Java SDK and kotlinx.coroutines; the app has Ktor (its Authentication
 too), kotlinx.serialization's JSON, Exposed and PostgreSQL's driver.
 
 ```xml
