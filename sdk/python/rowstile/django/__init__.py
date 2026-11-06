@@ -347,12 +347,16 @@ def _table(model: type[Model] | str) -> str:
 
 
 def _verdict(using: str, table: str, command: str, key: object) -> NotFound | Refused:
-    """What an update or a delete of this row that changed nothing was, asked of the database as the same user."""
-    t, c, k = _explain_rule_args(table, command, key)
-    with connections[using].cursor() as cursor:
+    """What an update or a delete of this row that changed nothing was, asked of the database as the same user. A
+    db_table that names its schema with Django's quotes ('app"."notes') is asked about as Django writes it in its
+    queries ('"app"."notes"'): the table the database reads that as."""
+    db = connections[using]
+    asked = db.ops.quote_name(table) if '"' in table else table
+    t, c, k = _explain_rule_args(asked, command, key)
+    with db.cursor() as cursor:
         cursor.execute(_EXPLAIN, {"t": t, "c": c, "k": k})
         row = cursor.fetchone()
-    return verdict(table, command, key, *_answer(row))
+    return verdict(asked, command, key, *_answer(row))
 
 
 def expect(changed: Changed, model: type[Model] | str, command: str, key: object, using: str | None = None) -> Changed:

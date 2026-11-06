@@ -500,11 +500,12 @@ def _explain_rule_sql(table: LiteralString, command: LiteralString, key: Literal
     the key (':t', '%(t)s', '$1'), in a second column who is signed in, in the words the database's own
     refusals use ('user 2', 'service 3', 'someone not signed in'), and in a third the table as the policy names
     it. The policy names tables with their schema; a table named without one (a model that names no schema) is
-    looked up on the search_path."""
+    looked up on the search_path, and one written with quotes ('"app"."notes"', as Django writes a db_table that
+    names its schema) is the table the database reads it as."""
     found = (
         "SELECT n.nspname || '.' || c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n "
-        f"ON n.oid = c.relnamespace WHERE position('.' in {table}) = 0 "
-        f"AND c.oid = pg_catalog.to_regclass(pg_catalog.quote_ident({table}))"
+        f"ON n.oid = c.relnamespace WHERE c.oid = pg_catalog.to_regclass(CASE WHEN position('\"' in {table}) > 0 "
+        f"THEN {table} WHEN position('.' in {table}) = 0 THEN pg_catalog.quote_ident({table}) END)"
     )
     who = (
         "coalesce((SELECT p.principal_type || ' ' || p.principal_id FROM authz.principal() p), 'someone not signed in')"

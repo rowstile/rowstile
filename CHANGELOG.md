@@ -442,6 +442,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   row had (an update may change it), and with joined-table inheritance in the table the change went to. Before, it
   asked about the new key (and answered 404) or the subclass's table (and answered 409, or 500).
 - `rowstile.sqlalchemy.install(engine)` keeps no engine alive once the app lets it go.
+- The Python SDK's `expect()` reads a table written with quotes (`"app"."notes"`) as the database does, and
+  Django's `expect()` and `save()` answer 403 or 404 for a model whose `db_table` names its schema that way
+  (`'app"."notes'`), where they failed with AZ707.
 
 ### Upgrading
 

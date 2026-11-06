@@ -17,7 +17,7 @@ import rowstile
 from app.authz_client import ObjectType, Permission
 from app.models import Folder, Note, Project
 from django.core.exceptions import ImproperlyConfigured
-from django.db import DatabaseError, connection, connections, transaction
+from django.db import DatabaseError, connection, connections, models, transaction
 from django.http import HttpRequest, HttpResponse, StreamingHttpResponse
 from django.test import AsyncClient, Client, override_settings
 from rowstile import ConnectionProblem, NotFound, Principal, Refused
@@ -405,6 +405,30 @@ def test_expect_and_save(data: str) -> None:
     with psycopg.connect(data, autocommit=True) as owner:  # as it was
         owner.execute("DELETE FROM notes WHERE id > 100")
         owner.execute("INSERT INTO notes (id, project_id, author_id, body) VALUES (4, 1, 3, 'idea')")
+
+
+class QuotedNote(models.Model):
+    """public.notes, its schema named by Django's quotes in db_table (Django writes it "public"."notes")."""
+
+    id = models.BigAutoField(primary_key=True)
+    body = models.TextField()
+
+    class Meta:
+        app_label = "app"
+        db_table = 'public"."notes'
+        managed = False
+
+
+def test_expect_and_save_for_a_table_named_with_quotes() -> None:
+    with rowstile.acting_as(3):  # cy may see note 1, not edit it
+        with pytest.raises(Refused) as refused:
+            authz_dj.expect(QuotedNote.objects.filter(pk=1).update(body="x"), QuotedNote, "update", 1)
+        assert refused.value.message == "permission denied: user 3 may not update row 1 of public.notes"
+        note = QuotedNote.objects.get(pk=1)
+        note.body = "x"
+        with pytest.raises(Refused) as refused:
+            authz_dj.save(note)
+        assert (refused.value.table, refused.value.command) == ("public.notes", "update")
 
 
 def test_queries_by_permission() -> None:
