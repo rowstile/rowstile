@@ -25,6 +25,6 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = ">= 3.3"
   spec.files = Dir["lib/**/*.rb", "sig/**/*.rbs", "README.md", "LICENSE"]
   spec.require_paths = ["lib"]
-  spec.add_dependency "activerecord", ">= 8.0", "< 9"
+  spec.add_dependency "activerecord", "~> 8.1" # (the version the suite runs: the gem hooks into its internals)
   spec.add_dependency "pg", ">= 1.5"
 end

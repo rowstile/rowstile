@@ -5,7 +5,7 @@
 `gem "rowstile"` is the SDK for Rails apps on a rowstile policy: every Active Record transaction signs in as whoever
 the request or the job acts for, refused writes become a 403 with the database's reason, rows the user can't see a
 404, and the app refuses to start on a connection that skips row-level security. It holds no rowstile logic: it calls
-the `authz.*` functions the policy made, and translates their answers. Ruby 3.3 or newer, Rails 8, the `pg` driver.
+the `authz.*` functions the policy made, and translates their answers. Ruby 3.3 or newer, Rails 8.1, the `pg` driver.
 
 The gem is not the `rowstile` command (`rowstile init`, `migrate`, `test`, `client`): install that with
 `npm install rowstile@next`, `pip install --pre rowstile` or its Docker image ([Installing](../../docs/installing.md)).

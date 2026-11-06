@@ -73,6 +73,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The .NET SDK's helpers its EF Core package alone calls are no longer public: `Keys`, `Verdicts`, `RowAsked`,
   `RowAnswer`, `RowstileNpgsql.ActAs`, `ActAsArgs`, `ActAsParameters` and `AskAsync`, and `Stale.Record`. Its README
   lists what is ([.NET](sdk/dotnet/README.md)).
+- The Ruby SDK needs Active Record 8.1 (`~> 8.1`), the version its suite runs: it hooks into parts of Active Record
+  that change between minor releases, and it was never run on 8.0.
 
 ### Removed
 
