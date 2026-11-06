@@ -81,6 +81,11 @@ describe("customers", () => {
     expect((await cy.send("PATCH", `/api/tickets/${tickets.password}`, { status: "open" })).status).toBe(200);
     expect((await cy.send("PATCH", `/api/tickets/${tickets.password}`, { status: "pending" })).status).toBe(403);
     expect((await cy.send("PATCH", `/api/tickets/${tickets.password}`, { assigneeId: ids.al })).status).toBe(403);
+    // nor date it again, to the top of every agent's inbox
+    const opened = async () => (await cy.get("/api/tickets")).json.find((t: { id: string }) => t.id === tickets.password).createdAt;
+    const before = await opened();
+    await cy.send("PATCH", `/api/tickets/${tickets.password}`, { createdAt: "2030-01-01T00:00:00.000Z" });
+    expect(await opened()).toBe(before);
   });
 
   test("the agents' notes on a customer: agents read them, the customer doesn't", async () => {
@@ -90,6 +95,9 @@ describe("customers", () => {
     expect((await peter.get(`/api/people/${ids.peter}`)).json.notes).toBeNull();
     expect((await peter.send("PATCH", `/api/people/${ids.peter}`, { notes: "nice" })).status).toBe(403);
     expect((await peter.send("PATCH", `/api/people/${ids.peter}`, { name: "Peter G." })).status).toBe(200);
+    // and their address is how the email intake knows them: not theirs to change
+    await peter.send("PATCH", `/api/people/${ids.peter}`, { email: "dee@mail.test" });
+    expect((await peter.get(`/api/people/${ids.peter}`)).json.email).toBe("peter@initech.test");
   });
 
   test("copying someone in: of the workspace, never of another", async () => {

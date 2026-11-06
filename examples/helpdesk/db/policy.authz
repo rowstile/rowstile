@@ -116,6 +116,7 @@ rules hd.workspaces
   update    : manage
   update id : nobody
 
+-- a person's email is how the email intake knows who sent a mail: only an admin changes it
 rules hd.users view hd.users_visible
   select                        : view
   insert                        : workspace.manage or ((workspace.work or workspace.connected) and {kind = 'customer'})
@@ -124,6 +125,7 @@ rules hd.users view hd.users_visible
   update role, active           : workspace.manage
   update customer_org_id        : workspace.work
   update customer_org_id after  : org.view
+  update email                  : workspace.manage
   update id, workspace_id, kind : nobody
   mask notes                    : see_notes
 
@@ -173,6 +175,7 @@ rules hd.support_access
   update : nobody
   delete : workspace.manage
 
+-- no one dates a ticket again (the inbox's order)
 rules hd.tickets
   select : view
   insert : (workspace.view and requester and {status = 'open' and team_id is null and assignee_id is null}) or workspace.work or workspace.connected
@@ -185,12 +188,13 @@ rules hd.tickets
   update team_id, assignee_id           : work
   update team_id after                  : team.view or {team_id is null}
   update id, workspace_id, requester_id : nobody
+  update created_at                     : nobody
   delete                                : workspace.manage
 
 rules hd.comments
   cascade from hd.tickets
   select : view
-  insert : (ticket.work and author) or (ticket.reply and author and {not internal}) or (ticket.view and via)
+  insert : (ticket.work and author) or (ticket.reply and author and {not internal}) or (ticket.view and via and {not internal})
   update : nobody
   delete : nobody
 
