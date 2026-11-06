@@ -9,6 +9,9 @@
 # wsproxy, through which Neon's serverless driver reaches it over WebSockets (on Neon, Neon's own proxy does), and
 # Redis, for the BullMQ queue (check 10); both preview.
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-ts
@@ -37,11 +40,10 @@ cleanup() {
   docker rm -f -v "$NAME" >/dev/null 2>&1
   docker network rm "$NAME-net" >/dev/null 2>&1
 }
-trap cleanup EXIT
+trap 'cleanup; gone' EXIT
 docker rm -f -v "$NAME" "$NAME-wsproxy" "$NAME-redis" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per worker)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
@@ -77,7 +79,7 @@ export REDIS_URL="redis://localhost:$REDIS_PORT"
 export ROWSTILE_FEED_URL="postgresql://conf_app:app@localhost:$PORT/conf"
 export CONFORMANCE_SERVER="http://localhost:$WEB" CONFORMANCE_SERVER_ONE="http://localhost:$((WEB + 1))"
 export CONFORMANCE_SERVER_EDGE="http://localhost:$((WEB + 3))"   # edge/: the edge runtime's routes (preview)
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 export CONFORMANCE_SERVER_LOG="$LOG/server.log"   # what the first server logs: why a page failed (check 15)
 rc=0
 $BIN/prisma migrate deploy >"$LOG/migrate.log" 2>&1 || { cat "$LOG/migrate.log"; echo "FAIL  11: prisma migrate deploy"; exit 1; }
@@ -119,7 +121,7 @@ for _ in $(seq 60); do curl -sf "$CONFORMANCE_SERVER/api/projects" >/dev/null &&
   curl -sf "$CONFORMANCE_SERVER_EDGE/api/check" >/dev/null && break; sleep 1; done
 # What the checks run of the SDK (sdk/typescript/*/src), lines, branches and functions: the report is printed, and
 # kept in CONFORMANCE_COVERAGE (a folder of its own if not given) with the details of each file
-export CONFORMANCE_COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
+[ -n "${CONFORMANCE_COVERAGE:-}" ] || { CONFORMANCE_COVERAGE=$(mktemp -d); TMPS+=("$CONFORMANCE_COVERAGE"); }; export CONFORMANCE_COVERAGE
 $BIN/vitest run --coverage "$@" || { rc=1; echo "(server logs: $LOG)"; }
 if [ $# -gt 0 ]; then
   echo "(some of the checks ran: the SDK's coverage isn't judged)"

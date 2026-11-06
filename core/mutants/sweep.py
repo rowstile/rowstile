@@ -267,10 +267,10 @@ class Container:
                     "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off",
                     "-c", "wal_level=logical")  # fmt: skip
         for _ in range(60):
-            if self.docker("exec", self.name, "pg_isready", "-q", "-h", "/var/run/postgresql", check=False).returncode == 0:  # fmt: skip
+            # over TCP: the image's entrypoint first runs a server on the socket alone (initdb), then restarts it
+            if self.docker("exec", self.name, "pg_isready", "-q", "-h", "127.0.0.1", check=False).returncode == 0:  # fmt: skip
                 break
             time.sleep(1)
-        time.sleep(3)  # the image's entrypoint restarts the server once after initdb
         self.docker("exec", "-e", "PGHOST=/var/run/postgresql", "-e", "PGUSER=postgres", "-w", "/src/core", self.name,
                     "bash", "tests/make_owner.sh")  # fmt: skip
 

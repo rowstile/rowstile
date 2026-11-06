@@ -13,6 +13,9 @@
 # Then the other checks (paratest, two workers, each on its own copy of the migrated test database), with what they
 # run of the SDK measured by Xdebug, lines and branches (tests/coverage.php).
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-laravel
@@ -24,14 +27,13 @@ COMPOSER_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS composer$/\1/p' ../images/Dockerfi
 IMAGE=rowstile-laravel
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker build -q -t "$IMAGE" --build-arg "PHP_IMAGE=$PHP_IMAGE" --build-arg "COMPOSER_IMAGE=$COMPOSER_IMAGE" -f php.Dockerfile . >/dev/null || exit 1
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 cleanup() {
-  rm -rf "$LOG"
   [ -n "${KEEP:-}" ] && return
   [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"
   docker rm -f -v "$NAME" >/dev/null 2>&1
 }
-trap cleanup EXIT
+trap 'cleanup; gone' EXIT
 CACHE=${ROWSTILE_COMPOSER_CACHE:-$HOME/.cache/rowstile/composer}
 # what the checks run of the SDK, kept where CONFORMANCE_COVERAGE says (a folder of its own if not given)
 export CONFORMANCE_COVERAGE=${CONFORMANCE_COVERAGE:-$LOG/coverage}
@@ -59,8 +61,7 @@ php_run vendor/bin/phpstan analyse --no-progress --memory-limit=1G >"$LOG/phpsta
   { cat "$LOG/phpstan.log"; echo "FAIL  phpstan analyse"; exit 1; }
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per worker)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \

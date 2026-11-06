@@ -11,6 +11,9 @@
 # the schema it dumps after migrating is db/structure.sql.
 # Then the other checks (Minitest, two workers, each on its own copy of the migrated test database).
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-rails
@@ -23,7 +26,7 @@ RUBY_IMAGE=$(sed -n "s/^FROM \([^ ]*\) AS $RUBY\$/\1/p" ../images/Dockerfile)
 IMAGE=rowstile-rails:$RUBY
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker build -q -t "$IMAGE" --build-arg "RUBY_IMAGE=$RUBY_IMAGE" -f ruby.Dockerfile . >/dev/null || exit 1
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 BUNDLE=${ROWSTILE_RAILS_BUNDLE:-$HOME/.cache/rowstile/rails-bundle}
 # What the checks run of the gem (sdk/ruby/lib), lines and branches (test/coverage.rb): every Ruby process the tests
 # start measures itself into CONFORMANCE_COVERAGE (a folder of its own if not given), where the report is kept
@@ -55,9 +58,8 @@ cleanup() {
   [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"
   docker rm -f -v "$NAME" >/dev/null 2>&1
 }
-trap cleanup EXIT
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+trap 'cleanup; gone' EXIT
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per worker)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \

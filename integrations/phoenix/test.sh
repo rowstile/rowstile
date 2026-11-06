@@ -13,6 +13,9 @@
 # nothing left to run. Then the server's half of check 13, and the other checks: mix test in two partitions side
 # by side, each on its own copy of the migrated test database (check 12), measuring what they run of the SDK.
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-phoenix
@@ -23,7 +26,7 @@ HERE=$PWD
 ELIXIR_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS elixir$/\1/p' ../images/Dockerfile)
 IMAGE=rowstile-phoenix
 CACHE=${ROWSTILE_PHOENIX_CACHE:-$HOME/.cache/rowstile/phoenix}
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 server=
 cleanup() {
   [ -n "$server" ] && kill "$server" 2>/dev/null
@@ -34,7 +37,7 @@ cleanup() {
 }
 # the containers the suite runs in the background, by name: a docker client stopped can leave its container running
 cleanup_runs() { docker rm -f "$NAME-server" "$NAME-test-1" "$NAME-test-2" >/dev/null 2>&1; }
-trap 'cleanup_runs; cleanup' EXIT
+trap 'cleanup_runs; cleanup; gone' EXIT
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker build -q -t "$IMAGE" --build-arg "ELIXIR_IMAGE=$ELIXIR_IMAGE" -f elixir.Dockerfile . >/dev/null || exit 1
 # What the checks run of the SDK (test/support/cover.ex): each partition's, kept in CONFORMANCE_COVERAGE (a folder of
@@ -79,8 +82,7 @@ done
 echo "ok    mix format, the compiler's warnings, Credo --strict and Dialyzer find nothing in the SDK and the app"
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per
 # partition)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \

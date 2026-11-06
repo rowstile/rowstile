@@ -10,6 +10,9 @@
 # connection, which it must refuse (13), and the other checks run (xUnit, each test collection on a copy of its own
 # of the migrated test database: 12), measured by coverlet.
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-aspnetcore
@@ -24,15 +27,14 @@ command -v dotnet >/dev/null || { echo "FAIL  no dotnet: this suite needs the .N
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 done_() {
   [ -n "${KEEP:-}" ] || { [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"; docker rm -f -v "$NAME" >/dev/null 2>&1; }
   rm -rf "$LOG"
   dotnet build-server shutdown >/dev/null 2>&1   # and any a build started all the same
 }
-trap done_ EXIT
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+trap 'done_; gone' EXIT
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per collection)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
@@ -81,7 +83,7 @@ if [ $started != 0 ] && [ $started != 124 ] && grep -q "an owner skips row-level
 else cat "$LOG/owner.log"; echo "FAIL  13: the app started on the owner's connection"; rc=1; fi
 # What the checks run of the SDK (sdk/dotnet, its three packages), lines and branches (coverlet): the report is kept in
 # CONFORMANCE_COVERAGE (a folder of its own if not given), and printed
-COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
+COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}; [ -n "${CONFORMANCE_COVERAGE:-}" ] || TMPS+=("$COVERAGE")
 mkdir -p "$COVERAGE" && rm -f "$COVERAGE"/coverage*.xml "$COVERAGE/report.txt"
 # (Tests/testconfig.json names the packages: coverlet leaves a package out unless it is named)
 dotnet Tests/bin/Debug/net10.0/Tests.dll --results-directory "$COVERAGE" --coverlet --output Detailed "$@" >"$LOG/tests.log" 2>&1

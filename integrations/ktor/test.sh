@@ -10,6 +10,9 @@
 # nothing changed. Then the other checks run (JUnit, in two JVMs: check 12), each printing its line. Their coverage
 # of the Kotlin module is reported last.
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-ktor
@@ -21,10 +24,9 @@ docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Docke
 docker rm -f -v "$NAME" >/dev/null 2>&1
 source ../pooler.sh
 stop() { [ -n "${KEEP:-}" ] || { pooler_stop "$NAME"; docker rm -f -v "$NAME" >/dev/null 2>&1; }; }
-trap stop EXIT
+trap 'stop; gone' EXIT
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per JVM)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
@@ -39,7 +41,7 @@ if [ "${POOLER:-}" = pgbouncer ]; then          # the app through PgBouncer in t
 fi
 export ROWSTILE_APP_URL="jdbc:postgresql://localhost:$APP_PORT/conf?user=conf_app&password=app"
 export ROWSTILE_CLI="$PYTHON $PWD/../../core/cli/rowstile_cli.py"   # the command, for checks 9 and 14
-LOG=$(mktemp -d)
+LOG=$(mktemp -d); TMPS+=("$LOG")
 rc=0
 # the SDK first (the Kotlin module, and the Java one under it), built and installed in the local repository, where the
 # app's build finds it: Maven resolves the app's dependencies for Flyway's goals too (a clean local repository, as on
@@ -57,7 +59,7 @@ $CLI migrate --check >/dev/null &&
 ROWSTILE_OWNER_URL=$ROWSTILE_TESTS_URL $MVN flyway:migrate >"$LOG/migrate-tests.log" 2>&1 || { cat "$LOG/migrate-tests.log"; exit 1; }
 # What the checks run of the Kotlin module (sdk/java/rowstile-kotlin), lines and branches, measured by JaCoCo in the
 # tests' JVMs: the report is printed, and kept in CONFORMANCE_COVERAGE (a folder of its own if not given) with its pages
-COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
+COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}; [ -n "${CONFORMANCE_COVERAGE:-}" ] || TMPS+=("$COVERAGE")
 mkdir -p "$COVERAGE" && rm -rf "$COVERAGE"/jacoco.exec "$COVERAGE"/report.txt "$COVERAGE"/rowstile-kotlin
 # and an earlier run's pages in the module: JaCoCo's report skips, and passes, without its data, which would leave
 # them to be judged

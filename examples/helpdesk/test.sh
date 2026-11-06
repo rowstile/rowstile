@@ -29,8 +29,7 @@ docker image inspect "$ELECTRIC_IMAGE" >/dev/null 2>&1 || docker pull -q "$ELECT
 docker network create "$NAME-net" >/dev/null 2>&1
 docker run -d --name "$NAME" --network "$NAME-net" --network-alias=pg -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" \
   "rowstile:$PG" -c wal_level=logical >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the tables' owner migrates: not a superuser, as on managed Postgres; Electric's role is the administrator's
 docker exec -i "$NAME" psql -q -U postgres -v ON_ERROR_STOP=1 >/dev/null <<'EOF' || exit 1
 CREATE ROLE hd_owner LOGIN PASSWORD 'hd_owner' CREATEROLE;

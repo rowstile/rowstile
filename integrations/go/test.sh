@@ -10,6 +10,9 @@
 # sqlc's code, the checks Go itself makes (go vet, gofmt, staticcheck), the SDK installed from its tag, the server's
 # half of check 13, and the other checks (go test, its two packages side by side, each on its own database).
 set -u
+# what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
+TMPS=()
+gone() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-go
@@ -21,14 +24,14 @@ GOOSE_VERSION=$(sed -n 's/^GOOSE=\(v[0-9.]*\) GOOSE_SHA=.*/\1/p' ../../core/test
 GOOSE_SHA=$(sed -n 's/^GOOSE=v[0-9.]* GOOSE_SHA=\([0-9a-f]*\)$/\1/p' ../../core/tests/migration_tools.sh)
 SQLC=$(sed -n 's/^FROM \([^ ]*\) AS sqlc$/\1/p' ../images/Dockerfile)
 STATICCHECK=honnef.co/go/tools/cmd/staticcheck@v0.8.1
-T=$(mktemp -d)
+T=$(mktemp -d); TMPS+=("$T")
 server=
 stop() {
   [ -n "$server" ] && kill "$server" 2>/dev/null
   [ -n "${KEEP:-}" ] || { [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"; docker rm -f -v "$NAME" >/dev/null 2>&1; }
   rm -rf "$T"
 }
-trap stop EXIT
+trap 'stop; gone' EXIT
 command -v go >/dev/null || { echo "FAIL  go is not installed"; exit 1; }
 # goose, kept between runs
 TOOLS=${XDG_CACHE_HOME:-$HOME/.cache}/rowstile-conformance-go
@@ -41,8 +44,7 @@ fi
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
-for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
-sleep 2
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per package)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
@@ -109,7 +111,7 @@ for _ in $(seq 30); do curl -sf "http://localhost:$WEB/projects" >"$T/projects.j
 kill "$server" 2>/dev/null; server=
 # What the checks run of the SDK (sdk/go and its rowstiletest), statements: Go measures no branches. The report is
 # printed, and kept in CONFORMANCE_COVERAGE (a folder of its own if not given) with the profile
-COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
+COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}; [ -n "${CONFORMANCE_COVERAGE:-}" ] || TMPS+=("$COVERAGE")
 mkdir -p "$COVERAGE" && rm -f "$COVERAGE/cover.out" "$COVERAGE/report.txt"
 ROWSTILE_APP_URL="$APP/conf_tests" go test -count=1 -v -coverpkg=github.com/rowstile/rowstile/sdk/go/... \
   -coverprofile="$COVERAGE/cover.out" ./... "$@" >"$T/test.log" 2>&1
