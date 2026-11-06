@@ -43,6 +43,7 @@
     "@rowstile/vitest": "0.1.0-dev"
   },
   "peerDependencies": {
+    "expect": "^30.5.2",
     "jest": "^30.5.2",
     "pg": "^8.23.1"
   },

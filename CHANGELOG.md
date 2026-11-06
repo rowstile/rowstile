@@ -449,6 +449,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Python SDK's `expect()` reads a table written with quotes (`"app"."notes"`) as the database does, and
   Django's `expect()` and `save()` answer 403 or 404 for a model whose `db_table` names its schema that way
   (`'app"."notes'`), where they failed with AZ707.
+- `@rowstile/jest` names `expect`, whose types it adds the matchers to, as a peer: with pnpm's strict layout,
+  `toBeRefused` and `toBeNotFound` were untyped.
 
 ### Upgrading
 
