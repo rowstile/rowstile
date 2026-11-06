@@ -669,9 +669,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The review for CI on GitHub: when GitHub can't be reached, or doesn't answer within 30 seconds, the comment step
   fails with an error that says so and that the review is in the run's summary. Before, it ended with a traceback,
   or waited for the job's timeout.
-- A mistake on a line that goes on over several (a quote left open in braces, AZ106 and AZ114) is underlined in
-  the editor up to the last character of its last line. Before, the language server's range ended one character
-  past the end of that line.
+- A mistake on a line that goes on over several (a quote left open in braces, AZ106 and AZ114), or about a quote left
+  open to the end of its line (in a condition or a test's statement), is underlined in the editor and the review up
+  to the last character of its words. Before, the range ended one character past the end of that line.
 - The npm package's launcher passes Ctrl-C and a hang-up on to the command only when none of its streams is a
   terminal: `npx rowstile ... < file` in a terminal no longer gives the command each one twice.
 - The command's image and the Python package are built with the build's own packages (hatchling and what it needs)
