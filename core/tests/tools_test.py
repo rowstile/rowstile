@@ -210,6 +210,23 @@ def main() -> None:
         shown == ["7", "(1,2)", '("a b","x,y")', '("","q""t")', '("b\\\\s","(1)")'],
         shown,
     )
+    # the keys the clients' tests hold, and the text Postgres writes for each: a row of its fields, or its one value
+    written = [
+        conn.query(
+            "SELECT $1::text"
+            if len(k) == 1
+            else f"SELECT ROW({', '.join(f'${i}::text' for i in range(1, len(k) + 1))})::text",
+            [None if v is None else str(v) for v in k],
+        )[0][0]
+        for k, _ in client_types.KEYS
+    ]
+    check(
+        "the keys the clients' tests hold are written as Postgres writes them (Unicode spaces unquoted, NULL nothing)",
+        written == [text for _, text in client_types.KEYS],
+        [(k, text, w) for (k, text), w in zip(client_types.KEYS, written, strict=True) if w != text],
+    )
+    shown = [authz_client._shown(k) for k, _ in client_types.KEYS]
+    check("... and so are they in the Python client's messages", shown == written, shown)
     check("can: carol may not edit it", a.can("file", 11, "edit") is False)
     check(
         "list: the files carol may view", sorted(a.list("file", "view")) == ["10", "11", "16"], a.list("file", "view")
@@ -345,6 +362,15 @@ def main() -> None:
         check("tsc --strict accepts correct calls and rejects wrong names", typed[0], typed[1])
     else:
         print("skip  tsc not installed (tests/client_types.py is the same check, and CI's javascript job runs it)")
+    texts = client_types.key_texts(ts)
+    if texts:
+        check(
+            "the keys in the TypeScript client's messages, as Postgres writes them",
+            [s for _, s in texts] == written,
+            texts,
+        )
+    else:
+        print("skip  tsc or node not installed (tests/client_types.py runs the same keys, in CI's javascript job)")
     conn.close()
 
     print("-- the editor grammar (../editor/)")

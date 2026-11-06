@@ -60,6 +60,7 @@ from authzlib.versions import STAGES, VERSION, pypi, spelled, stage  # noqa: E40
 
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 import around  # noqa: E402
+import client_types  # noqa: E402
 import decisions  # noqa: E402
 import features  # noqa: E402
 import genpolicy  # noqa: E402
@@ -1674,6 +1675,11 @@ class CompositeKeys(unittest.TestCase):
         exec(c.client("py", "x"), ns)
         self.assertEqual(ns["_id"]((1, 'x,y "q"')), '("1","x,y \\"q\\"")')
         self.assertEqual(ns["_id"](7), "7")
+        # a key of one value given as a tuple is that value; a NULL field is nothing
+        self.assertEqual([ns["_id"](k) for k in ((7,), (1, None))], ["7", '("1",)'])
+        # a key in a message is as Postgres writes it (client_types.KEYS, which tools_test.py asks Postgres again):
+        # quoted for ASCII's six spaces, not for a no-break space
+        self.assertEqual([ns["_shown"](k) for k, _ in client_types.KEYS], [text for _, text in client_types.KEYS])
 
     def test_client_names_each_types_permissions(self) -> None:
         # a type checker refuses a permission the type hasn't: each type's are a Literal

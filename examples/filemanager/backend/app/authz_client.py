@@ -109,20 +109,29 @@ def _int(value: object) -> int:
 
 
 def _id(x: Id) -> str:
-    """A composite key as Postgres writes a row: every field quoted, quotes and backslashes escaped."""
-    if isinstance(x, (tuple, list)):
-        return "(" + ",".join('"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"' for v in x) + ")"
-    return str(x)
+    """An id as the database compares it: a composite key as Postgres reads a row (every field quoted, quotes and
+    backslashes escaped, None as nothing); a key of one column given as a tuple is that value."""
+    if not isinstance(x, (tuple, list)):
+        return str(x)
+    if len(x) == 1:
+        return str(x[0])
+    return "(" + ",".join("" if v is None else '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"' for v in x) + ")"
 
 
 def _shown(x: Id) -> str:
-    """A key as the database writes it, for a message: 7, or (1,2) for a key of several columns."""
+    """A key as the database writes it, for a message: 7, or (1,2) for a key of several columns. A field is quoted
+    as Postgres quotes it: when it is empty or holds a quote, a comma, a backslash, a parenthesis or one of ASCII's
+    six spaces (a no-break space is not quoted); None is nothing."""
     if not isinstance(x, (tuple, list)):
         return str(x)
+    if len(x) == 1:
+        return str(x[0])
 
     def field(v: object) -> str:
+        if v is None:
+            return ""
         s = str(v)
-        if s == "" or any(ch in s for ch in '",\\()') or any(ch.isspace() for ch in s):
+        if s == "" or any(ch in s for ch in '",\\() \t\n\r\v\f'):
             return '"' + s.replace("\\", "\\\\").replace('"', '""') + '"'
         return s
 

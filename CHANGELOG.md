@@ -660,6 +660,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   app's page. Opening a direct chat whose other person left blanked the web app, again on each reload; it opens,
   unnamed. Its migrations run in a service of their own in `docker-compose.yml`, so the app no longer holds the
   tables' owner's password, and its schema is one migration, as the file manager's is.
+- The clients `rowstile client py` and `rowstile client ts` write a key of several columns in a message as
+  Postgres writes the row: a field is quoted for ASCII's six spaces, not for a no-break space or another Unicode
+  space, and a NULL field is nothing (it was `None` or `null`). A key of one value given as a tuple or an array is
+  that value, in a message and in what they send: `(7,)` was sent as `("7")`.
 
 ### Upgrading
 
