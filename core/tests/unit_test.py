@@ -1807,6 +1807,20 @@ class ClientNames(unittest.TestCase):
         self.assertEqual(
             [x for x in lines if x.startswith("public static class") and x != "public static class Policy"], []
         )
+        # a name every class inherits from object would hide it (CS0108, an error where warnings are): a type or a
+        # permission of that name has none
+        inherited = ("to_string", "get_hash_code", "get_type", "memberwise_clone", "equals", "reference_equals")
+        hiding = errors_prelude() + "type note = app.notes\n  owner : user = owner_id\n  can view = owner\n"
+        hiding += "".join(f"  can {p} = owner\n" for p in inherited)
+        hiding += "".join(
+            f"type {t} = app.t{i}\n  owner : user = owner_id\n  can view = owner\n" for i, t in enumerate(inherited)
+        )
+        lines = [x.strip() for x in database.client("csharp", hiding).split("\n")]
+        for name in inherited:
+            cs = "".join(part.capitalize() for part in name.split("_"))
+            self.assertEqual(lines.count(f"// {name} would be {cs}: it has no name here, use new Permission(...)"), 2)
+            self.assertFalse([x for x in lines if f" {cs} " in x or x.endswith(f" {cs}")], cs)
+        self.assertIn('public static readonly Permission View = new(Type, "view");', lines)
         # hidden permissions stay off it
         self.assertNotIn("view__base", Compiler(parse_policy(read(POLICIES["alt"]))).client("csharp", "x"))
 
