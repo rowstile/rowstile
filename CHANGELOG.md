@@ -436,6 +436,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   didn't begin.
 - `rowstile.alembic` leaves the sync index's schema alone too (`authz_sync`, made by a policy with `sync` lines),
   so `alembic check` shows no change and autogenerate writes no `drop_table` for its tables.
+- The Python SDK's jobs (`rowstile.job`) leave nothing in the context they run in: a worker that ran many jobs in
+  one thread held a little memory for each.
 
 ### Upgrading
 

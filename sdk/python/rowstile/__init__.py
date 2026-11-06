@@ -114,47 +114,50 @@ def acting_as(who: Who) -> Iterator[Principal | None]:
         _current.reset(token)
 
 
+# the job blocks open in this thread or task, innermost last: what each one's exit sets back. One variable for every
+# job, made once: a worker runs every job in one context, which keeps each variable ever set in it
+_job_tokens: contextvars.ContextVar[tuple[contextvars.Token[Principal | None], ...]] = contextvars.ContextVar(
+    "rowstile_jobs", default=()
+)
+
+
 class _Job:
-    """What job(who) gives: a decorator, or a with block."""
+    """What job(who) gives: a decorator, or a with block. Each thread and task has its blocks of its own, so one
+    job(who) entered side by side (each call of a decorated function) never sets back another's."""
 
     def __init__(self, who: Who) -> None:
         self.who = Principal.of(who)
-        # each thread's or task's own blocks: one job(who) entered side by side never resets another's
-        self._tokens: contextvars.ContextVar[tuple[contextvars.Token[Principal | None], ...]] = contextvars.ContextVar(
-            "rowstile_job", default=()
-        )
 
     def __call__(self, fn: Callable[P, R]) -> Callable[P, R]:
         import functools
         import inspect
 
-        who = self.who
         if inspect.iscoroutinefunction(fn):
             coroutine = fn
 
             @functools.wraps(fn)
             async def run_async(*a: P.args, **kw: P.kwargs) -> object:
-                with _Job(who):  # a block of its own for each call: calls side by side don't share one
+                with self:
                     return await coroutine(*a, **kw)
 
             return cast("Callable[P, R]", run_async)  # R is the coroutine run_async returns too
 
         @functools.wraps(fn)
         def run(*a: P.args, **kw: P.kwargs) -> R:
-            with _Job(who):
+            with self:
                 return fn(*a, **kw)
 
         return run
 
     def __enter__(self) -> Principal:
-        self._tokens.set((*self._tokens.get(), _current.set(self.who)))
+        _job_tokens.set((*_job_tokens.get(), _current.set(self.who)))
         return self.who
 
     def __exit__(
         self, kind: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
     ) -> None:
-        *rest, token = self._tokens.get()
-        self._tokens.set(tuple(rest))
+        *rest, token = _job_tokens.get()
+        _job_tokens.set(tuple(rest))
         _current.reset(token)
         raised = None if exc is None else _in_job(exc)
         if raised is not None:
