@@ -8,6 +8,7 @@
 // queries follow once the index does: a check waits for what the client holds, whatever the mode. Where it needs the
 // index to hold every change made so far before it asks, it waits for the worker's next run first (settled()).
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -16,7 +17,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { mutators } from "../src/mutators.js";
 import { zql } from "../src/schema.js";
 import { syncWorker, type SyncWorker } from "../src/worker.js";
-import { ADMIN, APP, Client, MODE, OWNER, POLICY, USERS, listed, owner, run, seed } from "./data.js";
+import { ADMIN, APP, Client, MODE, OWNER, POLICY, SERVER_ONE, USERS, listed, owner, run, seed, type Kind } from "./data.js";
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(HERE, "..", "..", "core", "cli", "rowstile_cli.py");
@@ -29,9 +30,35 @@ let worker: SyncWorker | null = null;
 /** After commit, once the worker's next run has ended: the index holds every change committed before; else at once. */
 const settled = async (): Promise<void> => worker?.ran();
 
-/** Every user's queries hold what authz.list gives them. */
+/** The users deleted (Z14): their queries are held to nothing more. */
+const gone = new Set<string>();
+let barriers = 0;
+/** Every user's queries hold what authz.list gives them, once each client has had every change committed so far: a
+ *  rename of one of its rows, all in one transaction after the changes, arrives after them (Zero gives a client a
+ *  change to all its queries at once). A client that holds no file nor folder has none to rename: it is held to
+ *  what it holds when asked. */
 async function asListed(): Promise<void> {
-  for (const user of USERS) await live[user]!.listed();
+  await settled();                                               // after commit: the index has the changes first
+  const want: { user: string; ids: Record<Kind, number[]> }[] = [];
+  for (const user of USERS.filter((u) => !gone.has(u))) {
+    const ids = { file: await listed(user, "file"), folder: await listed(user, "folder"), note: await listed(user, "note") };
+    want.push({ user, ids });
+  }
+  const mark = ` #${++barriers}`;
+  const barrier = want.map((w) => w.ids.file.length ? ["file", w.ids.file[0]!] as const
+    : w.ids.folder.length ? ["folder", w.ids.folder[0]!] as const : null);
+  const ids = (kind: Kind) => [...new Set(barrier.flatMap((r) => (r?.[0] === kind ? [r[1]] : [])))];
+  await run(`WITH files AS (UPDATE app.files SET name = regexp_replace(name, ' #[0-9]+$', '') || $1 WHERE id = ANY($2::int[]))
+    UPDATE app.folders SET name = regexp_replace(name, ' #[0-9]+$', '') || $1 WHERE id = ANY($3::int[])`,
+    [mark, ids("file"), ids("folder")]);
+  for (const [i, w] of want.entries()) {
+    if (barrier[i]) {
+      const [kind, renamed] = barrier[i]!;
+      await live[w.user]!.until(() => String(live[w.user]!.row(kind, renamed)?.name).endsWith(mark),
+        `${kind} ${renamed} renamed after the changes`);
+    }
+    for (const kind of Object.keys(w.ids) as Kind[]) await live[w.user]!.holds(kind, w.ids[kind]);
+  }
 }
 
 beforeAll(async () => {
@@ -62,11 +89,16 @@ test("Z1: the first sync of each user's queries is what authz.list gives them", 
 });
 
 test("Z2: a share made: the row arrives live; revoked: it leaves", async () => {
-  await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '2')");
-  await live["2"]!.holds("file", [1, 2, 3, 4, 6]);
-  await run("SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '2')");
-  await live["2"]!.holds("file", [1, 2, 3, 6]);
-  await asListed();
+  const unshare = "SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '2')";
+  try {
+    await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '2')");
+    await live["2"]!.holds("file", [1, 2, 3, 4, 6]);
+    await run(unshare);
+    await live["2"]!.holds("file", [1, 2, 3, 6]);
+    await asListed();
+  } finally {
+    await run(unshare);
+  }
 });
 
 // Zero syncs the rows a query reads, not only what it returns: the readers and keys it went through. They are the
@@ -121,7 +153,7 @@ test("Z9: not signed in: needs-auth, and no row", async () => {
   }
 });
 
-test("4: a client signed in as someone the app doesn't know syncs nothing", async () => {
+test("a client signed in as someone the app doesn't know syncs nothing", async () => {
   const stranger = new Client("99");
   try {
     expect(await stranger.state("needs-auth")).toBe("needs-auth");
@@ -221,11 +253,13 @@ test("Z11: writes through Zero's mutators arrive in the queries; a refused one s
     expect(await ann.mutate(mutators.file.rename({ id: 7, name: "renamed" })).server).toEqual({ type: "success" });
     await live["2"]!.until(() => live["2"]!.row("file", 7)?.name === "renamed", "file 7 renamed");
     // bo reads file 7, but may not edit it, nor add a file to ann's folder
+    // (the rename's refusal is the SDK's Refused, which says why; the insert's is the database's own error)
     const refused = await bo.mutate(mutators.file.rename({ id: 7, name: "bo's" })).server;
-    expect(refused).toMatchObject({ type: "error", error: { type: "app" } });
-    expect(JSON.stringify(refused)).toMatch(/app\.files/);
+    expect(refused).toMatchObject({ type: "error", error: { type: "app",
+      message: "permission denied: user 2 may not update row 7 of app.files", details: { name: "Refused" } } });
     const into = await bo.mutate(mutators.file.create({ id: 8, folder_id: 2, name: "bo's" })).server;
-    expect(into).toMatchObject({ type: "error", error: { type: "app" } });
+    expect(into).toMatchObject({ type: "error", error: { type: "app",
+      message: "permission denied: user 2 may not insert this row into app.files" } });
     const [{ name, eight }] = (await run("SELECT (SELECT name FROM app.files WHERE id = 7) AS name, EXISTS (SELECT 1 FROM app.files WHERE id = 8) AS eight"))
       .rows as { name: string; eight: boolean }[];
     expect({ name, eight }).toEqual({ name: "renamed", eight: false });
@@ -257,31 +291,47 @@ test("Z12: lint, then rowstile apply and reapply leave the queries as they are",
     }
   }
   expect(await errors()).toEqual([]);
-  expect(rowstile("apply", POLICY)).toMatch(/: (unchanged|applied)$/m);
-  expect(rowstile("reapply")).toMatch(/applied again/);
-  // a policy whose synced permission is written another way, with a permission more: applied, then as it was
-  const policy = readFileSync(POLICY, "utf8");
-  const changed = policy.replace("  can view = edit or viewer or (folder.view and not {confidential})",
-    "  can view = viewer or edit or owner or (folder.view and not {confidential})\n  can rename = edit");
-  expect(changed).not.toBe(policy);
-  const work = mkdtempSync(join(tmpdir(), "zero-"));
-  writeFileSync(join(work, "policy.authz"), changed);
-  expect(rowstile("apply", join(work, "policy.authz"))).toMatch(/applied/);
-  expect(rowstile("apply", POLICY)).toMatch(/applied/);
-  await settled();
-  const [{ verified }] = (await run("SELECT authz.sync_verify() AS verified")).rows as { verified: boolean }[];
-  expect(verified).toBe(true);
-  // the clients go on as they were: still connected, and a change after the applies arrives
-  const unshare = "SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '1')";
+  // from here on, each state every client goes through, and zero-cache's replication slots: a reset would drop the
+  // clients and make its slot again
+  const states: Record<string, string[]> = Object.fromEntries(USERS.map((u) => [u, []]));
+  const unsubscribe = USERS.map((u) => live[u]!.zero.connection.state.subscribe((state) => states[u]!.push(state.name)));
+  const slots = async () => ((await run("SELECT string_agg(slot_name, ',' ORDER BY slot_name) AS s FROM pg_replication_slots"))
+    .rows as { s: string | null }[])[0]!.s;
+  const before = await slots();
+  expect(before).toMatch(/^zero/);
   try {
-    await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '1')");
-    await live["1"]!.holds("file", [1, 2, 3, 4, 6]);
-    await asListed();
-    for (const u of USERS) expect([u, live[u]!.zero.connection.state.current.name]).toEqual([u, "connected"]);
+    expect(rowstile("apply", POLICY)).toMatch(/: (unchanged|applied)$/m);
+    expect(rowstile("reapply")).toMatch(/applied again/);
+    // a policy whose synced permission is written another way, with a permission more: applied, then as it was
+    const policy = readFileSync(POLICY, "utf8");
+    const changed = policy.replace("  can view = edit or viewer or (folder.view and not {confidential})",
+      "  can view = viewer or edit or owner or (folder.view and not {confidential})\n  can rename = edit");
+    expect(changed).not.toBe(policy);
+    const work = mkdtempSync(join(tmpdir(), "zero-"));
+    writeFileSync(join(work, "policy.authz"), changed);
+    expect(rowstile("apply", join(work, "policy.authz"))).toMatch(/applied/);
+    expect(rowstile("apply", POLICY)).toMatch(/applied/);
+    await settled();
+    const [{ verified }] = (await run("SELECT authz.sync_verify() AS verified")).rows as { verified: boolean }[];
+    expect(verified).toBe(true);
+    // the clients go on as they were: still connected, and a change after the applies arrives
+    const unshare = "SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '1')";
+    try {
+      await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '1')");
+      await live["1"]!.holds("file", [1, 2, 3, 4, 6]);
+      await asListed();
+      for (const u of USERS) expect([u, live[u]!.zero.connection.state.current.name]).toEqual([u, "connected"]);
+    } finally {
+      await run(unshare);
+    }
+    await live["1"]!.holds("file", [1, 2, 3, 6]);
+    // ... and connected all along, on the same slot: no reset, and no client synced again from scratch
+    expect(Object.fromEntries(USERS.map((u) => [u, states[u]!.filter((state) => state !== "connected")])))
+      .toEqual(Object.fromEntries(USERS.map((u) => [u, []])));
+    expect(await slots()).toBe(before);
   } finally {
-    await run(unshare);
+    for (const stop of unsubscribe) stop();
   }
-  await live["1"]!.holds("file", [1, 2, 3, 6]);
 });
 
 // Z13: the notes' body is masked: not in the app's Zero table, nor in zero-cache's publication, so never on a
@@ -306,6 +356,7 @@ test("Z13: a masked column is never synced: not in the publication, not on a cli
 test("Z14: a user deleted: their keys go, and their queries empty", async () => {
   await live["4"]!.listed();
   await run("DELETE FROM app.team_members WHERE user_id = 4; DELETE FROM app.users WHERE id = 4");
+  gone.add("4");                                                 // held to nothing more from now on
   await live["4"]!.holds("file", []);                            // (after commit: once the worker has run)
   await live["4"]!.holds("folder", []);
   const keys = (await run("SELECT count(*)::int AS n FROM authz_sync.keys WHERE principal_id = '4'")).rows as { n: number }[];
@@ -339,11 +390,26 @@ test("Z15: a session limited by scopes is refused, needs-auth; a key without sco
       await limited.close();
     }
   }
-  const whole = new Client(`key:${await key("")}`, { type: "user", id: "2" }, "2");
+  const secret = await key("");
+  const whole = new Client(`key:${secret}`, { type: "user", id: "2" }, "2");
+  const unshare = "SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '2')";
   try {
     await whole.holds("file", await listed("2", "file"));
+    // the key revoked: a client that connects with it now is refused, but zero-cache asks the endpoints again only
+    // when a client adds a query or connects again, so the open one's queries go on following changes until then
+    await run(`SELECT authz.act_as('user', '2');
+      SELECT authz.revoke_api_key((SELECT max(id) FROM authz.api_keys WHERE user_id = '2' AND scopes = ''))`);
+    const again = new Client(`key:${secret}`, { type: "user", id: "2" }, "2");
+    try {
+      expect(await again.state("needs-auth")).toBe("needs-auth");
+    } finally {
+      await again.close();
+    }
+    await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '2')");
+    await whole.holds("file", [1, 2, 3, 4, 6]);
   } finally {
     await whole.close();
+    await run(unshare);
   }
 });
 
@@ -390,5 +456,53 @@ test.runIf(MODE === "after")("Z17: after commit, a share arrives once the worker
     await run(unshare);
   }
   await live["3"]!.holds("file", [5]);
+  await asListed();
+});
+
+// the stack's 4: the app with a pool of one connection, its endpoints called as zero-cache calls them, as one user,
+// then nobody, then another: each query's filter is for whoever asks, and so is each mutation's sign-in
+test("4: a pooled connection carries no one over", async () => {
+  const headers = (token: string | null) =>
+    ({ "content-type": "application/json", ...(token === null ? {} : { authorization: `Bearer ${token}` }) });
+  /** The values a query's filter compares with, as the endpoint wrote them for whoever asked. */
+  const literals = (node: unknown): unknown[] => node === null || typeof node !== "object" ? []
+    : (node as { type?: string }).type === "literal" ? [(node as { value: unknown }).value]
+    : Object.values(node).flatMap(literals);
+  for (const user of ["1", "3", null, "5", "3", "1"]) {
+    const r = await fetch(`${SERVER_ONE}/api/zero/query`, { method: "POST", headers: headers(user),
+      body: JSON.stringify(["transform", [{ id: "q", name: "files", args: [] }]]) });
+    if (user === null) {
+      expect(r.status).toBe(401);
+      continue;
+    }
+    const answer = (await r.json()) as { kind: string; queries: { ast: unknown }[] };
+    expect(answer).toMatchObject({ kind: "QueryResponse", queries: [{ name: "files" }] });
+    const ids = literals(answer.queries[0]!.ast).filter((v) => USERS.includes(String(v)));
+    expect([user, ids.length > 0 && ids.every((v) => v === user)]).toEqual([user, true]);
+  }
+  // mutations: ann renames her file, then bo may not, then nobody is 401, then ann again
+  const push = (token: string | null, name: string) => {
+    const clientID = randomUUID();
+    return fetch(`${SERVER_ONE}/api/zero/mutate?schema=zero_0&appID=zero`, { method: "POST", headers: headers(token),
+      body: JSON.stringify({ clientGroupID: `pool-of-one-${clientID}`, pushVersion: 1, timestamp: Date.now(),
+        requestID: clientID, mutations: [{ type: "custom", id: 1, clientID, name: "file.rename",
+          args: [{ id: 1, name }], timestamp: Date.now() }] }) });
+  };
+  const result = async (r: Response) => {
+    const answer = (await r.json()) as { kind: string; mutations: { result: Record<string, unknown> }[] };
+    expect(answer).toMatchObject({ kind: "MutateResponse", mutations: [{ result: {} }] });
+    return answer.mutations[0]!.result;
+  };
+  try {
+    expect(await result(await push("1", "pooled"))).not.toHaveProperty("error");
+    expect(await result(await push("2", "bo's"))).toMatchObject({ error: "app",
+      message: expect.stringContaining("user 2 may not update row 1 of app.files") });
+    expect((await push(null, "nobody's")).status).toBe(401);
+    expect(await result(await push("1", "pooled again"))).not.toHaveProperty("error");
+    const [{ name }] = (await run("SELECT name FROM app.files WHERE id = 1")).rows as { name: string }[];
+    expect(name).toBe("pooled again");
+  } finally {
+    await run("UPDATE app.files SET name = 'a' WHERE id = 1");
+  }
   await asListed();
 });
