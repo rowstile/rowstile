@@ -1009,9 +1009,27 @@ BEGIN
     EXECUTE format('DROP INDEX authz.%I', i.relname);
   END LOOP;
 END $gi$;
-CREATE INDEX IF NOT EXISTS "shares_obj_user_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'user';
-CREATE INDEX IF NOT EXISTS "shares_obj_bot_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'bot';
-CREATE INDEX IF NOT EXISTS "shares_obj_org_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'org';
+-- @object index authz."shares_obj_user_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_user_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'user';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of user whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 5';
+END $si$;
+-- @object index authz."shares_obj_bot_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_bot_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'bot';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of bot whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 9';
+END $si$;
+-- @object index authz."shares_obj_org_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_org_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'org';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of org whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 13';
+END $si$;
 
 -- Scopes: what a token may do (policy 'scope' lines; 'read' is built in unless redefined)
 CREATE TABLE authz_int.scope_items (scope text, kind text, qual text, word text);

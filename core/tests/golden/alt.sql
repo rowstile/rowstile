@@ -780,10 +780,34 @@ BEGIN
     EXECUTE format('DROP INDEX authz.%I', i.relname);
   END LOOP;
 END $gi$;
-CREATE INDEX IF NOT EXISTS "shares_obj_user_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'user';
-CREATE INDEX IF NOT EXISTS "shares_obj_grp_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'grp';
-CREATE INDEX IF NOT EXISTS "shares_obj_proj_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'proj';
-CREATE INDEX IF NOT EXISTS "shares_obj_doc_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'doc';
+-- @object index authz."shares_obj_user_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_user_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'user';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of user whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 4';
+END $si$;
+-- @object index authz."shares_obj_grp_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_grp_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'grp';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of grp whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 8';
+END $si$;
+-- @object index authz."shares_obj_proj_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_proj_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'proj';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of proj whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 14';
+END $si$;
+-- @object index authz."shares_obj_doc_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_doc_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'doc';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of doc whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 19';
+END $si$;
 
 -- Scopes: what a token may do (policy 'scope' lines; 'read' is built in unless redefined)
 CREATE TABLE authz_int.scope_items (scope text, kind text, qual text, word text);

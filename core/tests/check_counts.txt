@@ -2,7 +2,7 @@
 # run to it (tests/check_counts.py): fewer or more fails, so that a count that changes is in the diff. After adding
 # or taking away checks on purpose, write the new count here, or python3 tests/check_counts.py --write LOG.
 adversarial 121
-apply 175
+apply 176
 capitals 105
 children 152
 cli 185

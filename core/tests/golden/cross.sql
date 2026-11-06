@@ -850,12 +850,48 @@ BEGIN
     EXECUTE format('DROP INDEX authz.%I', i.relname);
   END LOOP;
 END $gi$;
-CREATE INDEX IF NOT EXISTS "shares_obj_user_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'user';
-CREATE INDEX IF NOT EXISTS "shares_obj_folder_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'folder';
-CREATE INDEX IF NOT EXISTS "shares_obj_project_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'project';
-CREATE INDEX IF NOT EXISTS "shares_obj_region_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'region';
-CREATE INDEX IF NOT EXISTS "shares_obj_site_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'site';
-CREATE INDEX IF NOT EXISTS "shares_obj_note_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'note';
+-- @object index authz."shares_obj_user_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_user_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'user';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of user whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 13';
+END $si$;
+-- @object index authz."shares_obj_folder_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_folder_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'folder';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of folder whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 15';
+END $si$;
+-- @object index authz."shares_obj_project_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_project_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'project';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of project whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 27';
+END $si$;
+-- @object index authz."shares_obj_region_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_region_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'region';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of region whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 38';
+END $si$;
+-- @object index authz."shares_obj_site_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_site_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'site';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of site whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 50';
+END $si$;
+-- @object index authz."shares_obj_note_bigint"
+DO $si$
+BEGIN
+  CREATE INDEX IF NOT EXISTS "shares_obj_note_bigint" ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'note';
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION '%: shares of note whose ids a bigint can''t read were deleted, but a transaction open since before still sees them, and so does the index applying makes of their ids: apply again once it ends, as rowstile help AZ627 says [AZ627]', 'line 56';
+END $si$;
 
 -- Scopes: what a token may do (policy 'scope' lines; 'read' is built in unless redefined)
 CREATE TABLE authz_int.scope_items (scope text, kind text, qual text, word text);
