@@ -93,6 +93,41 @@ class SdkTest < ActionDispatch::IntegrationTest
     assert_raises(ActiveRecord::StatementInvalid) { Note.count } # and the next transaction is no one's: refused
   end
 
+  # Rails' reads of the catalog (statements it names SCHEMA) aren't signed in; the name is the app's to give too, and
+  # in a transaction signed in as someone else, such a statement raises as any other does
+  test "a statement named as Rails names its reads of the catalog is one principal's too" do
+    catalog = ->(sql) { ApplicationRecord.with_connection { |c| c.select_values(sql, "SCHEMA") } }
+    assert_equal [1], Rowstile.acting_as(1) { catalog.call("SELECT 1") } # outside a transaction: as it comes
+    seen = Rowstile.acting_as(1) do
+      Note.transaction do
+        [ids, catalog.call("SELECT current_setting('authz.user_id')"),
+         assert_raises(RuntimeError) { Rowstile.acting_as(2) { catalog.call("SELECT current_setting('authz.user_id')") } }]
+      end
+    end
+    assert_equal [EXPECTED["1"], ["1"]], seen[0..1]
+    assert_includes seen[2].message, "signed in as user 1 already, and a sign-in lasts the database transaction: user 2's"
+  end
+
+  # a connection lost after the sign-in: Rails can't open the transaction again as it was (the sign-in went with the
+  # connection), so it doesn't run the statement again, unsigned, on a new one: the connection's error is raised, and
+  # the next transaction connects and signs in again
+  test "a connection lost after the sign-in isn't retried unsigned" do
+    cut = lambda do |*, payload|
+      next unless payload[:sql].include?("authz.act_as")
+
+      # (the socket shut, as a pooler restarted or a failover leaves it)
+      payload[:connection].instance_variable_get(:@raw_connection).socket_io.shutdown(:RDWR)
+    end
+    seen = Rowstile.acting_as(1) do
+      lost = ActiveSupport::Notifications.subscribed(cut, "sql.active_record") do
+        assert_raises(ActiveRecord::ConnectionNotEstablished, ActiveRecord::ConnectionFailed) { Note.order(:id).ids }
+      end
+      [lost, Note.order(:id).ids]
+    end
+    assert_not Rowstile.not_signed_in?(seen[0])
+    assert_equal EXPECTED["1"], seen[1]
+  end
+
   # a savepoint rolled back over the sign-in undoes it in Postgres: the same principal signs in again, and another is
   # still refused; the same after a transaction Rails restarts (ROLLBACK AND CHAIN); a transaction with an isolation
   # level signs in too

@@ -1454,6 +1454,7 @@ FEATURES: list[Feature] = [
             Check(RAILS_CHECKS, "13: the app does not start on the owner's connection"),
             Check(RAILS_SDK, "a transaction is one principal's"),
             Check(RAILS_SDK, "db:prepare migrates an empty database, and db:schema:load refuses the dump"),
+            Check(RAILS_SDK, "a connection lost after the sign-in isn't retried unsigned"),
         ),
     ),
     Feature(

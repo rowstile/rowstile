@@ -88,6 +88,7 @@ module ActiveRecord
       def exec_rollback_db_transaction: () -> void
       def exec_rollback_to_savepoint: (?String name) -> void
       def exec_restart_db_transaction: () -> void
+      def dirty_current_transaction: () -> void
       private def internal_execute: (String sql, ?String name, ?Array[untyped] binds, ?materialize_transactions: bool) -> untyped
       private def raw_execute: (String sql, ?String? name, ?Array[untyped] binds, ?materialize_transactions: bool,
                                 **untyped options) -> untyped

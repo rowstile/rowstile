@@ -34,8 +34,6 @@ module Rowstile
   # savepoint, to Postgres) is one principal's, and a statement outside one signs in as the code acts for, again
   # whenever that changes (as nobody once a sign-in is there and the code acts for no one).
   module SignIn
-    UNSIGNED = %w[TRANSACTION SCHEMA].freeze
-
     # the test's transaction (and the console's sandbox), as Rails begins it: on the connection, not joinable,
     # outside any other (the app's transactions begin in the transaction manager)
     def begin_transaction(isolation: nil, joinable: true, _lazy: true)
@@ -94,11 +92,14 @@ module Rowstile
 
     # Rails names the statements that begin and end transactions and savepoints TRANSACTION, and its reads of the
     # catalog SCHEMA: neither is signed in (a ROLLBACK must go through in a transaction an error aborted, and row-level
-    # security doesn't apply to the catalog)
+    # security doesn't apply to the catalog). A read of the catalog in a transaction signed in as someone else raises
+    # as any other statement would: those names are the app's to give too (select_all(sql, "SCHEMA")).
     def raw_execute(sql, name = nil, binds = [], materialize_transactions: true, **options)
       who = Rowstile.current
-      return super if !materialize_transactions || UNSIGNED.include?(name) ||
+      return super if !materialize_transactions || name == "TRANSACTION" ||
                       (who.nil? && @rowstile_signed.nil? && @rowstile_for.nil?)
+      catalog = name == "SCHEMA"
+      return super if catalog && !transaction_open?
       # (in a transaction of its own, this again: the sign-in, then the statement)
       return transaction { raw_execute(sql, name, binds, materialize_transactions:, **options) } unless transaction_open?
 
@@ -107,6 +108,7 @@ module Rowstile
       signed = @rowstile_for if apps
       # (code that acts for no one, in a transaction nobody's: nobody's work)
       raise SignIn.signed_in_already(signed, who) unless signed.nil? || signed == (who || NOBODY)
+      return super if catalog
 
       self.materialize_transactions # (the method: the argument has its name)
       @rowstile_for = who || signed if apps
@@ -117,6 +119,9 @@ module Rowstile
         internal_execute("SELECT authz.sign_out()", "rowstile", [], materialize_transactions: false) if @rowstile_tests
         internal_execute("SELECT authz.act_as($1, $2)", "rowstile", Rowstile.act_as_args(who),
                          materialize_transactions: false)
+        # (a connection lost from here on can't be opened again as it was: Rails would begin the transaction again,
+        # without the sign-in, and run the statement in it. It isn't retried: the connection's error is raised)
+        dirty_current_transaction
         @rowstile_signed = who
       end
       super

@@ -106,7 +106,9 @@ nested transactions and savepoints too. A statement while the code acts for some
 `RuntimeError` before anything is sent for it, and the transaction is as it was: `this transaction is signed in as
 user 1 already, and a sign-in lasts the database transaction: user 2's work can't run inside it`. Run that work
 after the transaction, or in a transaction of its own on another connection. A savepoint rolled back over the
-sign-in undoes it in Postgres: the same principal signs in again before the next statement.
+sign-in undoes it in Postgres: the same principal signs in again before the next statement. Rails names the
+statements that begin and end transactions `TRANSACTION`, and the gem sends those as they come: give none of the
+app's own statements that name.
 
 Then controllers are plain Active Record. A list shows only the user's rows:
 
