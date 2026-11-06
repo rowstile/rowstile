@@ -200,6 +200,18 @@ class ConformanceTest < ActionDispatch::IntegrationTest
     assert_equal 2, count # project 1 (it is added to) and the public one
   end
 
+  # ... and reads its arguments as its service: a record given to the job is found again when it runs, as the service,
+  # in a worker (which acts for no one) as in a request (which acts for its user)
+  test "10: a job reads its arguments as its service" do
+    plans = Rowstile.acting_as(1) { DigestJob.new(Project.find(1)).serialize } # (a record's id: nothing read)
+    bos = Rowstile.acting_as(2) { DigestJob.new(Project.find(2)).serialize }
+    service = Rowstile::Principal.new(type: "service", id: "1")
+    assert_equal [2, service, "Plans"], ActiveJob::Base.execute(plans) # as a worker runs it
+    assert_equal [2, service, "Plans"], Rowstile.acting_as(3) { ActiveJob::Base.execute(plans) }
+    hidden = assert_raises(ActiveJob::DeserializationError) { Rowstile.acting_as(2) { ActiveJob::Base.execute(bos) } }
+    assert_kind_of ActiveRecord::RecordNotFound, hidden.cause # bo's project, which the service may not see
+  end
+
   # ... and only when the code names it: an id is a user's, whatever it holds (ids come from outside)
   test "10: an id with a colon is a user's, not a service" do
     assert_equal Rowstile::Principal.new(type: "user", id: "service:1"), Rowstile::Principal.of("service:1")

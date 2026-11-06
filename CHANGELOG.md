@@ -515,6 +515,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   which it refused, and leaves it to EF Core. `AddRowstile` says what to give when the start-up check finds no data
   source, and the middleware's problem body replaces what the endpoint had put on the response (its headers, its
   cookies).
+- The Ruby SDK's `Rowstile::Job` reads a job's arguments as the job's principal: a record given to `perform_later`
+  is found again as the service the job acts for. Before, Active Job read them before the job signed in, so in a
+  worker the job failed (AZ701), and in a request it read them as the request's user.
 
 ### Upgrading
 

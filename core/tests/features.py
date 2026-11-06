@@ -1448,6 +1448,7 @@ FEATURES: list[Feature] = [
             Check(RAILS, "3: not signed in is an error that says how"),
             Check(RAILS, "7: a row hidden before the update is 404"),
             Check(RAILS, "10: a job acts as its service"),
+            Check(RAILS, "10: a job reads its arguments as its service"),
             Check(RAILS_CHECKS, "4: a pooled connection carries no one over"),
             Check(RAILS_CHECKS, "12: a test database per worker has the policy"),
             Check(RAILS_CHECKS, "13: the app does not start on the owner's connection"),

@@ -188,7 +188,9 @@ and `perms_of` answers a list's buttons in one call.
 ## Background jobs
 
 A job acts for a principal of its own, whatever request enqueued it (`type service = app.services principal` in
-the policy):
+the policy). Its arguments are read as that principal too: a record given to `perform_later` is found again when the
+job runs, in a worker as in a request, and one the principal can't see fails the job
+(`ActiveJob::DeserializationError`).
 
 ```ruby
 class DigestJob < ApplicationJob
