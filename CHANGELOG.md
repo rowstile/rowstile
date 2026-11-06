@@ -518,6 +518,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Ruby SDK's `Rowstile::Job` reads a job's arguments as the job's principal: a record given to `perform_later`
   is found again as the service the job acts for. Before, Active Job read them before the job signed in, so in a
   worker the job failed (AZ701), and in a request it read them as the request's user.
+- The Ruby SDK keeps Rails from running a statement again on a new connection when the connection drops right after
+  the sign-in: the connection's error is raised. Before, Rails began the transaction again without the sign-in, and
+  the statement was refused (AZ701).
+- The Ruby SDK holds a statement named `SCHEMA` (as Rails names its reads of the catalog) to the transaction's
+  principal, as any other: in a transaction signed in as someone else, it raises before anything is sent.
 
 ### Upgrading
 

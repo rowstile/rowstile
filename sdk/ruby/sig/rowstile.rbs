@@ -95,7 +95,6 @@ module Rowstile
   end
 
   module SignIn : ActiveRecord::ConnectionAdapters::PostgreSQLAdapter
-    UNSIGNED: Array[String]
     @rowstile_signed: Principal?
     @rowstile_for: Principal?
     @rowstile_tests: bool?
