@@ -434,6 +434,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `Commit` puts the connection back in the pool before it returns, and the next transaction on it could begin
   before `Tx` forgot the first: its own nested `Tx`, a savepoint, was then refused as work in a transaction `Tx`
   didn't begin.
+- `rowstile.alembic` leaves the sync index's schema alone too (`authz_sync`, made by a policy with `sync` lines),
+  so `alembic check` shows no change and autogenerate writes no `drop_table` for its tables.
 
 ### Upgrading
 
