@@ -30,6 +30,8 @@ class SignInJpaTransactions implements BeanPostProcessor {
                     ? new JpaSignIn(manager, transactions::source)
                     : new HibernateSignIn(manager, transactions::source, authz);
             JpaTransactionManager guarded = signIn.guard(manager);
+            // a final field, which the subclass's constructor made: what the original holds in it
+            guarded.setJpaPropertyMap(manager.getJpaPropertyMap());
             guarded.addListener(signIn);
             return guarded;
         }

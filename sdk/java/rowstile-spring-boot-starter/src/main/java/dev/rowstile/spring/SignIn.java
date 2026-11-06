@@ -12,6 +12,7 @@ import java.util.WeakHashMap;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
 import org.jspecify.annotations.Nullable;
+import org.springframework.beans.BeanUtils;
 import org.springframework.cglib.core.ClassLoaderAwareGeneratorStrategy;
 import org.springframework.cglib.core.SpringNamingPolicy;
 import org.springframework.cglib.proxy.Callback;
@@ -30,6 +31,7 @@ import org.springframework.transaction.support.AbstractPlatformTransactionManage
 import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.ResourceTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.util.ClassUtils;
 import org.springframework.util.ReflectionUtils;
 
 /**
@@ -136,6 +138,11 @@ class SignIn implements TransactionExecutionListener {
      * getTransaction} is final: no stand-in in front of it would see the call). The app may inject it by its class
      * ({@code JpaTransactionManager}) or as a {@code PlatformTransactionManager}. A final class is left as it is: work
      * that joins one of its transactions for someone else is refused at its first statement instead.
+     *
+     * <p>A class with a constructor without arguments (Spring's own managers) is made by it, and what the manager
+     * holds in its fields is copied but for its final ones, which the constructor made: JDK 26 warns of a final field
+     * written by reflection, and a later JDK is to refuse it ({@code JpaTransactionManager}'s map of properties is
+     * copied by its setter). A class without one is made without a constructor, and every field copied.
      */
     <M extends AbstractPlatformTransactionManager & ResourceTransactionManager> M guard(M manager) {
         Class<?> type = manager.getClass();
@@ -148,8 +155,10 @@ class SignIn implements TransactionExecutionListener {
         enhancer.setStrategy(new ClassLoaderAwareGeneratorStrategy(type.getClassLoader()));
         enhancer.setCallbackFilter(JOINING);
         enhancer.setCallbackTypes(new Class<?>[] {NoOp.class, MethodInterceptor.class});
+        Class<?> subclass = enhancer.createClass();
+        boolean constructed = ClassUtils.hasConstructor(subclass);
         @SuppressWarnings("unchecked")
-        M guarded = (M) OBJENESIS.newInstance(enhancer.createClass());
+        M guarded = (M) (constructed ? BeanUtils.instantiateClass(subclass) : OBJENESIS.newInstance(subclass));
         ((Factory) guarded).setCallbacks(new Callback[] {NoOp.INSTANCE, (MethodInterceptor) (self, method, args, proxy) -> {
             // a status for work that joins a transaction open now: neither new, nor without a transaction
             DefaultTransactionStatus status = (DefaultTransactionStatus) args[0];
@@ -160,7 +169,8 @@ class SignIn implements TransactionExecutionListener {
         }});
         // what the manager holds, the same objects (its data source, its entity manager factory, its listeners)
         ReflectionUtils.doWithFields(type, field -> copy(field, manager, guarded),
-                field -> !Modifier.isStatic(field.getModifiers()));
+                field -> !Modifier.isStatic(field.getModifiers())
+                        && !(constructed && Modifier.isFinal(field.getModifiers())));
         this.manager = guarded;
         return guarded;
     }

@@ -298,6 +298,41 @@ class AutoConfigurationTest extends Conformance {
         });
     }
 
+    /** A transaction manager of the app's own class, which has no constructor that takes nothing. */
+    @Configuration(proxyBeanMethods = false)
+    static class NamedOne {
+        static class NamedManager extends DataSourceTransactionManager {
+            private static final long serialVersionUID = 1L;
+            final String name;
+
+            NamedManager(DataSource ds, String name) {
+                super(ds);
+                this.name = name;
+            }
+        }
+
+        @Bean
+        NamedManager transactionManager(DataSource dataSource) {
+            return new NamedManager(dataSource, "mine");
+        }
+    }
+
+    @Test
+    @DisplayName("a manager of a class without a constructor that takes nothing: a subclass all the same, holding what it held")
+    void withoutConstructor() throws SQLException {
+        seed();
+        app(WORKER.appUrl()).withUserConfiguration(NamedOne.class).run(ctx -> {
+            NamedOne.NamedManager tm = ctx.getBean(NamedOne.NamedManager.class);
+            assertNotEquals(NamedOne.NamedManager.class, tm.getClass());
+            assertEquals("mine", tm.name); // a final field, copied: no constructor made it
+            JdbcClient jdbc = ctx.getBean(JdbcClient.class);
+            TransactionTemplate tx = new TransactionTemplate(tm);
+            assertEquals(List.of("1", said("user 2")), Rowstile.actingAs(Principal.user(1), () -> tx.execute(s ->
+                    List.of(signedIn(jdbc), refused(() -> Rowstile.actingAs(Principal.user(2),
+                            () -> tx.execute(n -> signedIn(jdbc))))))));
+        });
+    }
+
     /** Who the transaction open now is signed in as, asked of the database. */
     static String signedIn(JdbcClient jdbc) {
         return jdbc.sql("SELECT current_setting('authz.user_id', true)").query(String.class).single();
