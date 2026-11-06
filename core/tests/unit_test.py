@@ -1896,9 +1896,13 @@ class ClientNames(unittest.TestCase):
         self.assertEqual(
             (names, unnamed), ({"doc": ("Doc", {"viewAll": "view_all"})}, ["_1", "doc.module_info", "doc._x"])
         )
-        # a module named Rowstile or Kernel would hide the SDK's, or Elixir's, in the modules after it
-        taken = devtools._elixir_names({"rowstile": ["view"], "kernel": ["view"], "doc": ["view"]})
-        self.assertEqual((list(taken[0]), taken[1]), (["doc"], ["rowstile", "kernel"]))
+        # a module named Rowstile or Kernel would hide the SDK's, or Elixir's, in the modules after it; Elixir's other
+        # modules (String, Enum, Module, Elixir...) are named: what comes after a type's module names only those two
+        # (each of Elixir's own, compiled with --warnings-as-errors before a type's module named so, compiles)
+        taken = devtools._elixir_names(
+            {"rowstile": ["view"], "kernel": ["view"], "doc": ["view"], "string": ["view"], "elixir": ["view"]}
+        )
+        self.assertEqual((list(taken[0]), taken[1]), (["doc", "string", "elixir"], ["rowstile", "kernel"]))
         self.assertTrue(database.client("elixir", self.CASES).split("\n")[1] == "defmodule Authz do")
         # shared relations and scopes, and a list too long for a line: an item a line, as mix format lays it out
         long = [f"permission_{i}" for i in range(9)]
