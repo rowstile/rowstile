@@ -23,18 +23,21 @@ made by the same SQL, but for these, which a policy written another way may chan
 
   - where things are written: the lines and the files of the policy's declarations (`line N`, in the rows of
     authz_gen.policy_lines and in the messages of the checks a migration runs)
-  - the order things come in: statements and objects, a dispatch's CASE branches (types and permissions in the
-    order the policy declares them), the rows of a VALUES list, an array's items, the parts of a UNION, the
-    operands of an OR or an AND (the compiler keeps the written order among operands that cost the same,
-    compiler.item_cost), and an operand said twice once the order makes two alike. So an object is the same when
-    its SQL, read as SQL (sql_form()), is the same but for those orders: then also the place an explanation gives
-    each item, v[n], and a tree's hash, which is of its SQL, may differ. An `and` in an `or`'s place, an
-    operand moved across one, a `<` turned round or a NOT moved is another object, though its words are the same
-  - names the compiler gives in the order it meets what they are for (NUMBERED, ON_TYPES): invariants
-    (__never__N), a second tree of the same types and relations (__tree2), the types an arrow is followed to
-    (__on_t2__t1), and a view of starting points two permissions share (named after the first the compiler meets:
-    __direct). Objects so named are matched by what they make. A rule on columns isn't among them: Postgres fires
-    a table's triggers in the order of their names, so its trigger is named after the rule's head
+  - the order things come in: statements and objects (but in a function's body, where the order of what it does is
+    what it does: there a write, a call, an error and a RETURN of a value stay where they are, and only an insert or
+    a RETURN of the rows so far trades places, with its like next to it), a dispatch's CASE branches (types and
+    permissions in the order the policy declares them), the rows of a VALUES list, an array's items, the parts of a
+    UNION, the operands of an OR or an AND (the compiler keeps the written order among operands that cost the same,
+    compiler.item_cost), and an operand said twice once the order makes two alike. So an object is the same when its
+    SQL, read as SQL (sql_form()), is the same but for those orders: then also the place an explanation gives each
+    item, v[n], and a tree's hash, which is of its SQL, may differ. An `and` in an `or`'s place, an operand moved
+    across one, a `<` turned round or a NOT moved is another object, though its words are the same
+  - names the compiler gives in the order it meets what they are for (NUMBERED, ON_TYPES): invariants (__never__N),
+    a second tree of the same types and relations (__tree2: its number alone, and what follows it in a name that its
+    number may make too long, LONG_NAME), the types an arrow is followed to (__on_t2__t1), and a view of starting
+    points two permissions share (named after the first the compiler meets: __direct). Objects so named are matched
+    by what they make. A rule on columns isn't among them: Postgres fires a table's triggers in the order of their
+    names, so its trigger is named after the rule's head
 
 Then each is applied to the database, and its answers must be the policy's own, read the same way (answers()):
 authz.list (whole, and in pages of two: each page after the last id of the one before, in key order), authz.can
@@ -249,9 +252,19 @@ def laid_out(text: str, files: Files, r: random.Random) -> tuple[str, Files]:
 LINE = re.compile(r"\b(?:[\w./-]+\.authz )?line \d+\b")
 TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*|\d+|<>|<=|>=|::|\S")
 # names the compiler numbers in the order it meets what they are for: invariants and the trees of the same types
-# and relations (a rule on columns, its functions and its trigger are named after its head: Postgres fires a
-# table's triggers in the order of their names, so those must be the same)
-NUMBERED = re.compile(r"(__never__)\d+|(__tree)\w*")
+# and relations, their number alone (__tree2_refresh is __tree#_refresh, not __tree#_rebuild); a rule on columns,
+# its functions and its trigger are named after its head: Postgres fires a table's triggers in the order of their
+# names, so those must be the same
+NUMBERED = re.compile(r"(__never__)\d+|(__tree)\d*")
+# a name of a tree's that its number (up to two digits) may make longer than Postgres's 63 bytes, which is then
+# shortened with a hash of the whole name (sqlutil.ident): what follows `__tree` is blurred too
+LONG_NAME = re.compile(r"\b(\w*?__tree)\d*(\w*)")
+
+
+def long_name(m: re.Match[str]) -> str:
+    return m.group(1) + "_long" if len((m.group(1) + m.group(2)).encode()) >= 61 else m.group(0)
+
+
 # what a body says by place, which follows the order of what it is about: the n-th item of an expression's
 # explanation (v[n]), a tree's hash (of its SQL)
 PLACES = re.compile(r"\bv\[\d+\]|'[0-9a-f]{32}'")
@@ -300,6 +313,7 @@ ON_TYPES = re.compile(r"__on_(\w+?)(?=__links\b|:ext\b|\")")
 
 def unordered(text: str) -> str:
     """text with the names that follow the policy's order made the same whatever it is (NUMBERED, ON_TYPES)."""
+    text = LONG_NAME.sub(long_name, text)
     text = NUMBERED.sub(r"\1\2#", text)
     return ON_TYPES.sub(lambda m: "__on_" + "__".join(sorted(m.group(1).split("__"))), text)
 
@@ -413,17 +427,65 @@ def in_units(units: list[list[Form]]) -> list[Form]:
     return in_order([(u[0], in_order(u[1:])) for u in units])
 
 
-def statements(items: Items) -> Form:
-    """Statements: in any order, but for what one sets and another reads. A unit is a statement with those after
-    it that read a variable it sets (a statement that sets one as a whole starts a unit of its own); the units come
-    in any order between the statements that read what units add to (v := v || x), which stay where they are."""
+# what a statement of a body does that the statements around it can't be moved across: a write, a call, a return,
+# an error (and an IF, a CASE or a loop that holds one)
+ACTS = {"INSERT", "UPDATE", "DELETE", "TRUNCATE", "MERGE", "PERFORM", "CALL", "EXECUTE", "RETURN", "RAISE", "LOCK"}
+MESSAGES = {"NOTICE", "WARNING", "INFO", "LOG", "DEBUG"}  # a RAISE of one of these goes on
+ROWS_OUT = {"NEXT", "QUERY"}  # a RETURN that adds rows to the result goes on
+STARTS = {";", "THEN", "ELSE"}  # what a statement starts after, but at the start of a block
+
+
+def acts(items: Items, start: bool = True) -> set[str]:
+    """What a statement of a body does (and the statements it holds: an IF's, a CASE's, a loop's, a block's) that
+    the statements around it can't be moved across: 'returns' (RETURN alone, which ends a function that returns
+    rows), 'inserts' (INSERT), 'acts' (a RETURN of a value, any other write, a call, an error; not a PERFORM of no
+    row, LIMIT 0). A word counts where a statement starts (UPDATE: not in FOR UPDATE)."""
+    out: set[str] = set()
+    for k, n in enumerate(items):
+        if isinstance(n, Group):
+            if n.kind not in PAIRS:  # (what brackets hold is an expression, a subquery)
+                out |= acts(n.items)
+            start = False
+            continue
+        u = n.upper()
+        nxt = items[k + 1] if k + 1 < len(items) else ""
+        after = nxt.upper() if isinstance(nxt, str) else ""
+        rest = [x.upper() if isinstance(x, str) else "" for x in items[k:]]
+        rest = rest[: rest.index(";")] if ";" in rest else rest
+        goes_on = (
+            (u == "RAISE" and after in MESSAGES)
+            or (u == "RETURN" and after in ROWS_OUT)
+            or (u == "PERFORM" and rest[-2:] == ["LIMIT", "0"])  # (reads no row: a condition checked as it is made)
+        )
+        if start and u in ACTS and not goes_on:
+            out.add("returns" if u == "RETURN" and after in (";", "") else "inserts" if u == "INSERT" else "acts")
+        start = u in STARTS
+    return out
+
+
+# statements that only return the rows so far, or only insert, come in any order among those of the same kind next to
+# them: which explanation a function returns first, and in which order a trigger writes its audit rows, follow the
+# order the policy declares its sources and columns in
+ANY_ORDER = {"returns", "inserts"}
+
+
+def statements(items: Items, body: bool = True) -> Form:
+    """Statements: in any order, but for what one sets and another reads, and, in a body (of a function, a DO, a
+    block), but for those that act (acts()), which stay where they are (those that only return or only insert in
+    any order among their like next to them: ANY_ORDER). A unit is a statement with those after it that read a
+    variable it sets (a statement that sets one as a whole starts a unit of its own); the units come in any order
+    between the statements that act and those that read what units add to (v := v || x), which stay where they
+    are. The statements of an object or a step (not a body: what makes things, in the order the policy declares
+    them) come in any order."""
     stmts = [s for s in split_at(items, {";"}) if s]
     if len(stmts) <= 1 and ";" not in items:
-        return clauses(items)
+        return clauses(items, body=body)
     out: list[Form] = []
     units: list[list[Form]] = []
     sets: set[str] = set()  # what the unit sets
     added: set[str] = set()  # what the units add to
+    run: list[Form] = []  # statements of one kind of ANY_ORDER, next to each other
+    kind = ""
     for s in stmts:
         tokens = flat(s)
         own = defines(tokens)
@@ -432,17 +494,34 @@ def statements(items: Items) -> Form:
             for k, t in enumerate(tokens)
             if tokens[k + 1 : k + 2] != [":="] and not (k >= 2 and tokens[k - 2 : k] == [t, ":="])
         } - own
+        did = acts(s) if body else set()
+        does = next(iter(did)) if len(did) == 1 and did <= ANY_ORDER else "acts" if did else ""
+        if run and does != kind:
+            out.append(("any order", in_order(run)))
+            run, kind = [], ""
+        if does:
+            if units:
+                out.append(in_units(units))
+                units, sets = [], set()
+            if does in ANY_ORDER:
+                run.append(clauses(s, body=body))
+                kind = does
+            else:
+                out.append(clauses(s, body=body))
+            continue
         if reads & added:
-            out += [in_units(units), clauses(s)]
+            out += [in_units(units), clauses(s, body=body)]
             units, sets = [], set()
             continue
         if units and not own and reads & sets:
-            units[-1].append(clauses(s))
+            units[-1].append(clauses(s, body=body))
         else:
-            units.append([clauses(s)])
+            units.append([clauses(s, body=body)])
             sets = set()
         sets |= own | {tokens[k - 1] for k in range(1, len(tokens)) if tokens[k] == ":="}
         added |= {t for k, t in enumerate(tokens) if tokens[k + 1 : k + 4] == [":=", t, "||"]}
+    if run:
+        out.append(("any order", in_order(run)))
     return ("statements", *out, in_units(units))
 
 
@@ -467,7 +546,7 @@ def joined(parts: list[Form], word: str) -> Form:
     return (word, in_order(list({repr(f): f for f in out}.values())))
 
 
-def clauses(items: Items, listed: bool = False) -> Form:
+def clauses(items: Items, listed: bool = False, body: bool = True) -> Form:
     """A statement or an expression: the parts of a UNION, and of an INTERSECT, in any order; else its clauses in
     order, each a list of items (in any order after VALUES or ON, and before any clause where listed: an ARRAY's, an
     IN's), each item an OR of ANDs."""
@@ -483,38 +562,38 @@ def clauses(items: Items, listed: bool = False) -> Form:
             head, parts[0] = parts[0][:k], parts[0][k:]
             if parts[-1] and isinstance(parts[-1][-1], Group) and parts[-1][-1].kind in BLOCKS:
                 tail, parts[-1] = parts[-1][-1:], parts[-1][:-1]
-        union = joined([clauses(p) for p in parts], "UNION")
-        return (clauses(head), union, atom(tail)) if head or tail else union
+        union = joined([clauses(p, body=body) for p in parts], "UNION")
+        return (clauses(head, body=body), union, atom(tail, body)) if head or tail else union
     parts = split_at(items, {"INTERSECT"})
     if len(parts) > 1:
-        return joined([clauses(p) for p in parts], "INTERSECT")
+        return joined([clauses(p, body=body) for p in parts], "INTERSECT")
     out: list[Form] = []
     segment: Items = []
     clause = ""
     for k, n in enumerate(items):
         u = n.upper() if isinstance(n, str) else ""
         if u in CLAUSES and not (u == "FROM" and k and items[k - 1] == "DISTINCT"):  # (IS DISTINCT FROM)
-            out += [listing(segment, (listed and not clause) or clause in LISTS), u]
+            out += [listing(segment, (listed and not clause) or clause in LISTS, body), u]
             segment, clause = [], u
         else:
             segment.append(n)
-    out.append(listing(segment, (listed and not clause) or clause in LISTS))
+    out.append(listing(segment, (listed and not clause) or clause in LISTS, body))
     return tuple(out)
 
 
-def listing(items: Items, listed: bool) -> Form:
-    forms = [junction(x, "OR") for x in split_at(items, {","})]
+def listing(items: Items, listed: bool, body: bool = True) -> Form:
+    forms = [junction(x, "OR", body) for x in split_at(items, {","})]
     return forms[0] if len(forms) == 1 else ("list", in_order(forms) if listed else forms)
 
 
-def junction(items: Items, word: str) -> Form:
+def junction(items: Items, word: str, body: bool = True) -> Form:
     """An OR of ANDs: the operands of each in any order."""
     parts = split_at(items, {word})
-    read = (lambda p: junction(p, "AND")) if word == "OR" else atom
+    read = (lambda p: junction(p, "AND", body)) if word == "OR" else (lambda p: atom(p, body))
     return read(items) if len(parts) == 1 else joined([read(p) for p in parts], word)
 
 
-def atom(items: Items) -> Form:
+def atom(items: Items, body: bool = True) -> Form:
     """An operand: its tokens in order, each group read as what it holds."""
     out: list[Form] = []
     for k, n in enumerate(items):
@@ -523,17 +602,19 @@ def atom(items: Items) -> Form:
             out.append(("'", sql_form(n[1:-1].replace("''", "'"), literal=True)) if literal else n)
         elif n.kind in PAIRS:
             listed = k > 0 and isinstance(items[k - 1], str) and str(items[k - 1]).upper() in ("ARRAY", "IN")
-            out.append((n.kind, statements(n.items) if ";" in n.items else clauses(n.items, listed)))
+            out.append((n.kind, statements(n.items, body) if ";" in n.items else clauses(n.items, listed, body)))
         elif n.kind == "CASE":
-            out.append(case(n.items))
+            out.append(case(n.items, body))
         elif n.kind == "IF":
-            out.append(("IF", branches(n.items, ("THEN", "ELSIF", "ELSE"))))
-        else:
-            out.append((n.kind, statements(n.items)))
+            out.append(("IF", branches(n.items, ("THEN", "ELSIF", "ELSE"), body)))
+        elif n.kind in BLOCKS:  # (BEGIN ATOMIC: a function's body)
+            out.append((n.kind, statements(n.items, body or str(n.items[:1]).upper() == "['ATOMIC']")))
+        else:  # a dollar quote: a function's body, or a DO's, which runs once as the statements around it do
+            out.append((n.kind, statements(n.items, not (k > 0 and str(items[k - 1]).upper() == "DO"))))
     return tuple(out)
 
 
-def branches(items: Items, words: tuple[str, ...]) -> list[tuple[str, Form]]:
+def branches(items: Items, words: tuple[str, ...], body: bool = True) -> list[tuple[str, Form]]:
     """A block's parts, each after the word it starts with (the first: after ''), in order."""
     parts: list[tuple[str, Items]] = [("", [])]
     for n in items:
@@ -541,12 +622,12 @@ def branches(items: Items, words: tuple[str, ...]) -> list[tuple[str, Form]]:
             parts.append((n.upper(), []))
         else:
             parts[-1][1].append(n)
-    return [(w, statements(p) if w in ("THEN", "ELSE") else clauses(p)) for w, p in parts]
+    return [(w, statements(p, body) if w in ("THEN", "ELSE") else clauses(p, body=body)) for w, p in parts]
 
 
-def case(items: Items) -> Form:
+def case(items: Items, body: bool = True) -> Form:
     """CASE x WHEN a THEN ... WHEN b THEN ... END: its branches in any order (CASE WHEN ...: in order)."""
-    subject, *rest = branches(items, ("WHEN", "THEN", "ELSE"))
+    subject, *rest = branches(items, ("WHEN", "THEN", "ELSE"), body)
     pairs: list[Form] = [(rest[k], rest[k + 1]) for k in range(len(rest) - 1) if rest[k][0] == "WHEN"]
     simple = bool(split_at(items, {"WHEN"})[0])
     return ("CASE", subject, in_order(pairs) if simple else pairs, [b for b in rest if b[0] == "ELSE"])
@@ -568,7 +649,7 @@ def sql_form(sql: str, literal: bool = False) -> Form:
     if literal and ";" not in items and "=" in items:
         k = items.index("=")
         return (clauses(items[:k]), "=", clauses(items[k + 1 :], True), tail)
-    return (statements(items) if ";" in items or not literal else clauses(items, True), tail)
+    return (statements(items, body=literal) if ";" in items or not literal else clauses(items, True), tail)
 
 
 def sql_differences(before: dict[str, str], after: dict[str, str]) -> tuple[list[str], dict[str, int]]:
@@ -1254,12 +1335,21 @@ def fixed(ways: int, db: DB | None, steps: int) -> int:
         db.run(gen.initial())
         db.run(compiled(text, {}))
         db.run(gen.grants())
+        wrong = ""
         for _ in range(steps):
             ids: Ids = {
                 t.name: [x[0] for x in db.rows(f"SELECT {idsql(t)} FROM {qt(t.table)} ORDER BY 1")]
                 for t in pol.types.values()
             }
-            db.run(gen.change(ids), check=False)  # (one refused changes nothing)
+            sql = gen.change(ids)
+            code, _, err = db.run(difftest.CHANGE + sql, check=False)
+            if code != 0 and not gen.refused(err):  # (one refused as random changes may be changes nothing)
+                wrong = f"a random change failed: {sql}: {err.strip()}"
+                break
+        if wrong:
+            failed += 1
+            print(f"FAIL {path}: {wrong}")
+            continue
         users = list(gen.users)
         answered = answers(db, pol, users, gen.context, gen.role)
         own = page_problems(answered)
