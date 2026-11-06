@@ -2,7 +2,10 @@
 # concurrency.sh: two sessions changing the folder tree at the same time.
 #   PGHOST=... PGPORT=... PGUSER=... tests/concurrency.sh [database]
 # Each case resets the example app, races two psql sessions, then checks that
-# the closure tables still match a rebuild and that no loop slipped through.
+# the closure tables still match a rebuild and that no loop slipped through. The last cases, each in a database of
+# its own, check what a write waits on and when: a write to another tree (it doesn't wait), a statement that changes
+# no row of a tree of several types (it takes no lock), conditions that read their tree's own table (checked again
+# after a write there), and a role changed while it is given.
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_concurrency}

@@ -63,7 +63,8 @@ same "the audit has the line of a relationship column changed there" "$(relates 
 same "a key that changes there" "$(as 1 -c "$(changed "UPDATE ch.docs SET id = 111 WHERE id = 11")")" 1
 same "... takes the row's shares away" "$(shares doc 11) $(shares doc 111)" "0 0"
 PSQL -c "INSERT INTO ch.docs_old VALUES (11, 1, 'another doc 11')"
-same "... so a row that has the key later starts with none" "$(as 2 -c "SELECT count(*) FROM ch.docs WHERE id = 11")" 0
+# (the row is there, as the owner sees it, and bob, whom its old key's shares reached, sees none)
+same "... so a row that has the key later starts with none" "$(PSQL -c "SELECT count(*) FROM ch.docs_old WHERE id = 11")|$(as 2 -c "SELECT count(*) FROM ch.docs WHERE id = 11")" "1|0"
 # the table's primary key doesn't cover the rows of a table that inherits: two rows may hold one key, each
 # with its own owner. A permission holds on the key where it holds on either row, as the views say
 PSQL -c "INSERT INTO ch.docs_old VALUES (2, 3, 'another doc 2')"
@@ -119,7 +120,7 @@ same "... takes the row's shares away" "$(shares note 3)" 0
 same "a key that changes and puts the row in another partition" "$(as 1 -c "$(changed "UPDATE ch.notes SET id = 504 WHERE id = 4")")|$(PSQL -c "SELECT tableoid::regclass FROM ch.notes WHERE id = 504")" "1|ch.notes_high"
 same "... takes them away too" "$(shares note 4) $(shares note 504)" "0 0"
 as 1 -c "INSERT INTO ch.notes VALUES (4, 1, NULL, 'another note 4')" >/dev/null
-same "... so a row that has the key later starts with none" "$(as 2 -c "SELECT count(*) FROM ch.notes WHERE id = 4")" 0
+same "... so a row that has the key later starts with none" "$(PSQL -c "SELECT count(*) FROM ch.notes WHERE id = 4")|$(as 2 -c "SELECT count(*) FROM ch.notes WHERE id = 4")" "1|0"
 same "a note under a shared one, put in another partition, is still under it" \
   "$(as 1 -c "$(changed "UPDATE ch.notes SET id = 502 WHERE id = 2")")|$(as 2 -c "SELECT count(*) FROM ch.notes WHERE id = 502")|$(PSQL -c "SELECT authz.verify()")" "1|1|t"
 

@@ -192,6 +192,10 @@ expect_code "no expiry" "28000: token expired or not yet valid" -c "BEGIN" -c "S
 expect_code "not valid yet (nbf in an hour)" "28000: token expired or not yet valid" -c "BEGIN" \
   -c "SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 7200 "{\"nbf\": $(( $(date +%s) + 3600 ))}")')"
 expect_code "an nbf that isn't a number" "28000: token expired or not yet valid" -c "BEGIN" -c "SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"nbf": "soon"}')')"
+# an exp that is there but no number: a string of digits would never expire if read as one, and other words would
+# fail a cast: refused as the expiry, both
+expect_code "an exp that is a string of digits" "28000: token expired or not yet valid" -c "BEGIN" -c "SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"exp": "9999999999"}')')"
+expect_code "an exp that is words" "28000: token expired or not yet valid" -c "BEGIN" -c "SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"exp": "soon"}')')"
 check "valid since an hour (nbf in the past)" "2" \
   "BEGIN; SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 "{\"nbf\": $(( $(date +%s) - 3600 ))}")'); COMMIT;"
 expect_code "a valid token for a user the database doesn't have" "28000: the token names no active user" -c "BEGIN" \

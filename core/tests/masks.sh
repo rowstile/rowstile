@@ -107,8 +107,14 @@ out=$(why 3 "SELECT authz.explain_rule('mt.docs', 'update', '$DOC') IS NULL")
 [ "$out" = "t" ] && ok "... and someone who can't see the row gets NULL" || bad "explain_rule on a masked table, a hidden row" "$out"
 out=$(why 2 "SELECT (authz.explain_rule('mt.docs', 'delete', '$DOC'))[1]")
 case "$out" in "no   there is no delete rule"*) ok "... a delete too";; *) bad "explain_rule delete on a masked table" "$out";; esac
-out=$(why 2 "SELECT r_old.body IS NULL FROM (SELECT (jsonb_populate_record(NULL::mt.docs, to_jsonb(x))).* FROM mt.docs_visible x WHERE x.id = '$DOC') r_old")
-[ "$out" = "t" ] && ok "... judged on the row as the viewer may read it: the masked column is NULL" || bad "the row explain_rule reads" "$out"
+# a rule whose condition reads the masked column: explain_rule judges the row as the viewer may read it (its body
+# NULL, so the condition holds), not the stored text (which it would show the viewer); the new row's body is NULL too
+sed 's/^  update : edit$/  update : edit or {body IS NULL}/' tests/multi.authz > $T/readsbody.authz
+python3 compile_policy.py $T/readsbody.authz > $T/readsbody.sql || exit 1
+out=$(apply $T/readsbody.sql)
+out="$out$(why 2 "SELECT (authz.explain_rule('mt.docs', 'update', '$DOC', '{\"body\": null}'))[1]")"
+case "$out" in "yes  update : edit or {body IS NULL}"*) ok "... judged on the row as the viewer may read it: the masked column is NULL";;
+  *) bad "the row explain_rule reads" "$out";; esac
 
 out=$(apply $T/nomask.sql); [ -z "$out" ] && ok "the version without masks applies" || bad "apply without masks" "$out"
 [ "$(PSQL -c "SELECT has_table_privilege('app_user', 'mt.docs', 'SELECT')")|$(PSQL -c "SELECT to_regclass('mt.docs_visible') IS NULL")" = "t|t" ] &&
