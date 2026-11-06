@@ -22,5 +22,14 @@ module Rowstile
     server do |app|
       Rowstile.check_connection! if app.config.rowstile.check_connection
     end
+
+    # db:test:prepare (which maintain_test_schema runs) empties the test database before it loads the dump: a dump of
+    # a rowstile database is refused before that (Rowstile::SchemaLoadRefused)
+    rake_tasks do
+      Rake::Task.define_task("rowstile:refuse_test_dumps" => "db:load_config") do
+        Rowstile::SchemaLoad.refuse_test_dumps
+      end
+      Rake::Task.define_task("db:test:load_schema").prerequisites.unshift("rowstile:refuse_test_dumps")
+    end
   end
 end

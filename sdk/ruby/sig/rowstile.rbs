@@ -175,6 +175,10 @@ module Rowstile
   module SchemaLoad : ActiveRecord::Tasks::_DatabaseTasks
     @rowstile_migrating: bool
     def load_schema: (ActiveRecord::DatabaseConfigurations::DatabaseConfig db_config, ?Symbol format, ?String? file) -> void
+    def reconstruct_from_schema: (ActiveRecord::DatabaseConfigurations::DatabaseConfig db_config, ?String? file) -> void
+    def self.refuse_test_dumps: () -> void
+    def self.dump?: (String? path) -> bool
+    def self.refused: (String? path) -> SchemaLoadRefused
     private def initialize_database: (ActiveRecord::DatabaseConfigurations::DatabaseConfig db_config) -> bool
   end
 end

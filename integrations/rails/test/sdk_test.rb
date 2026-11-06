@@ -437,7 +437,7 @@ class SdkTest < ActionDispatch::IntegrationTest
     File.delete(plain) if plain && File.exist?(plain)
   end
 
-  test "db:prepare migrates an empty database, and db:schema:load refuses the dump" do
+  test "db:prepare migrates an empty database, and db:schema:load and db:test:prepare refuse the dump" do
     db = "#{ActiveRecord::Base.connection_db_config.database}_prepare"
     url = TESTS_OWNER.sub(%r{/conf_tests\z}, "/#{db}")
     Rows.owner { |c| c.exec("DROP DATABASE IF EXISTS #{db} WITH (FORCE)") }
@@ -451,9 +451,31 @@ class SdkTest < ActionDispatch::IntegrationTest
     said, status = Open3.capture2e(env, "bin/rails", "db:schema:load", chdir: File.expand_path("..", __dir__))
     assert_not status.success?
     assert_includes said, "is a dump of a database with a rowstile policy"
+    # the test database Rails keeps up to date (db:test:prepare, which maintain_test_schema runs) and a worker's it
+    # makes again from the dump: refused before Rails empties the database, which keeps its migrations
+    said, status = Open3.capture2e(env, "bin/rails", "db:test:prepare", chdir: File.expand_path("..", __dir__))
+    assert_not status.success?
+    assert_includes said, "is a dump of a database with a rowstile policy"
+    config = ActiveRecord::DatabaseConfigurations::UrlConfig.new("test", "primary", url, {})
+    error = assert_raises(Rowstile::SchemaLoadRefused) { ActiveRecord::Tasks::DatabaseTasks.reconstruct_from_schema(config, dump) }
+    assert_includes error.message, "make it with its migrations"
+    kept = lambda do # (the app's tables, and rowstile's)
+      c = PG.connect(url)
+      c.exec("SELECT to_regclass('app.notes') IS NOT NULL AND to_regclass('authz.shares') IS NOT NULL").getvalue(0, 0)
+    ensure
+      c&.close
+    end
+    assert_equal "t", kept.call
+    # another dump: emptied and loaded, as Rails does
+    plain = File.join(Dir.tmpdir, "plain-prepare-#{Process.pid}.sql")
+    File.write(plain, "SELECT 1;\n")
+    said, status = Open3.capture2e(env.merge("SCHEMA" => plain), "bin/rails", "db:test:prepare", chdir: File.expand_path("..", __dir__))
+    assert status.success?, said
+    assert_equal "f", kept.call
+    ActiveRecord::Tasks::DatabaseTasks.reconstruct_from_schema(config, plain)
   ensure
     Rows.owner { |c| c.exec("DROP DATABASE IF EXISTS #{db} WITH (FORCE)") }
-    File.delete(dump) if dump && File.exist?(dump)
+    [dump, plain].each { |f| File.delete(f) if f && File.exist?(f) }
   end
 end
 

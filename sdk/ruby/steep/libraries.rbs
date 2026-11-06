@@ -59,7 +59,9 @@ module ActiveRecord
     private def destroy_row: () -> Integer
   end
 
-  module DatabaseConfigurations
+  class DatabaseConfigurations
+    def configs_for: (env_name: String) -> Array[DatabaseConfig]
+
     class DatabaseConfig
       def database: () -> String
       def schema_format: () -> Symbol
@@ -100,11 +102,13 @@ module ActiveRecord
     interface _DatabaseTasks
       def schema_dump_path: (DatabaseConfigurations::DatabaseConfig db_config, ?Symbol format) -> String?
       def load_schema: (DatabaseConfigurations::DatabaseConfig db_config, ?Symbol format, ?String? file) -> void
+      def reconstruct_from_schema: (DatabaseConfigurations::DatabaseConfig db_config, ?String? file) -> void
       def initialize_database: (DatabaseConfigurations::DatabaseConfig db_config) -> bool
     end
 
     module DatabaseTasks
       def self.singleton_class: () -> Module
+      def self.schema_dump_path: (DatabaseConfigurations::DatabaseConfig db_config, ?(Symbol | String) format) -> String?
     end
   end
 end
@@ -155,6 +159,14 @@ module Rails
     def self.config: () -> untyped
     def self.initializer: (String name) { (untyped app) -> void } -> void
     def self.server: () { (untyped app) -> void } -> void
+    def self.rake_tasks: () { (untyped app) -> void } -> void
+  end
+end
+
+module Rake
+  class Task
+    def self.define_task: (String | Hash[String, String] args) ?{ () -> void } -> Task
+    def prerequisites: () -> Array[String]
   end
 end
 
