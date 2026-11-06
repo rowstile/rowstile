@@ -174,6 +174,15 @@ describe("the email intake", () => {
     // and no key: no one
     const none = await fetch(`${SERVER}/api/intake`, { method: "POST", body: "{}" });
     expect(none.status).toBe(401);
+    // a reply: from the requester (whatever the address's case says) or someone copied in, recorded as theirs
+    const reply = await mail({ workspaceId: ACME, from: "Dee@Mail.test", name: "Dee", subject: "re", body: "Still locked", ticketId: ticket });
+    expect(reply.status, await reply.clone().text()).toBe(201);
+    const last = (await ann.get(`/api/tickets/${ticket}`)).json.comments.at(-1);
+    expect([last.body, last.author?.name, last.byEmail]).toEqual(["Still locked", "Dee", true]);
+    expect((await mail({ workspaceId: ACME, from: "milton@initech.test", name: "M", subject: "re", body: "me too", ticketId: tickets.password })).status).toBe(201);
+    // from anyone else, refused: someone of the workspace not on the ticket, or an address no one has
+    expect((await mail({ workspaceId: ACME, from: "cy@mail.test", name: "Cy", subject: "re", body: "x", ticketId: ticket })).status).toBe(403);
+    expect((await mail({ workspaceId: ACME, from: "nobody@mail.test", name: "N", subject: "re", body: "x", ticketId: ticket })).status).toBe(403);
     // an agent can't make the intake a key
     const al = await as("al@acme.test");
     expect((await al.send("POST", `/api/integrations/${EMAIL_INTAKE}/keys`, { name: "mine" })).status).toBe(403);

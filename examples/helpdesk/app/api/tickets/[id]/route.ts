@@ -15,13 +15,15 @@ export const GET = route(async (_req: Request, { params }: Params) => {
         id: true, workspaceId: true, subject: true, status: true, teamId: true, assigneeId: true, requesterId: true,
         requester: { select: { name: true } },
         comments: {
-          select: { id: true, body: true, internal: true, createdAt: true, author: { select: { name: true } } },
+          select: { id: true, body: true, internal: true, createdAt: true, integrationId: true, author: { select: { name: true } } },
           orderBy: { createdAt: "asc" },
         },
       },
     });
     const [{ perms }] = await tx.$queryRaw<{ perms: string[] }[]>`SELECT authz.perms('ticket', ${id}::text) AS perms`;
-    return { ...ticket, perms };
+    // a comment the email intake wrote says so (its author is the mail's sender)
+    const comments = ticket.comments.map(({ integrationId, ...c }) => ({ ...c, byEmail: integrationId !== null }));
+    return { ...ticket, comments, perms };
   });
   return Response.json(found);
 });

@@ -68,6 +68,7 @@ another workspace in a few worlds: rows the keys forbid, but a policy that would
 | The vendor's staff come in by break glass, where a workspace lets them | `support : user = hd.support_access(...) where {until > now()}`, `can break_glass = workspace.support`, and `responder`'s `shared if {hd.is_staff(...)}`, which break glass asks too |
 | An admin views the app as someone of their workspace | `can impersonate = workspace.admin` on users; every transaction goes through `authz.view_as` while they do ([`src/db.ts`](src/db.ts)): read-only, on the record |
 | The email intake signs in as itself, with a key that can do nothing else | `type integration = hd.integrations (id uuid) principal`, `scope intake = ...`, and a key made by an admin (`can manage_keys = workspace.manage`) |
+| It knows a mail's sender by their address, which only an admin changes; a reply by mail is from someone who may reply | `update email : workspace.manage`; the intake ([`app/api/intake/route.ts`](app/api/intake/route.ts)) asks `authz.can(..., 'reply')` as the sender, and writes the reply as itself, the sender as its author |
 
 Each row of this table is checked in [`db/tests/rules.authz`](db/tests/rules.authz) (`rowstile test`), and the
 app's routes again in [`tests/api.test.ts`](tests/api.test.ts), over HTTP, as the demo's people.

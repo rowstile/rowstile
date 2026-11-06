@@ -1,7 +1,8 @@
 // The helpdesk's tables: several companies' support desks (workspaces) on one database. Every row of a workspace
 // names it, and a row that points at another of the workspace names it in its foreign key too, so the two can't
 // be of different workspaces. What Prisma can't say (CHECK constraints, the app's roles and grants, two SQL
-// functions the policy calls) is in the first migration, written by hand after Prisma's own SQL.
+// functions the policy calls) is in the first migration, written by hand after Prisma's own SQL, and in the
+// migrations written by hand since (those whose names don't say authz).
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -192,8 +193,9 @@ model Ticket {
 model Comment {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   ticketId      String   @map("ticket_id") @db.Uuid
-  // of the workspace, or the vendor's staff
+  // of the workspace, or the vendor's staff; by mail, the sender
   authorId      String?  @map("author_id") @db.Uuid
+  // the integration that wrote it: the email intake
   integrationId String?  @map("integration_id") @db.Uuid
   // agents only
   internal      Boolean  @default(false)
