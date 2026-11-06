@@ -17110,7 +17110,7 @@ class ExampleServices(unittest.TestCase):
     starts: only that service (and the maintenance jobs', where there is one) holds the admin's URL, never the app,
     whose image runs the app alone."""
 
-    APPS = ("filemanager",)
+    APPS = ("filemanager", "messenger")
 
     def test_only_the_migrations_hold_the_admins_url(self) -> None:
         for app in self.APPS:

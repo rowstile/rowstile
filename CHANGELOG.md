@@ -648,6 +648,18 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   phone made of letters then found. A path under `/api/` the API doesn't have answers 404, not the web app's page.
   Opening a direct chat whose other person left blanked the web app, again on each reload; it opens, unnamed. Its
   schema is one migration, as the file manager's is.
+- The messenger example's rules and API: a direct chat stays its two people, whoever left. Its creator who had
+  left it, or the one who stayed, could put someone else in it, and its creator could start one between two
+  others. A message deleted for everyone loses its text, whoever writes it (only the API cleared it). A member
+  marks read no further than the chat's last message, and someone added has read what came before, which they
+  never see: read receipts showed messages not sent yet as read, and old ones as unread once someone joined. A
+  phone number shows only to the people who share a chat with its person (the app reads people through a masked
+  view); anyone else finds an account by its exact number (`ms.find_by_phone`). Every signed-in person and bot
+  could read everyone's. Signing up reads the phone number before checking it: `abc` was kept as an empty number,
+  which any phone made of letters then found. A path under `/api/` the API doesn't have answers 404, not the web
+  app's page. Opening a direct chat whose other person left blanked the web app, again on each reload; it opens,
+  unnamed. Its migrations run in a service of their own in `docker-compose.yml`, so the app no longer holds the
+  tables' owner's password, and its schema is one migration, as the file manager's is.
 
 ### Upgrading
 
