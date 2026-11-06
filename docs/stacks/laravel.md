@@ -121,9 +121,10 @@ Then controllers are plain Eloquent. A list shows only the user's rows:
 ```
 
 A model whose table has rules uses `HasRules`. A row the user can't see isn't found (route model binding: 404), and
-an update or a delete the rules refuse changes no row: the SDK asks the database why, in the same transaction, and
-throws `Rowstile\Refused` (403, with the rule and the reason) or `Rowstile\NotFound` (404: the row was hidden in the
-meantime). Eloquent alone would say it saved.
+an update or a delete the rules refuse changes no row (`save`, `update`, `delete`, `increment`, `decrement`, their
+`Each` forms, `forceDelete`): the SDK asks the database why, in the transaction the statement ran in (one of its own
+when none is open), and throws `Rowstile\Refused` (403, with the rule and the reason) or `Rowstile\NotFound` (404:
+the row was hidden in the meantime). Eloquent alone would say it saved.
 
 ```php
 final class Note extends Model

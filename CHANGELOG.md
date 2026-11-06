@@ -88,6 +88,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   name passed.
 - The PHP SDK's `assertRefused($fn, $command)` asks for the rule's command itself (`select`, `insert`, `update` or
   `delete`). Before, any start of it passed: `'ins'`, and `''` for any refusal.
+- In a Laravel app, a model whose update or delete changed no row is asked about in the transaction the statement
+  ran in, one of its own when none is open. Before, outside `DB::transaction`, the question ran in a second
+  transaction, and its answer was about the row as it was then.
+- The PHP SDK's `permitted` compares a uuid key (a model with `HasUuids`) as uuid, so its index is used. Before, it
+  cast the column to text, and the query read the whole table.
 
 ### Removed
 
@@ -550,6 +555,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   Before, such a value could give an error another code, and another status.
 - The PHP SDK answers a `ModelNotFoundException` that names no model (made without `setModel`) as Laravel does, a
   404. Before, it was a 500. One for several ids (`findOrFail([1, 2])`) names none of them, instead of `(1,2)`.
+- In a Laravel app, a model's `increment`, `decrement`, `incrementEach`, `decrementEach` and `forceDelete` that
+  change no row say why, as its update and delete do: `Rowstile\NotFound` or `Rowstile\Refused`. Before, they
+  changed nothing and said nothing.
 
 ### Upgrading
 

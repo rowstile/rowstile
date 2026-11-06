@@ -7,11 +7,12 @@ namespace Rowstile\Laravel;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 
 /**
- * For a model whose table has rules: its queries are Rowstile\Laravel\Builder. An update or a delete of a model that
- * changed no row (row-level security left it out) asks the database why, in the same transaction and as the same
- * user, and throws NotFound (the row is hidden) or Refused (and why): Eloquent alone would say it saved. Only while the
- * code acts for someone: the owner's code is left as Laravel runs it. And the builder's permitted: the model's rows on
- * which the user holds a permission, in one set lookup (authz.list), never a call per row.
+ * For a model whose table has rules: its queries are Rowstile\Laravel\Builder. An update or a delete of a model (save,
+ * update, delete, increment, decrement, incrementEach, decrementEach, forceDelete) that changed no row (row-level
+ * security left it out) asks the database why, in the same transaction (one of its own when none is open) and as the
+ * same user, and throws NotFound (the row is hidden) or Refused (and why): Eloquent alone would say it saved. Only
+ * while the code acts for someone: the owner's code is left as Laravel runs it. And the builder's permitted: the
+ * model's rows on which the user holds a permission, in one set lookup (authz.list), never a call per row.
  *
  *     class Note extends Model { use HasRules; }
  *     Project::permitted(ProjectPermission::Edit)->orderBy('id')->pluck('id');
