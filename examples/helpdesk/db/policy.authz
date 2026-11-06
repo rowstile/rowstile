@@ -124,7 +124,6 @@ rules hd.users view hd.users_visible
   update notes                  : see_notes
   update role, active           : workspace.manage
   update customer_org_id        : workspace.work
-  update customer_org_id after  : org.view
   update email                  : workspace.manage
   update id, workspace_id, kind : nobody
   mask notes                    : see_notes
@@ -182,11 +181,9 @@ rules hd.tickets
   update : work or requester
   -- whoever works a ticket may hand it to another agent of the workspace, and no longer work it after
   update after                          : workspace.work or requester
-  update subject                        : work or requester
   update status                         : work or (requester and {status <> 'closed'})
   update status after                   : work or {status in ('open', 'solved')}
   update team_id, assignee_id           : work
-  update team_id after                  : team.view or {team_id is null}
   update id, workspace_id, requester_id : nobody
   update created_at                     : nobody
   delete                                : workspace.manage

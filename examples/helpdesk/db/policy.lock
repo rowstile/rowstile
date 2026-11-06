@@ -81,7 +81,6 @@
 > rules hd.users: update notes : see_notes
 > rules hd.users: update role, active : workspace.manage
 > rules hd.users: update customer_org_id : workspace.work
-> rules hd.users: update customer_org_id after : org.view
 > rules hd.users: update email : workspace.manage
 > rules hd.users: update id, workspace_id, kind : nobody
 > rules hd.users: mask notes : see_notes
@@ -130,11 +129,9 @@
 > rules hd.tickets: insert : (workspace.view and requester and {status = 'open' and team_id is null and assignee_id is null}) or workspace.work or workspace.connected
 > rules hd.tickets: update : work or requester
 > rules hd.tickets: update after : workspace.work or requester
-> rules hd.tickets: update subject : work or requester
 > rules hd.tickets: update status : work or (requester and {status <> 'closed'})
 > rules hd.tickets: update status after : work or {status in ('open', 'solved')}
 > rules hd.tickets: update team_id, assignee_id : work
-> rules hd.tickets: update team_id after : team.view or {team_id is null}
 > rules hd.tickets: update id, workspace_id, requester_id : nobody
 > rules hd.tickets: update created_at : nobody
 > rules hd.tickets: delete : workspace.manage
@@ -150,7 +147,7 @@
 > invariants: never comment: view and not ticket.view
 > invariants: never user: view and not self and not workspace.member and not workspace.connected
 
-always | 331b07567ec9
+always | 29dc9ff5a9ee
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | d54dfc65af0d shape=73a521b1
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | ff3dc82d6ec2 shape=77f3e79f
@@ -173,7 +170,7 @@ function authz.delete_role(p_role bigint) | b4c64d8168eb shape=7c823e86
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 8689b2108a84 shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | e98f52f28997 shape=1223ad2f
-function authz.lint() | 094ccc5cf373 shape=54cb1505
+function authz.lint() | 40f768d09d1c shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | ada360afe39f shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
@@ -302,10 +299,6 @@ function authz_gen."hd.tickets:column status after:items"(p_row "hd"."tickets") 
 function authz_gen."hd.tickets:column status after:why"(p_row "hd"."tickets") | 6c3d3f76ff9b shape=8848f7b7
 function authz_gen."hd.tickets:column status:items"(p_row "hd"."tickets") | 5bb9d268a351 shape=510d2938 atomic
 function authz_gen."hd.tickets:column status:why"(p_row "hd"."tickets") | f0a33c2c62a2 shape=f7a62c0e
-function authz_gen."hd.tickets:column subject:items"(p_row "hd"."tickets") | da429515a529 shape=a836226b atomic
-function authz_gen."hd.tickets:column subject:why"(p_row "hd"."tickets") | 68ca68faee58 shape=de4ae4b4
-function authz_gen."hd.tickets:column team_id after:items"(p_row "hd"."tickets") | 4323d5970bd4 shape=6505d25f atomic
-function authz_gen."hd.tickets:column team_id after:why"(p_row "hd"."tickets") | 503cce9eedb3 shape=4fa29944
 function authz_gen."hd.tickets:column team_id, assignee_id:items"(p_row "hd"."tickets") | e4d8680a5321 shape=f2566dde atomic
 function authz_gen."hd.tickets:column team_id, assignee_id:why"(p_row "hd"."tickets") | 53cdf0cb4c9b shape=d317e9bc
 function authz_gen."hd.tickets:delete:items"(p_row "hd"."tickets") | 5b5250ec167f shape=9b797687 atomic
@@ -320,8 +313,6 @@ function authz_gen."hd.tickets:update:why"(p_row "hd"."tickets", p_stored boolea
 function authz_gen."hd.tickets:update_after:items"(p_row "hd"."tickets") | b65b502d76b7 shape=54dbab35 atomic
 function authz_gen."hd.tickets:update_after:refuse"(p_row "hd"."tickets") | 64c92afeb901 shape=7e261eae
 function authz_gen."hd.tickets:update_after:why"(p_row "hd"."tickets") | 984b139353fa shape=f1092c5c
-function authz_gen."hd.users:column customer_org_id after:items"(p_row "hd"."users") | 463612d6677c shape=f9e12e66 atomic
-function authz_gen."hd.users:column customer_org_id after:why"(p_row "hd"."users") | de4874fcc0ff shape=0b8098e2
 function authz_gen."hd.users:column customer_org_id:items"(p_row "hd"."users") | f546e031fc1e shape=626fd8d6 atomic
 function authz_gen."hd.users:column customer_org_id:why"(p_row "hd"."users") | a5c6c53fd12a shape=d270508c
 function authz_gen."hd.users:column email:items"(p_row "hd"."users") | 82618fb9943d shape=15c69732 atomic
@@ -388,15 +379,9 @@ function authz_int."hd.tickets:column status after"() | 36095bda8f8e shape=a71d5
 function authz_int."hd.tickets:column status after:holds"(p_row "hd"."tickets") | 0d43c13f4ef6 shape=ec56b529 atomic
 function authz_int."hd.tickets:column status"() | dabf66126d19 shape=194b218a
 function authz_int."hd.tickets:column status:holds"(p_row "hd"."tickets") | ddde6ef07147 shape=db06cddc atomic
-function authz_int."hd.tickets:column subject"() | ac4b3445a52f shape=662979a6
-function authz_int."hd.tickets:column subject:holds"(p_row "hd"."tickets") | 49ac81902a15 shape=7d9c410b atomic
-function authz_int."hd.tickets:column team_id after"() | 0409cf869e87 shape=e325b229
-function authz_int."hd.tickets:column team_id after:holds"(p_row "hd"."tickets") | d96714efc7f9 shape=e21343e1 atomic
 function authz_int."hd.tickets:column team_id, assignee_id"() | 1f7e9c677bf0 shape=8ac5f491
 function authz_int."hd.tickets:column team_id, assignee_id:holds"(p_row "hd"."tickets") | 160221cd0e0d shape=efa3fb26 atomic
 function authz_int."hd.tickets:seen"(p_id uuid) | 9159af7a1c09 shape=b0f78bf2
-function authz_int."hd.users:column customer_org_id after"() | 7846bcd811d7 shape=45de1357
-function authz_int."hd.users:column customer_org_id after:holds"(p_row "hd"."users") | c346d4c111f8 shape=35a724c9 atomic
 function authz_int."hd.users:column customer_org_id"() | dd71d14e760d shape=e19070b1
 function authz_int."hd.users:column customer_org_id:holds"(p_row "hd"."users") | a73dfdb374ce shape=cddfda66 atomic
 function authz_int."hd.users:column email"() | acdc200bc3af shape=0203b15f
@@ -687,15 +672,15 @@ schema authz_int | 985712437937
 step base | bf512c1cc69c
 step cascades | a8260bb56332
 step grant_api | 032f588abd80
-step grant_functions | b62039489b8c
-step grant_views | e49b68302498
+step grant_functions | 55c3e0abc734
+step grant_views | 9c9c28017ad5
 step mask_privileges | 26af74835f67
 step share_indexes | 7b6abf1f960f
 step sweep | 720e0c5ae09f
 step sync_base | d56d2648ef0a
 step sync_refresh | f25732325514
-step tables | 943ec0d1f197
-table authz_gen.policy_lines | 8cbd06d494c3 shape=dcfedc96
+step tables | 825a2ad22e1b
+table authz_gen.policy_lines | f3b7d02ac8b7 shape=dcfedc96
 table authz_int."team__parent__tree" | ed6220be97e0 shape=ed6220be tree=team__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | a2f979053d93 shape=1779df2c
@@ -820,12 +805,9 @@ trigger "authz_update id, workspace_id, requester_id" ON "hd"."tickets" | 467b10
 trigger "authz_update notes" ON "hd"."users" | 70ad50bb2059
 trigger "authz_update role, active" ON "hd"."users" | a382e9f15f25
 trigger "authz_update status" ON "hd"."tickets" | 49c1d79d892f
-trigger "authz_update subject" ON "hd"."tickets" | 03eed5afaaaa
 trigger "authz_update team_id, assignee_id" ON "hd"."tickets" | 31eaa26cb281
-trigger "authz_update_after customer_org_id" ON "hd"."users" | 344cbfb0e04a
 trigger "authz_update_after parent_id" ON "hd"."teams" | 5d8b52d7096a
 trigger "authz_update_after status" ON "hd"."tickets" | fa82474459b7
-trigger "authz_update_after team_id" ON "hd"."tickets" | 6097f6e63804
 trigger "authz_user_col_audit_del" ON "hd"."users" | 9ae67208d86e
 trigger "authz_user_col_audit_ins" ON "hd"."users" | d6ced640b96a
 trigger "authz_user_col_audit_row" ON "hd"."users" | 550ec86a1f82
