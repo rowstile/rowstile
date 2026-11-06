@@ -1,0 +1,35 @@
+// A third app over the same database, whose notes have their project as a relation: for the checks of what
+// @rowstile/prisma does with a nested write whose target isn't there (tests/sdk.test.ts). Never migrated: its
+// tables are the main schema's (prisma/schema.prisma), and the relation needs no foreign key for Prisma to look the
+// target up.
+generator client {
+  provider = "prisma-client"
+  output   = "../../src/generated/related"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["app"]
+}
+
+model Project {
+  id       Int     @id
+  owner_id Int
+  name     String
+  public   Boolean @default(false)
+  notes    Note[]
+
+  @@map("projects")
+  @@schema("app")
+}
+
+model Note {
+  id         Int     @id @default(autoincrement())
+  project_id Int
+  author_id  Int
+  body       String
+  project    Project @relation(fields: [project_id], references: [id])
+
+  @@map("notes")
+  @@schema("app")
+}

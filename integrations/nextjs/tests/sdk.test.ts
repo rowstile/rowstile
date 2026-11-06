@@ -19,6 +19,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { authz, signedIn } from "@rowstile/prisma";
 import { PrismaClient } from "@/generated/prisma/client.ts";
 import { PrismaClient as PlainClient } from "@/generated/plain/client.ts";
+import { PrismaClient as RelatedClient } from "@/generated/related/client.ts";
 import { db, pool } from "@/db";
 import { APP, FEED, OWNER, seed } from "./data";
 
@@ -555,6 +556,28 @@ describe("@rowstile/prisma", () => {
       expect([e instanceof NotFound, e.message, asked]).toEqual([true, "holiday xmas not found", 2]);
     } finally {
       await plain.$disconnect();
+      await own.end();
+    }
+  });
+
+  // a nested write whose target isn't there (or is hidden from this user) is Prisma's P2025 too: NotFound, naming that
+  // target's table and no key, not the row being written
+  test("a nested write whose target isn't there names that table", async () => {
+    const own = new pg.Pool({ connectionString: APP, max: 2 });
+    const related = new RelatedClient({ adapter: signedIn(new PrismaPg(own)) }).$extends(authz());
+    const missing = (e: unknown) => (e instanceof NotFound ? [e.message, (e.cause as { code?: string }).code] : String(e));
+    try {
+      const connect = (id: number) => actingAs("1", () =>
+        related.note.update({ where: { id: 1 }, data: { project: { connect: { id } } } })).catch(missing);
+      expect([await connect(999), await connect(2)]).toEqual([["app.projects not found", "P2025"], ["app.projects not found", "P2025"]]);
+      const made = await actingAs("1", () => related.note.create({
+        data: { author_id: 1, body: "x", project: { connect: { id: 999 } } } })).catch(missing);
+      expect(made).toEqual(["app.projects not found", "P2025"]);
+      // the row written itself, hidden from ann (bo's note 2): named as before
+      expect(await actingAs("1", () => related.note.update({ where: { id: 2 }, data: { body: "x" } })).catch(missing))
+        .toEqual(["app.notes 2 not found", "P2025"]);
+    } finally {
+      await related.$disconnect();
       await own.end();
     }
   });

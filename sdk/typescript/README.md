@@ -85,7 +85,8 @@ Traps it handles:
   `changes(pool)` listens again after its connection drops, and tells its subscribers once.
 - **An update that changed nothing** is `NotFound` when the user can't see the row, `Refused` when the database
   says no, and `NotFound` again when the rule allows it and the statement matched nothing for another reason
-  (a `where` with more than the key).
+  (a `where` with more than the key). Through Prisma, a nested write whose target isn't there, or is hidden from
+  the user (a `connect`), is `NotFound` naming that target's table.
 - **The answers in the browser are one user's.** Give `<AuthzProvider user={id}>` if the user can change
   without a page load: the hooks forget what they had and ask again.
 

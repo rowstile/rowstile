@@ -259,6 +259,10 @@ export function authz(options: ExtensionOptions = {}) {
         rows: await (self.$queryRawUnsafe(text, ...values) as unknown as InTransaction).requestTransaction(transaction),
       }),
     });
+    // a model's table as the policy names it, for a NotFound: looked up (in the transaction, for a call made in one),
+    // else as the model names it
+    const tableNamed = (transaction: InternalParams["transaction"], model: string) =>
+      askingIn(transaction).tableName(tableOf(model)).catch(() => tableOf(model));
     const $authz: PrismaAuthz = {
       ...c,
       ids: async (type, perm, as) => {
@@ -288,6 +292,12 @@ export function authz(options: ExtensionOptions = {}) {
             }
             return await extended(() => query(args));
           } catch (e) {
+            // a nested write's target that isn't there, or that this user can't see (a connect): Prisma names its
+            // model. That row's, not the one written: its table, and no key
+            const related = model && isP2025(e) ? (e as { meta?: { model?: unknown } }).meta?.model : undefined;
+            if (typeof related === "string") {
+              throw new NotFound(await tableNamed(internal?.transaction, related), undefined, { cause: e });
+            }
             if (model && isP2025(e) && (operation === "update" || operation === "delete")) {
               const table = tableOf(model);
               const key = keyOf(model, (args as { where: Record<string, unknown> }).where);
@@ -306,8 +316,7 @@ export function authz(options: ExtensionOptions = {}) {
               const where = (args as { where?: Record<string, unknown> }).where;
               const key = operation === "findUniqueOrThrow" ? keyOf(model, where!)
                 : isScalar(where?.id) ? where?.id as Id : undefined;
-              const table = await askingIn(internal?.transaction).tableName(tableOf(model)).catch(() => tableOf(model));
-              throw new NotFound(table, key === undefined ? undefined : idShown(key), { cause: e });
+              throw new NotFound(await tableNamed(internal?.transaction, model), key === undefined ? undefined : idShown(key), { cause: e });
             }
             throw translate(e, schemaOf) ?? e;
           }
