@@ -18991,14 +18991,20 @@ class ReviewInCI(unittest.TestCase):
         return shell.group(1), names, run
 
     def comment(
-        self, review: str, fork: bool, readonly: bool, posted: list[dict[str, str]], me: str | None = None
+        self,
+        review: str,
+        fork: bool,
+        readonly: bool,
+        posted: list[dict[str, str]],
+        me: str | None = None,
+        api: str | None = None,
     ) -> tuple[int, str, list[str]]:
         """Runs the comment step on `review` against a stand-in for GitHub's API, which refuses a read-only token's
         writes (403), a comment over 65,536 characters (422) and an edit of another's comment (403), as GitHub
         does. `posted` is the pull request's comments, as the stand-in keeps them, each with its author's login
         (`login`; the workflow's, github-actions[bot], if none). `me` is the token's account: None for the workflow's
-        own token, which GitHub doesn't answer /user for. (exit status, output, each request: its method, WHO for
-        /user)."""
+        own token, which GitHub doesn't answer /user for. `api` is GitHub's address in its stead. (exit status, output,
+        each request: its method, WHO for /user)."""
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
         calls: list[str] = []
@@ -19066,7 +19072,7 @@ class ReviewInCI(unittest.TestCase):
                 env = {
                     **os.environ,
                     **{k: given[k] for k in names},
-                    "GITHUB_API_URL": f"http://127.0.0.1:{server.server_port}",
+                    "GITHUB_API_URL": api or f"http://127.0.0.1:{server.server_port}",
                     "GITHUB_SERVER_URL": "https://github.com",
                     "GITHUB_RUN_ID": "42",
                     "GITHUB_ACTION_PATH": os.path.dirname(self.ACTION),
@@ -19160,6 +19166,24 @@ class ReviewInCI(unittest.TestCase):
             "integration). The job needs permissions: {pull-requests: write} to post it (or comment: false).",
             out,
         )
+
+    def test_github_out_of_reach_fails_the_step_and_says_so(self) -> None:
+        # a self-hosted runner behind a proxy, a reset: an error that says where the review is, not a traceback; and
+        # GitHub silent fails each request after a while, not at the job's timeout
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            closed = f"http://127.0.0.1:{s.getsockname()[1]}"  # nothing listens there once this socket is closed
+        status, out, calls = self.comment(self.review(1000), fork=False, readonly=False, posted=[], api=closed)
+        self.assertEqual((status, calls), (1, []), out)
+        self.assertRegex(
+            out,
+            r"^::error title=rowstile review::GitHub couldn't be reached \(.*refused.*\)\. "
+            r"The review is in the run's summary\.\n\Z",
+        )
+        with open(os.path.join(os.path.dirname(self.ACTION), "comment.py"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("\nTIMEOUT = 30\n", text)
+        self.assertEqual(text.count("urlopen("), text.count("urlopen(req, timeout=TIMEOUT)"))
 
     def test_a_review_longer_than_a_comment_is_cut_and_says_where_the_rest_is(self) -> None:
         posted: list[dict[str, str]] = []
