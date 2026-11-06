@@ -628,6 +628,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   who held the permission already.
 - `rowstile why` and Studio say "more" and "other" only of objects of the type asked about: a change that also
   gives edit on a note's one project says "edit on 1 project", not "on 1 more project".
+- In a condition, a `$` right after a character beyond ASCII (an em dash, an emoji) goes on the name, as Postgres
+  reads it, and opens no dollar quote. Before, the policy read the rest of the line as quoted.
 
 ### Upgrading
 

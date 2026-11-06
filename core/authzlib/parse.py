@@ -516,8 +516,8 @@ class Scanner:
     backslashes), "names", $$...$$ and $tag$...$tag$ are quotes, which may go on to the next line, and -- starts an
     SQL comment, which also runs to the end of the line (the lines of a condition are joined into one). A /* ... */
     comment, which nests and may go on to the next line, is read as a quote: what it holds opens or closes nothing,
-    and it stays in the condition. A $ right after a name's letter or digit is part of the name (a$b$), as in
-    Postgres, and opens no dollar quote. Braces nest; one inside quotes opens nothing, and a `}` with none open is
+    and it stays in the condition. A $ right after a name's letter or digit, or any character beyond ASCII, is part of
+    the name (a$b$), as in Postgres, and opens no dollar quote. Braces nest; one inside quotes opens nothing, and a `}` with none open is
     text."""
 
     depth: int = 0
@@ -570,7 +570,10 @@ class Scanner:
                 out += [Mark(True, self.depth, False)] * 2
                 self.quote, self.comments, i = "/*", 1, i + 2
                 continue
-            name_goes_on = i > 0 and not out[-1].quoted and (line[i - 1].isalnum() or line[i - 1] in "_$")
+            # (as sqlutil.name_part: letters, digits, _, $ and every character beyond ASCII, a dash's or an emoji's)
+            name_goes_on = (
+                i > 0 and not out[-1].quoted and (line[i - 1].isalnum() or line[i - 1] in "_$" or line[i - 1] >= "\x80")
+            )
             dollar = DOLLAR_QUOTE.match(line, i) if c == "$" and self.depth and not name_goes_on else None
             if c in "'\"" or dollar:
                 tag = dollar.group(0) if dollar else c
