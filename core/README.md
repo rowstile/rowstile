@@ -158,24 +158,26 @@ Python, each comparison turned round, a `not` dropped or added, each `if` forced
 dropped, a quoting call (`q`, `qt`, `lit`) dropped. Never in an f-string's fields, a docstring, a message or an SQL
 comment. Each mutant has an id (`g` and ten hex digits) that stays the same until its own line changes.
 
-`mutants/plan.py` first compiles every policy in the repository before and after each mutant, with no database:
-the fixed policies, the cookbook's, the four apps', the docs app's diagram, clients and diffs, and the migrations
-`tests/migrate_test.py` checks. A mutant that changes none of them is equivalent for all of them and doesn't run
-(`same`); one that breaks a compile is caught there. The others run the suites. Those that called a function whose
-SQL changed, or ran the mutated line (CI's coverage run on `main`: `functions.tsv` and coverage.py's contexts),
-run first, then the rest; each group the most catches per second first. Each suite's catches and seconds come
-from the newest run that kept them (no copy is kept here: it would go stale), and the report names that run. A
-catch counts when the suite is red twice, and only if it is green unmutated on the same machine.
+`mutants/plan.py` first compiles every policy in the repository before and after each mutant, with no database: the
+fixed policies, the cookbook's, every app's (`examples/`, `integrations/`), the docs app's diagram, clients and
+diffs, and the migrations `tests/migrate_test.py` checks. A mutant that changes none of them is equivalent for all
+of them and doesn't run (`same`); one that breaks a compile is caught there. The others run the suites. Those that
+called a function whose SQL changed, or ran the mutated line (a green CI coverage run of the same commit, else
+`main`'s latest, its lines moved to the commit's: `functions.tsv` and coverage.py's contexts), run first, then the
+rest; each group the most catches per second first. Each suite's catches and seconds come from the newest run that
+kept them (no copy is kept here: it would go stale), and the report names that run. A catch counts when the suite is
+red twice, and only if it is green unmutated on the same machine.
 
 It runs on GitHub's runners (`.github/workflows/mutants.yml`), weekly and by hand, never on a push: a job prepares
 the queue, up to eight jobs run a share of it each, side by side, and a last one collects the results. Each run
-carries over the results of the last one whose mutants' lines are unchanged, and takes the next mutants in an
-order spread over operators and files. A mutant no suite catches (a survivor) is listed in
+carries over the catches and the equivalent survivors of the last one whose mutants' lines are unchanged (a catch by
+a suite the sweep no longer has runs again; `same` and `unreached` are decided again each run), and takes the next
+mutants in an order spread over operators and files. A mutant no suite catches (a survivor) is listed in
 `mutants/survivors.txt`, as `equivalent` (it can't change an answer) or `lead` (the check that would catch it): a
-survivor not listed fails the run. The run's summary has the score, what caught what and each survivor's edit;
-the artifact `mutants-results` has every result. A run of some mutants only (`only`, `since`, `limit`) with
-`resume` other than `latest` holds only its own results: it keeps them as `mutants-results-partial`, which the
-next run doesn't start from.
+survivor not listed fails the run. The run's summary has the score, what caught what and each survivor's edit; the
+artifact `mutants-results` has every result. A run of some mutants only (`only`, `since`, `limit`) with `resume`
+other than `latest` holds only its own results: it keeps them as `mutants-results-partial`, which the next run
+doesn't start from.
 
     gh workflow run mutants.yml -f since=<commit>    # the mutants in lines changed since that commit
     gh workflow run mutants.yml -f limit=40          # 40 that need suites, spread over operators and files
