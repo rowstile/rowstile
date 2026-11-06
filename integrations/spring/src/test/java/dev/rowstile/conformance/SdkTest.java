@@ -52,6 +52,12 @@ class SdkTest extends Conformance {
         }
     }
 
+    /** Throws {@code t} whatever it is, as Kotlin or Lombok's {@code @SneakyThrows} may: a checked one undeclared. */
+    @SuppressWarnings("unchecked")
+    static <T, E extends Throwable> T sneaky(Throwable t) throws E {
+        throw (E) t;
+    }
+
     @Test
     @DisplayName("a key is spelled as the database writes it: 7, (1,2), a field quoted only where Postgres would")
     void keys() {
@@ -187,7 +193,7 @@ class SdkTest extends Conformance {
     }
 
     @Test
-    @DisplayName("a transaction signs in, commits what its work did, and rolls back what fails")
+    @DisplayName("a transaction signs in, commits what its work did, and rolls back what fails, whatever it throws")
     void transactions() throws SQLException {
         try (Connection conn = DriverManager.getConnection(WORKER.appUrl())) {
             assertEquals(List.of(2L, 3L, 4L), Rowstile.transaction(conn, Principal.user(3), c -> {
@@ -209,11 +215,31 @@ class SdkTest extends Conformance {
             assertEquals(0L, (long) Rowstile.transaction(conn, Principal.user(3),
                     c -> count(c, "SELECT count(*) FROM app.notes WHERE body = 'gone'")));
             assertTrue(conn.getAutoCommit());
-            // a transaction open already: this one's sign-in would end with it, so it says how instead
+            // work that throws an Error (a test's assertion) or a checked exception it doesn't declare commits nothing
+            List<Throwable> thrown = List.of(new AssertionError("no"), new java.io.IOException("no"));
+            for (Throwable t : thrown) {
+                Throwable e = assertThrows(t.getClass(), () -> Rowstile.transaction(conn, Principal.user(3), c -> {
+                    try (Statement st = c.createStatement()) {
+                        st.executeUpdate("UPDATE app.notes SET body = 'gone' WHERE id = 4");
+                    }
+                    return SdkTest.<Long, RuntimeException>sneaky(t);
+                }));
+                assertEquals(t, e);
+            }
+            assertEquals(0L, (long) Rowstile.transaction(conn, Principal.user(3),
+                    c -> count(c, "SELECT count(*) FROM app.notes WHERE body = 'gone'")));
+            // a connection out of auto-commit mode (a pool's autoCommit=false), no transaction open on it: signed in
+            // all the same, and left in its mode
             conn.setAutoCommit(false);
+            assertEquals(2L, (long) Rowstile.transaction(conn, Principal.user(3),
+                    c -> count(c, "SELECT count(*) FROM app.projects")));
+            assertFalse(conn.getAutoCommit());
+            // a transaction open already: this one's sign-in would end with it, so it says how instead
+            count(conn, "SELECT 1");
             IllegalStateException open = assertThrows(IllegalStateException.class,
                     () -> Rowstile.transaction(conn, Principal.user(3), c -> 1));
             assertTrue(open.getMessage().contains("Rowstile.signIn(conn, who)"), open.getMessage());
+            conn.rollback();
             Rowstile.signIn(conn, Principal.NOBODY);
             assertEquals(1L, count(conn, "SELECT count(*) FROM app.projects")); // the public one
             conn.rollback();

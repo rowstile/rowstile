@@ -5,6 +5,8 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Optional;
 import java.util.function.Supplier;
+import org.postgresql.core.BaseConnection;
+import org.postgresql.core.TransactionState;
 
 /**
  * rowstile for Java apps (preview). Every transaction signs in as whoever the request (or the job) acts for, with
@@ -96,12 +98,14 @@ public final class Rowstile {
 
     /**
      * A transaction on {@code conn}, signed in as {@code who}: it commits what {@code work} did, or rolls it back if
-     * {@code work} throws. The connection must be in auto-commit mode (no transaction open on it); it is again after.
-     * A database error is thrown as {@link DatabaseError}.
+     * {@code work} throws anything (an {@link Error} too). No transaction may be open on the connection; it may be in
+     * auto-commit mode or not (a pool's {@code autoCommit=false}), and is in its mode again after. A database error is
+     * thrown as {@link DatabaseError}.
      */
     public static <T> T transaction(Connection conn, Principal who, SqlWork<T> work) {
         try {
-            if (!conn.getAutoCommit()) {
+            boolean autoCommit = conn.getAutoCommit();
+            if (!autoCommit && conn.unwrap(BaseConnection.class).getTransactionState() != TransactionState.IDLE) {
                 throw new IllegalStateException(
                         "a transaction is open on this connection already: sign it in with Rowstile.signIn(conn, who)");
             }
@@ -111,11 +115,11 @@ public final class Rowstile {
                 T result = work.run(conn);
                 conn.commit();
                 return result;
-            } catch (SQLException | RuntimeException e) {
-                conn.rollback();
+            } catch (Throwable e) {
+                conn.rollback(); // before the mode is set back, which would commit what the work did
                 throw e;
             } finally {
-                conn.setAutoCommit(true);
+                conn.setAutoCommit(autoCommit);
             }
         } catch (SQLException e) {
             throw new DatabaseError(e);

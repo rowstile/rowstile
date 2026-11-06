@@ -472,6 +472,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   error.
 - `@rowstile/postgres`'s `begin(fn)` runs the queries of an array `fn` returns, as postgres.js's own `begin` does.
   Before, it ran none of them and committed an empty transaction.
+- The Java SDK's `Rowstile.transaction` rolls back whatever its work throws. An `Error` (a test's assertion) or a
+  checked exception the work doesn't declare (Kotlin's, Lombok's `@SneakyThrows`) left its writes to be committed when
+  the connection went back to auto-commit mode. It also takes a connection out of auto-commit mode with no transaction
+  open on it (a pool's `autoCommit=false`), and leaves it in its mode, instead of saying a transaction is open.
 
 ### Upgrading
 
