@@ -26,8 +26,8 @@ import javax.sql.DataSource
 /** What the [Rowstile] plugin is told: who a request is, and the app's connections. */
 public class RowstileConfig {
     /**
-     * Who a request is, asked when its code first reads it (`actingFor()`, as a transaction begins): after Ktor's
-     * Authentication. By default the principal Authentication found: a `dev.rowstile.Principal` as it is (a service:
+     * Who a request is, asked once, when its code first reads it (`actingFor()`, as a transaction begins): after
+     * Ktor's Authentication. By default the principal Authentication found: a `dev.rowstile.Principal` as it is (a service:
      * `Principal.of("service", 3)`), a `UserIdPrincipal` as the user whose id is its name, and nobody when no one is
      * signed in. Any other principal (a `JWTPrincipal`): say who it is here, `principal = { call -> ... }`.
      */
