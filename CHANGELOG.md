@@ -676,6 +676,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   terminal: `npx rowstile ... < file` in a terminal no longer gives the command each one twice.
 - The command's image and the Python package are built with the build's own packages (hatchling and what it needs)
   pinned by hash, as everything else they fetch is.
+- `rowstile review` and `rowstile prove` read a condition on a type's key column (`{id = 2}`) as the row's own
+  id, as the database does. Before, their small worlds gave that column a value of its own, beside the id, so a
+  refactor could be said to change what it doesn't, or a counterexample be one no database can hold.
 
 ### Upgrading
 
