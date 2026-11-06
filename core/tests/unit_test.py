@@ -15525,17 +15525,13 @@ END outer;"""
         for flag in ("shared_preload_libraries=plpgsql_check", "plpgsql_check.profiler=on", "cursors_leaks=off"):
             self.assertRegex(ci, r"\$\{STATEMENTS:\+[^}]*" + re.escape(flag), flag)
         self.assertIn('-e ROWSTILE_COVERAGE_STATEMENTS="$STATEMENTS"', ci)
-        # nightly runs it and keeps the counts, which its report reads
-        workflow = read("../.github/workflows/nightly.yml")
-        self.assertIn("run: bash core/ci.sh --statements 16", workflow)
-        for name in (".coverage", "functions.tsv", "plpgsql.jsonl", "plpgsql-memory.txt"):
-            self.assertIn(f".ci/coverage-16/{name}", workflow)
-        self.assertIn("tests/coverage_report.py --out /src/.ci/statements /src/.ci/parts/statements-pg16-*", workflow)
-        # and each pull request's parts on 16 count them, which the coverage job holds to the floor
+        # each push's and pull request's parts on 16 count them and keep the counts, which the coverage job reads and
+        # holds to the floor; the nightly repeats none of it
         suites = read("../.github/workflows/suites.yml")
         self.assertIn("bash core/ci.sh ${{ inputs.pg == '16' && '--statements' || '' }}", suites)
-        for name in ("plpgsql.jsonl", "plpgsql-memory.txt"):
+        for name in (".coverage", "functions.tsv", "plpgsql.jsonl", "plpgsql-memory.txt"):
             self.assertIn(".ci/coverage-${{ inputs.pg }}/" + name, suites)
+        self.assertNotIn("--statements", read("../.github/workflows/nightly.yml"))
         self.assertIn("--floor tests/plpgsql_floor.txt", read("../.github/workflows/ci.yml"))
         floor = self.p.read_floor()
         self.assertEqual(sorted(floor), sorted(self.p.FLOORED))
@@ -18391,13 +18387,21 @@ class Delivery(unittest.TestCase):
         for workflow, name, kind in (
             ("nightly.yml", "suites", "SUITES"),
             ("nightly.yml", "full", "FULL"),
-            ("nightly.yml", "statements", "SUITES"),
             ("nightly.yml", "soak", "SOAK"),
         ):
             with self.subTest(workflow=workflow, job=name):
                 body = self.job(workflow, name)
                 self.assertEqual(search(r"^        part: \[([^\]]+)\]$", body, re.M).group(1).split(", "), parts[kind])
                 self.assertIn('ROWSTILE_PART: "${{ matrix.part }}"', body)
+        # the proofs (--proofs: the races part alone, its stress test shorter) on 17 and 18: on 16 the full run's
+        # races part runs them every night; asked for alone, on 16 too
+        self.assertIn("proofs) PARTS=races;;", runner)
+        self.assertIn("races", parts["FULL"])
+        self.assertIn(
+            """        pg: ${{ fromJSON(inputs.only == 'proofs' && '["16", "17", "18"]' || '["17", "18"]') }}\n""",
+            self.job("nightly.yml", "proofs"),
+        )
+        self.assertIn("      - run: bash core/ci.sh --full 16\n", self.job("nightly.yml", "full"))
         # ci.sh hands the part to the run in the container
         self.assertIn('-e ROWSTILE_PART="${ROWSTILE_PART:-}"', read("ci.sh"))
 

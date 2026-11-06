@@ -1,7 +1,7 @@
 {
   "name": "rowstile-workspace",
   "private": true,
-  "description": "The TypeScript SDK's packages (sdk/typescript) and their conformance apps (integrations/nextjs, integrations/node, integrations/electric, integrations/zero, integrations/powersync), in one npm workspace so they share one React and one pg",
+  "description": "The TypeScript SDK's packages (sdk/typescript), their conformance apps (integrations/nextjs, integrations/node, integrations/electric, integrations/zero, integrations/powersync) and the helpdesk example (examples/helpdesk), in one npm workspace so they share one React and one pg",
   "workspaces": [
     "sdk/typescript/client",
     "sdk/typescript/pg",

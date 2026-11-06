@@ -260,8 +260,7 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   suite that stopped checking something (a glob that matches nothing, a loop over an empty list, a test that
   skips) can't stay green unseen. <!-- checked: tests/unit_test.py "test_fewer_or_more_is_said"; tests/unit_test.py "test_skipped_tests_are_not_passed"; tests/unit_test.py "test_each_suite_written_is_one_run_tests_records" -->
   Nor can a suite that didn't run at all: each part of each run must have a result for every suite counted there. <!-- checked: tests/unit_test.py "test_a_suite_that_didnt_run_is_said"; tests/unit_test.py "test_each_suite_counted_has_its_place" -->
-- **What the database runs**: [for each change](../.github/workflows/suites.yml) and
-  [every night](../.github/workflows/nightly.yml) the suites run on PostgreSQL 16 with
+- **What the database runs**: [for each change](../.github/workflows/suites.yml) the suites run on PostgreSQL 16 with
   plpgsql_check's profiler on (in the test image: rowstile itself needs no extension), and
   [`tests/coverage_report.py`](../core/tests/coverage_report.py) lists each statement and branch of rowstile's
   PL/pgSQL that no suite runs, by kind of function, each `RAISE` first. It reads each function's source to know
