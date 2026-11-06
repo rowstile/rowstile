@@ -31,7 +31,12 @@ import io.ktor.server.testing.TestApplication
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.v1.core.DatabaseApi
+import org.jetbrains.exposed.v1.core.Transaction
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.statements.GlobalStatementInterceptor
+import org.jetbrains.exposed.v1.core.statements.StatementContext
+import org.jetbrains.exposed.v1.core.transactions.TransactionManagerApi
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.core.DatabaseConfig
@@ -44,6 +49,7 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.postgresql.ds.PGSimpleDataSource
 import java.sql.SQLException
+import java.util.ServiceLoader
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -312,6 +318,20 @@ class SdkTest {
                 withContext(ActingAs(Principal.NOBODY)) { listOf(Projects.selectAll().count(), signedIn()?.ifEmpty { null }) }
             })
         }
+    }
+
+    @Test
+    @DisplayName("Exposed's other transactions (R2DBC's), which run the one-principal check too, are none of its own")
+    fun otherTransactions() {
+        val check = ServiceLoader.load(GlobalStatementInterceptor::class.java)
+            .single { it.javaClass.name == "dev.rowstile.kotlin.exposed.OnePrincipal" }
+        val other = object : Transaction() {
+            override val db: DatabaseApi get() = error("no database")
+            override val transactionManager: TransactionManagerApi get() = error("no manager")
+            override val readOnly: Boolean = false
+            override val outerTransaction: Transaction? = null
+        }
+        check.beforeExecution(other, StatementContext(Notes.selectAll(), listOf())) // goes on, as it is
     }
 
     @Test
