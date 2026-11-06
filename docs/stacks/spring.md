@@ -88,9 +88,11 @@ carries one request's user into the next, and PgBouncer in transaction mode is s
 fails with the not-signed-in error (AZ701): run your queries in transactions. Spring Data's repositories have their
 own.
 
-A sign-in that fails (the database refuses the principal, or your `PrincipalSource` throws) ends the transaction it
-began: Spring's `CannotCreateTransactionException` says why, and nothing of it is left to the thread or holds a
-connection.
+The transactions signed in are those of Spring's JDBC and JPA transaction managers (`DataSourceTransactionManager`,
+`JdbcTransactionManager`, and `JpaTransactionManager` on any JPA provider). Another manager's (JTA's) aren't, and
+their queries fail with AZ701. A sign-in that fails (the database refuses the principal, or your `PrincipalSource`
+throws) ends the transaction it began: Spring's `CannotCreateTransactionException` says why, and nothing of it is
+left to the thread or holds a connection.
 
 ## Controllers
 
@@ -119,7 +121,9 @@ Map<String, Long> edit(@PathVariable long id, @RequestBody Body b) {
 ```
 
 Leave the flush to the commit: a `saveAndFlush` of your own that the rules refuse is Spring's
-`ObjectOptimisticLockingFailureException`, which the starter can't tell from a row changed meanwhile.
+`ObjectOptimisticLockingFailureException`, which the starter can't tell from a row changed meanwhile. That flush
+before the commit is Hibernate's: on another JPA provider (EclipseLink), an entity's update or delete the rules
+refuse changes nothing and says nothing, so write it with `JdbcClient` and `expect` its count, as below.
 
 `JdbcClient` runs in the same transactions, signed in too. An UPDATE or DELETE the rules refuse changes 0 rows
 without an error; the `Authz` bean's `expect` asks why:

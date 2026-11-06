@@ -1,5 +1,7 @@
 package dev.rowstile.spring;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -8,8 +10,13 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.OptimisticLockException;
 import java.lang.reflect.Proxy;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.test.context.FilteredClassLoader;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.orm.jpa.EntityManagerHolder;
 import org.springframework.orm.jpa.JpaOptimisticLockingFailureException;
@@ -17,7 +24,10 @@ import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.transaction.TransactionExecution;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** What the flush before the commit leaves alone: a version check of the JPA provider's own (a lock). */
+/**
+ * What the flush before the commit leaves alone: a version check of the JPA provider's own (a lock). And JPA's
+ * transaction managers as the starter hands them out.
+ */
 class JpaSignInTest {
     static <T> T stand(Class<T> type, Object... answers) {
         return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, (p, m, a) -> {
@@ -37,7 +47,7 @@ class JpaSignInTest {
         OptimisticLockException lock = new OptimisticLockException("a lock");
         EntityManagerFactory emf = stand(EntityManagerFactory.class, lock);
         JpaTransactionManager manager = new JpaTransactionManager(emf);
-        JpaSignIn signIn = new JpaSignIn(manager, () -> () -> Principal.NOBODY, () -> null);
+        HibernateSignIn signIn = new HibernateSignIn(manager, () -> () -> Principal.NOBODY, () -> null);
         TransactionSynchronizationManager.bindResource(emf, new EntityManagerHolder(stand(EntityManager.class, lock)));
         try {
             ObjectOptimisticLockingFailureException e = assertThrows(JpaOptimisticLockingFailureException.class,
@@ -46,5 +56,25 @@ class JpaSignInTest {
         } finally {
             TransactionSynchronizationManager.unbindResource(emf);
         }
+    }
+
+    @Test
+    @DisplayName("on another JPA provider than Hibernate, JPA's transactions are signed in all the same")
+    void withoutHibernate() {
+        EntityManagerFactory emf = stand(EntityManagerFactory.class, new OptimisticLockException());
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(DataSourceAutoConfiguration.class,
+                        RowstileAutoConfiguration.class))
+                .withClassLoader(new FilteredClassLoader("org.hibernate"))
+                .withPropertyValues("spring.datasource.url=jdbc:postgresql://localhost:1/nothing",
+                        "rowstile.check-connection=false")
+                .withBean("transactionManager", JpaTransactionManager.class, () -> new JpaTransactionManager(emf))
+                .run(ctx -> {
+                    JpaTransactionManager tm = ctx.getBean(JpaTransactionManager.class);
+                    assertNotEquals(JpaTransactionManager.class, tm.getClass());
+                    List<Object> listeners = tm.getTransactionExecutionListeners().stream()
+                            .map(l -> (Object) l.getClass()).toList();
+                    assertEquals(List.of(JpaSignIn.class), listeners); // the flush that says why is Hibernate's
+                });
     }
 }

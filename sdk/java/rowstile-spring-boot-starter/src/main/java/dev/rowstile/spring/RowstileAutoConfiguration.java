@@ -9,6 +9,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
@@ -23,7 +24,8 @@ import org.springframework.web.servlet.DispatcherServlet;
  * @Transactional}, {@code TransactionTemplate}) signs in first, as the request's user, and work for someone else
  * can't join it or run a statement in it (an {@link IllegalStateException}); refusals answer as problem details; and
  * the app doesn't start on a connection that skips row-level security ({@code rowstile.check-connection}, on unless
- * set to false).
+ * set to false). The transactions of another kind of manager (JTA's) aren't signed in: their queries fail with the
+ * not-signed-in error (AZ701).
  */
 @AutoConfiguration(
         afterName = {
@@ -78,13 +80,21 @@ public class RowstileAutoConfiguration {
         }
     }
 
-    /** JPA's transactions: signed in, and why a flush changed nothing. */
+    /** JPA's transactions: signed in, on any provider; and, on Hibernate, why a flush changed nothing. */
     @Configuration(proxyBeanMethods = false)
-    @ConditionalOnClass({JpaTransactionManager.class, EntityManagerFactory.class, org.hibernate.Session.class})
+    @ConditionalOnClass({JpaTransactionManager.class, EntityManagerFactory.class})
     static class Jpa {
         @Bean
+        @ConditionalOnClass(name = "org.hibernate.Session")
         static SignInJpaTransactions rowstileJpaSignIn(SignInTransactions transactions, ObjectProvider<Authz> authz) {
-            return new SignInJpaTransactions(transactions, authz);
+            return new SignInJpaTransactions(transactions, authz::getObject);
+        }
+
+        /** Another provider's (EclipseLink's): signed in, and a flush that changed nothing says nothing. */
+        @Bean
+        @ConditionalOnMissingClass("org.hibernate.Session")
+        static SignInJpaTransactions rowstileJpaSignInWithoutHibernate(SignInTransactions transactions) {
+            return new SignInJpaTransactions(transactions, null);
         }
     }
 

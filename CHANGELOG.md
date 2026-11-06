@@ -481,6 +481,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   out of the pool, and later work on that thread joined it, signed in to no one. A `REQUIRES_NEW` transaction the
   database won't sign in says why (`CannotCreateTransactionException`), instead of Spring's `IllegalStateException`
   about a resource bound already.
+- The Spring starter signs in JPA's transactions on any JPA provider (EclipseLink), not on Hibernate alone: without
+  it, `JpaTransactionManager`'s transactions were signed in to no one, and their queries failed (AZ701). Saying why an
+  entity's update or delete changed nothing is still Hibernate's.
 
 ### Upgrading
 
