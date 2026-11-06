@@ -1,12 +1,15 @@
 package dev.rowstile.spring;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.rowstile.Authz;
 import dev.rowstile.NotFound;
 import dev.rowstile.Principal;
+import dev.rowstile.Refused;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.OptimisticLockException;
@@ -14,6 +17,8 @@ import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.hibernate.metamodel.mapping.CompositeIdentifierMapping;
+import org.hibernate.metamodel.mapping.EntityIdentifierMapping;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -62,6 +67,28 @@ class JpaSignInTest {
         } finally {
             TransactionSynchronizationManager.unbindResource(emf);
         }
+    }
+
+    @Test
+    @DisplayName("an entity whose id has several columns is refused without asking why; one of one column is asked")
+    void severalColumns() {
+        OptimisticLockException lock = new OptimisticLockException("matched no row");
+        // an @EmbeddedId's or an @IdClass's: Hibernate's columns aren't the policy's key's order, so nothing is asked
+        Refused composite = assertInstanceOf(Refused.class, HibernateSignIn.answer(
+                stand(CompositeIdentifierMapping.class), "app.members", "delete", () -> {
+                    throw new AssertionError("the database was asked");
+                }, lock));
+        assertEquals(List.of("app.members", "delete", List.of(), "AZ709", 403), List.of(composite.table(),
+                composite.command(), composite.why(), composite.code(), composite.problem().status()));
+        assertEquals("permission denied: this user may not delete the row of app.members (a key of several columns:"
+                + " not asked why)", composite.getMessage());
+        assertSame(lock, composite.getCause());
+        // a key of one column: the database's answer
+        Refused one = assertInstanceOf(Refused.class, HibernateSignIn.answer(stand(EntityIdentifierMapping.class),
+                "app.notes", "update", () -> new Authz.Verdict("app.notes", "update", 1, List.of("no   edit"),
+                        "user 3"), lock));
+        assertEquals(List.of("permission denied: user 3 may not update row 1 of app.notes", List.of("no   edit")),
+                List.of(one.getMessage(), one.why()));
     }
 
     @Test
