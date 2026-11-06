@@ -3,5 +3,7 @@
 # that leaves more never run (coverage_report.py --floor), and one that leaves fewer until this file says so. Not
 # counted: what only functions no suite called hold, of a kind a suite calls elsewhere (coverage_plpgsql.floored: a
 # test policy's own lines, in a database that never asks them); a kind no suite calls at all is counted.
+# A count: a change that leaves one statement more never run and runs one that wasn't passes it (the report's
+# lists say which). A function of these schemas whose source can't be read fails it (its branches would count as none).
 authz 196 286
-authz_gen 11 19
+authz_gen 11 20
