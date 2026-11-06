@@ -209,7 +209,8 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   policy's in PascalCase (`org_unit` is `OrgUnit`); two that would get the same, `doc` and `Doc`, get none, and
   neither does one that would hide what every class inherits (`to_string`: `ToString`); the file says so. A transaction is one principal's: in EF Core, work for someone else inside one signed in
   already (one `BeginSignedInAsync` began on the context's connection too) throws an `InvalidOperationException`
-  before any SQL is sent, and so does work in a `TransactionScope`. It may change before it is supported.
+  before any SQL is sent, and so does work in a `TransactionScope` the connection takes part in. It may change before
+  it is supported.
 - **Ruby: preview.** `rowstile client ruby` writes the policy's names as constants (`Authz::Note::EDIT`), and
   `rowstile client rbs` their signatures, for Steep: `Authz.queries` has `can`, `perms_of` and `permitted` taking
   the policy's types and permissions. The gem has `Rowstile.acting_as`, `Rowstile::Refused`, `Rowstile::NotFound`,

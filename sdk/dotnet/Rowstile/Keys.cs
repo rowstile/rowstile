@@ -7,7 +7,7 @@ using System.Runtime.CompilerServices;
 namespace Rowstile;
 
 /// <summary>A row's key as Postgres writes it, which <c>authz.explain_rule</c> reads back and messages show.</summary>
-public static class Keys
+internal static class Keys
 {
     /// <summary>
     /// <c>7</c>; or <c>(1,2)</c> for a key of several columns, given as a tuple (<c>(1, 2)</c>), an array of its

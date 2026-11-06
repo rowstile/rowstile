@@ -119,6 +119,8 @@ internal sealed class RowstileMiddleware(RequestDelegate next, RowstileOptions o
         {
             details.Extensions[key] = value;
         }
+        // what the endpoint set before it threw (a cache's headers, a cookie) was for another answer
+        context.Response.Clear();
         context.Response.StatusCode = problem.Status;
         return context.Response.WriteAsJsonAsync(details, options: null, "application/problem+json", context.RequestAborted);
     }
@@ -129,7 +131,12 @@ internal sealed class ConnectionCheck(RowstileOptions options, IServiceProvider 
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        var dataSource = options.DataSource is { } given ? given(services) : services.GetRequiredService<NpgsqlDataSource>();
+        var dataSource =
+            (options.DataSource is { } given ? given(services) : services.GetService<NpgsqlDataSource>())
+            ?? throw new InvalidOperationException(
+                "AddRowstile checks the app's connection at start, and the services hold no NpgsqlDataSource: give "
+                    + "o.ConnectionString or o.DataSource, or set o.CheckConnection = false"
+            );
         return dataSource.CheckAsync(cancellationToken);
     }
 

@@ -100,6 +100,7 @@ public static class RowstileDatabase
             return await run(conn).ConfigureAwait(false);
         }
         // signed in as it begins (UseRowstile's interceptor)
+        Scopes.Check(conn);
         var tx = await database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -121,20 +122,38 @@ internal static class Asking
     /// Asks about the rows of <paramref name="stale"/>, on the connection, in its transaction, and records the answer
     /// on it (<see cref="Rowstile.Stale"/>): the first row the database says no for, or that the rules allow every row.
     /// </summary>
-    public static async Task Stale(NpgsqlConnection conn, DbUpdateConcurrencyException stale, CancellationToken cancellationToken)
+    public static async Task StaleAsync(NpgsqlConnection conn, DbUpdateConcurrencyException stale, CancellationToken cancellationToken)
     {
         var rows = stale.Entries.Select(Row).ToList();
         try
         {
-            var answers = await conn.AskAsync(rows, cancellationToken).ConfigureAwait(false);
-            var refused = rows.Zip(answers).FirstOrDefault(ra => !ra.Second.Allowed);
-            Rowstile.Stale.Record(stale, refused == default ? null : Verdicts.Of(refused.First, refused.Second));
+            Record(stale, rows, await conn.AskAsync(rows, cancellationToken).ConfigureAwait(false));
         }
         catch (PostgresException)
         {
             // the error the app sees is SaveChanges' own: this one would hide it (the rollback to the savepoint, next,
             // undoes it)
         }
+    }
+
+    /// <summary>The same, without awaiting (SaveChanges').</summary>
+    public static void Stale(NpgsqlConnection conn, DbUpdateConcurrencyException stale)
+    {
+        var rows = stale.Entries.Select(Row).ToList();
+        try
+        {
+            Record(stale, rows, conn.Ask(rows));
+        }
+        catch (PostgresException)
+        {
+            // as above
+        }
+    }
+
+    private static void Record(DbUpdateConcurrencyException stale, List<RowAsked> rows, IReadOnlyList<RowAnswer> answers)
+    {
+        var refused = rows.Zip(answers).FirstOrDefault(ra => !ra.Second.Allowed);
+        Rowstile.Stale.Record(stale, refused.First is null ? null : Verdicts.Of(refused.First, refused.Second)); // (none refused: the rules allow every row)
     }
 
     /// <summary>The row of an entry SaveChanges updated or deleted: its table, as the model maps it, and its key.</summary>

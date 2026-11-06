@@ -20,7 +20,7 @@ namespace Rowstile;
 public static class RowstileNpgsql
 {
     /// <summary>The statement that signs a transaction in, with its two parameters: the principal's type and id (both null: nobody).</summary>
-    public const string ActAs = "SELECT authz.act_as(@rowstile_type, @rowstile_id)";
+    internal const string ActAs = "SELECT authz.act_as(@rowstile_type, @rowstile_id)";
 
     private const string Who =
         "coalesce((SELECT p.principal_type || ' ' || p.principal_id FROM authz.principal() p), 'someone not signed in')";
@@ -39,14 +39,14 @@ public static class RowstileNpgsql
     /// authz.act_as's arguments for <paramref name="who"/>: (<c>user</c>, <c>42</c>), or (null, null) for nobody.
     /// Left out (null), whoever the code acts for now (<see cref="Acting.Current"/>), else nobody.
     /// </summary>
-    public static (string? Type, string? Id) ActAsArgs(Principal? who = null)
+    internal static (string? Type, string? Id) ActAsArgs(Principal? who = null)
     {
         var p = who ?? Acting.Current ?? Principal.Nobody;
         return p.Id is null ? (null, null) : (p.Type, p.Id);
     }
 
     /// <summary>The parameters <see cref="ActAs"/> takes, for <paramref name="who"/> (as <see cref="ActAsArgs"/>).</summary>
-    public static NpgsqlParameter[] ActAsParameters(Principal? who = null)
+    internal static NpgsqlParameter[] ActAsParameters(Principal? who = null)
     {
         var (type, id) = ActAsArgs(who);
         return
@@ -76,7 +76,15 @@ public static class RowstileNpgsql
     {
         ArgumentNullException.ThrowIfNull(conn);
         var tx = await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        await conn.SignInAsync(who, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await conn.SignInAsync(who, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await tx.DisposeAsync().ConfigureAwait(false); // rolled back: the connection goes on without it
+            throw;
+        }
         SignedConnections.Record(conn, tx, who ?? Acting.Current ?? Principal.Nobody);
         return tx;
     }
@@ -105,26 +113,46 @@ public static class RowstileNpgsql
     }
 
     /// <summary>What <c>authz.explain_rule</c> answers for each row, in one statement, in the transaction open on the connection.</summary>
-    public static async Task<IReadOnlyList<RowAnswer>> AskAsync(
+    internal static async Task<IReadOnlyList<RowAnswer>> AskAsync(
         this NpgsqlConnection conn,
         IReadOnlyList<RowAsked> rows,
         CancellationToken cancellationToken = default
     )
     {
-        ArgumentNullException.ThrowIfNull(rows);
-        await using var cmd = new NpgsqlCommand(Explain, conn);
-        cmd.Parameters.AddWithValue("t", rows.Select(r => r.Table).ToArray());
-        cmd.Parameters.AddWithValue("c", rows.Select(r => r.Command).ToArray());
-        cmd.Parameters.AddWithValue("k", rows.Select(r => Keys.Text(r.Key)).ToArray());
+        await using var cmd = Asking(conn, rows);
         var answers = new List<RowAnswer>();
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var lines = reader.IsDBNull(0) ? null : reader.GetFieldValue<string[]>(0);
-            answers.Add(new RowAnswer(lines, reader.GetString(1), reader.GetString(2)));
+            answers.Add(Answer(reader));
         }
         return answers;
     }
+
+    /// <summary>The same, without awaiting: for code that doesn't (EF Core's SaveChanges).</summary>
+    internal static List<RowAnswer> Ask(this NpgsqlConnection conn, IReadOnlyList<RowAsked> rows)
+    {
+        using var cmd = Asking(conn, rows);
+        var answers = new List<RowAnswer>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            answers.Add(Answer(reader));
+        }
+        return answers;
+    }
+
+    private static NpgsqlCommand Asking(NpgsqlConnection conn, IReadOnlyList<RowAsked> rows)
+    {
+        var cmd = new NpgsqlCommand(Explain, conn);
+        cmd.Parameters.AddWithValue("t", rows.Select(r => r.Table).ToArray());
+        cmd.Parameters.AddWithValue("c", rows.Select(r => r.Command).ToArray());
+        cmd.Parameters.AddWithValue("k", rows.Select(r => Keys.Text(r.Key)).ToArray());
+        return cmd;
+    }
+
+    private static RowAnswer Answer(NpgsqlDataReader reader) =>
+        new(reader.IsDBNull(0) ? null : reader.GetFieldValue<string[]>(0), reader.GetString(1), reader.GetString(2));
 
     /// <summary>Whether the signed-in user holds <paramref name="permission"/> on the object <paramref name="id"/>.</summary>
     public static async Task<bool> CanAsync(

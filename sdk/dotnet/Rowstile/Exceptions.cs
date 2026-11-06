@@ -23,7 +23,12 @@ public sealed class RefusedException : Exception
         Code = code ?? "AZ709";
     }
 
-    /// <summary>The table, as the policy names it (<c>app.notes</c>); null for a refusal by the database's own code.</summary>
+    /// <summary>
+    /// The table: as the policy names it (<c>app.notes</c>) when a rule's refusal or the SDK's question says it, but as
+    /// Postgres's own words name it, without its schema (<c>notes</c>), for a refusal in those words (a row read back
+    /// without the select rule, an upsert, a MERGE). Null when nothing names it: a refusal by the database's own code
+    /// (a share), or Postgres's words in another language.
+    /// </summary>
     public string? Table { get; }
 
     /// <summary>The rule's command (<c>insert</c>, <c>update</c>, <c>delete</c>, <c>select</c>); null for a refusal by the database's own code.</summary>

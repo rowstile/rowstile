@@ -70,6 +70,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   savepoint. Before, it took another connection, and on a pool of one it waited forever. Through Prisma,
   `db.$authz` (and `tx.$authz`) inside `$transaction(async (tx) => ...)` asks in that transaction, as the other
   packages' calls do in theirs; before, it asked on another connection.
+- The .NET SDK's helpers its EF Core package alone calls are no longer public: `Keys`, `Verdicts`, `RowAsked`,
+  `RowAnswer`, `RowstileNpgsql.ActAs`, `ActAsArgs`, `ActAsParameters` and `AskAsync`, and `Stale.Record`. Its README
+  lists what is ([.NET](sdk/dotnet/README.md)).
 
 ### Removed
 
@@ -502,6 +505,16 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   an `@IdClass`) with a 403 that names its table and command, and no reason, instead of a 500: it sent the id's own
   text, which the database couldn't read. Hibernate's order of the id's columns needn't be the policy's key's, so it
   asks nothing ([Spring](docs/stacks/spring.md)).
+- The .NET SDK: in a `TransactionScope` the connection takes part in, SaveChanges and the runtime's calls
+  (`CanAsync`, `PermsOfAsync`, `ExpectAsync`) are refused before anything is sent, in the words a command is, which
+  say to run them outside the scope or on a connection that takes no part in it (`Enlist=false`); EF Core refused
+  them before, in words that didn't say why. A sign-in the database refuses rolls its transaction back
+  (`BeginSignedInAsync`, and a context's `BeginTransaction`), so the connection goes on; before, the next statement
+  failed. A pooled context (`AddDbContextPool`) rolls back the SDK's transaction after a failed SaveChanges each
+  time, not on its first lease alone. `UseRowstile()` takes a named connection string (`Name=ConnectionStrings:Db`),
+  which it refused, and leaves it to EF Core. `AddRowstile` says what to give when the start-up check finds no data
+  source, and the middleware's problem body replaces what the endpoint had put on the response (its headers, its
+  cookies).
 
 ### Upgrading
 
