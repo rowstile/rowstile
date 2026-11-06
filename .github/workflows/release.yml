@@ -398,7 +398,8 @@ jobs:
   # the npm package. The registry reads `mcpName` in the package of that version, so this follows the npm job. It
   # believes this workflow's own token for names under io.github.rowstile/, so there is no secret. A dry run
   # checks the file and publishes nothing. The registry is a preview and may change or be away: this job never
-  # fails a release (run it again once the registry answers).
+  # fails a release (run it again once the registry answers). It marks as latest the highest version by semantic
+  # versioning, not the one published last, so a patch to an older line doesn't become it.
   mcp:
     needs: [check, npm]
     runs-on: ubuntu-latest            # the publisher below is the one built for x64
