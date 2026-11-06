@@ -204,3 +204,14 @@ describe("who may see a ticket but not who asked", () => {
     }
   });
 });
+
+describe("opening a ticket for someone", () => {
+  test("an agent opens one for a customer who phoned, and works it", async () => {
+    const oz = await as("oz@acme.test");
+    const made = await oz.send("POST", "/api/tickets", { workspaceId: ACME, subject: "Phoned in", body: "She called", requesterId: ids.cy });
+    expect(made.status, JSON.stringify(made.json)).toBe(201);
+    const t = (await oz.get(`/api/tickets/${made.json.id}`)).json;
+    expect(t.perms).toContain("work");
+    expect(t.comments.map((c: { body: string }) => c.body)).toEqual(["She called"]);
+  });
+});
