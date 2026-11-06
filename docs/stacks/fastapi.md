@@ -297,4 +297,6 @@ Postgres](../managed-postgres.md)).
 The sync engine (and SQLModel, built on it) takes `install(engine)`. psycopg and asyncpg without SQLAlchemy:
 [Python apps](python.md). With FastAPI, such an app passes no engine, `Rowstile(app, None, user=...)`, and its
 drivers' errors get the same answers: 403 for a refused write, and each code's own. There is no engine to check
-at start-up: `rowstile.psycopg.problems(conn)` or `rowstile.asyncpg.problems(conn)` does it.
+at start-up: `rowstile.psycopg.problems(conn)` or `rowstile.asyncpg.problems(conn)` does it. Such an app needs no
+SQLAlchemy: install `fastapi` and `rowstile[psycopg]` (or `[asyncpg]`), as the `fastapi` extra brings SQLAlchemy's
+async engine.

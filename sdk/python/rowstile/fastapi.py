@@ -15,6 +15,7 @@ connection that skips row-level security (authz.connection_check()), with or wit
 An app on psycopg or asyncpg without SQLAlchemy passes no engine, Rowstile(app, None, user=...), and signs in with
 rowstile.psycopg.transaction() or rowstile.asyncpg.transaction(): the drivers' errors are answered the same way
 (there is no engine to check at start-up: rowstile.psycopg.problems(conn) and rowstile.asyncpg.problems(conn)).
+It needs no SQLAlchemy installed.
 
 user(request) runs in a middleware this adds: read the session or the token from the request itself. What a
 middleware of the app's puts on request.state is there only if it was added after Rowstile(...) (Starlette
@@ -30,8 +31,6 @@ import inspect
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm.exc import StaleDataError
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -51,7 +50,6 @@ from . import (
     not_signed_in,
     refusal,
 )
-from . import sqlalchemy as sa
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -70,15 +68,22 @@ class Rowstile:
         user: UserOf | None = None,
         check_connection: bool = True,
     ) -> None:
-        self.app, self.engine, self.user = app, engine, user
+        self.engine = engine
         if engine is not None:
+            from . import sqlalchemy as sa
+
             sa.install(engine)
         app.add_middleware(_SignIn, user=user)
         app.add_exception_handler(Refused, _problem)
         app.add_exception_handler(NotFound, _problem)
         for error in _database_errors():
             app.add_exception_handler(error, _db_error)
-        app.add_exception_handler(StaleDataError, _stale)
+        try:
+            from sqlalchemy.orm.exc import StaleDataError
+        except ImportError:
+            pass  # no SQLAlchemy (an app on psycopg or asyncpg alone): no ORM flush to answer for
+        else:
+            app.add_exception_handler(StaleDataError, _stale)
         if check_connection and engine is not None:
             # around the app's lifespan, whichever it has: Starlette runs "startup" handlers only when the app
             # was given no lifespan
@@ -97,6 +102,8 @@ class Rowstile:
         """Raises ConnectionProblem if the engine's connections skip row-level security."""
         if self.engine is None:
             return
+        from . import sqlalchemy as sa
+
         problems = _check_problems(await sa.connection_check(self.engine))
         if problems:
             raise ConnectionProblem(problems)
@@ -151,7 +158,7 @@ async def _db_error(request: Request, exc: Exception) -> Response:
         how = (
             "rowstile.sqlalchemy.install(engine) does it; is this engine in AUTOCOMMIT, or the query on another "
             "connection?"
-            if isinstance(exc, DBAPIError)
+            if type(exc).__module__ == "sqlalchemy.exc"  # SQLAlchemy's error: the query was on an engine
             else "rowstile.psycopg.transaction() and rowstile.asyncpg.transaction() do it"
         )
         raise NotSignedIn(
@@ -163,8 +170,8 @@ async def _db_error(request: Request, exc: Exception) -> Response:
 def _database_errors() -> list[type[Exception]]:
     """The errors a query raises: SQLAlchemy's, and psycopg's and asyncpg's own, for an app on the driver alone
     (Rowstile(app, None, user=...)), where they are installed."""
-    errors: list[type[Exception]] = [DBAPIError]
-    for module, name in (("psycopg", "Error"), ("asyncpg", "PostgresError")):
+    errors: list[type[Exception]] = []
+    for module, name in (("sqlalchemy.exc", "DBAPIError"), ("psycopg", "Error"), ("asyncpg", "PostgresError")):
         try:
             errors.append(getattr(importlib.import_module(module), name))
         except ImportError:
@@ -181,6 +188,8 @@ _CONFLICT: Problem = {
 
 
 async def _stale(request: Request, exc: Exception) -> Response:
+    from . import sqlalchemy as sa
+
     verdict = sa.why_stale_sync(exc)
     if verdict is not None:
         return _json(verdict.problem())

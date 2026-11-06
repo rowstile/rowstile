@@ -55,6 +55,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   function gives for a bad token, and answers any other error from it as `Handler` does: rowstile's own as its
   page says, anything else logged and a 500, without its words. Before, every error was a 401 that showed the
   error's text, so a session store that was down signed everyone out.
+- The Python SDK's `rowstile.fastapi` loads SQLAlchemy only for an engine: an app on psycopg or asyncpg alone,
+  `Rowstile(app, None, user=...)`, runs without SQLAlchemy installed.
 
 ### Removed
 
