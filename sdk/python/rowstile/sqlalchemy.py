@@ -46,6 +46,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Mapper, Session, object_session
+from sqlalchemy.orm.attributes import instance_state
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.types import TypeEngine
 
@@ -88,8 +89,9 @@ PermissionName = TypeVar("PermissionName", bound=str)
 
 _users: dict[Engine, Callable[[], Who] | None] = {}  # each engine install() was given (the sync one): its user()
 _orm_events = False
-# a row an ORM flush updates or deletes: (the table, update or delete, the row's key)
-_Row: TypeAlias = "tuple[str, str, tuple[object, ...]]"
+# a row an ORM flush updates or deletes: (the table, update or delete, the row's key, and the mapper whose rows
+# SQLAlchemy writes together: the base one, for every table of an inheritance)
+_Row: TypeAlias = "tuple[str, str, tuple[object, ...], Mapper[Any]]"
 _ROWS = "rowstile_rows"  # in a connection's info: the rows of the flush on it, as SQLAlchemy told them
 # in a connection's info: who its transaction signed in as, and whether install()'s user() said so (nothing else did)
 _SIGNED = "rowstile_signed"
@@ -167,11 +169,24 @@ def _remember(command: str) -> Callable[[Mapper[Any], Connection, object], None]
         assert session is not None  # a row the session flushes
         if session.info.pop(_FLUSHING, False):
             rows.clear()  # the flush's first row: an earlier flush's rows aren't asked about
-        table = mapper.local_table
-        if not isinstance(table, Table):
+        if not isinstance(mapper.local_table, Table):
             return  # mapped to a join or a query: no one table to ask about
-        name = f"{table.schema}.{table.name}" if table.schema else table.name
-        rows.append((name, command, mapper.primary_key_from_instance(target)))
+        state = instance_state(target)
+        # the key the row has in the database, which the statement matches it by: an update may change it
+        key = tuple(state.identity or ())
+        tables = [t for t in mapper.tables if isinstance(t, Table)]
+        if command == "update" and len(tables) > 1:
+            # joined inheritance: an update goes to each table holding a column it changes, and to no other
+            changed = {
+                column.table
+                for prop in mapper.column_attrs
+                if state.attrs[prop.key].history.has_changes()
+                for column in prop.columns
+            }
+            tables = [t for t in tables if t in changed] or tables
+        for table in tables:
+            name = f"{table.schema}.{table.name}" if table.schema else table.name
+            rows.append((name, command, key, mapper.base_mapper))
 
     return remember
 
@@ -190,10 +205,11 @@ def _explain_sql(table: str, command: str, key: object) -> TextClause:
 
 
 def _last_run(rows: list[_Row]) -> list[_Row]:
-    """The rows the failed statements were about: SQLAlchemy tells every row of a table before it sends that
-    table's statements, so they are the last run of rows of one table and command."""
+    """The rows the failed statements were about: SQLAlchemy tells every row of a mapper (with those of the mappers
+    that inherit from it) before it sends their statements, so they are the last run of rows of one base mapper and
+    command."""
     start = len(rows)
-    while start > 0 and rows[start - 1][:2] == rows[-1][:2]:
+    while start > 0 and rows[start - 1][1] == rows[-1][1] and rows[start - 1][3] is rows[-1][3]:
         start -= 1
     return rows[start:]
 
@@ -213,7 +229,7 @@ def _ask(conn: Connection, *_: object) -> None:
         answers = conn.execute(_EXPLAIN_EACH, asked).all()
     except Exception:
         return  # the error the app sees is the flush's: this one would hide it, and stop the rollback
-    for (table, command, key), row in zip(rows, answers, strict=True):
+    for (table, command, key, _base), row in zip(rows, answers, strict=True):
         lines, who, named = _answer(row)
         if not _allowed(lines):
             setattr(exc, _ASKED, verdict(table, command, key, lines, who, named))

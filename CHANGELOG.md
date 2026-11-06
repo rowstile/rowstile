@@ -438,6 +438,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   so `alembic check` shows no change and autogenerate writes no `drop_table` for its tables.
 - The Python SDK's jobs (`rowstile.job`) leave nothing in the context they run in: a worker that ran many jobs in
   one thread held a little memory for each.
+- The Python SDK asks the database about the row an ORM update named, when the update was refused: by the key the
+  row had (an update may change it), and with joined-table inheritance in the table the change went to. Before, it
+  asked about the new key (and answered 404) or the subclass's table (and answered 409, or 500).
 
 ### Upgrading
 

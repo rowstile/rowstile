@@ -27,7 +27,7 @@ import rowstile.asyncpg as pga
 import rowstile.psycopg as pgp
 from app.authz_client import ObjectType, Permission
 from app.main import make_app
-from app.models import Base, Note, Project
+from app.models import Base, Folder, Note, Project
 from fastapi import FastAPI, Request, WebSocket
 from rowstile import NotFound, NotSignedIn, Principal, Refused
 from rowstile import sqlalchemy as authz_sa
@@ -71,6 +71,16 @@ class NoteInProject(Base):
     note_id: Mapped[int] = column_property(Note.__table__.c.id)
     project_id: Mapped[int] = column_property(Note.__table__.c.project_id, Project.__table__.c.id)
     body: Mapped[str] = column_property(Note.__table__.c.body)
+
+
+class FiledNote(Note):
+    """A note that is a folder too (joined inheritance: app.notes, then app.folders, by id). An update of a column of
+    one table goes to that table alone."""
+
+    __table__ = Folder.__table__
+    __mapper_args__ = MappingProxyType({"inherit_condition": Folder.__table__.c.id == Note.__table__.c.id})
+    id: Mapped[int] = column_property(Folder.__table__.c.id, Note.__table__.c.id)
+    name: Mapped[str] = column_property(Folder.__table__.c.name)
 
 
 class Versioned(DeclarativeBase):
@@ -395,6 +405,41 @@ def test_why_stale_is_asked_in_the_flushs_own_transaction() -> None:
                 assert s.scalar(text("SELECT current_setting('authz.user_id')")) == "3"
     finally:
         engine.dispose()
+
+
+def test_why_stale_asks_about_the_row_the_update_named() -> None:
+    """The verdict is about the row the failed statement named: the key the row had (the UPDATE matches the row by
+    it), and the table the statement went to (joined inheritance writes each table apart)."""
+    engine = authz_sa.install(create_engine(SYNC))
+    with psycopg.connect(libpq(OWNER), autocommit=True) as owner:
+        owner.execute("INSERT INTO app.folders VALUES (3, NULL, 3, 'cy''s')")  # cy's folder 3: cy may edit it
+    try:
+        with rowstile.acting_as(3):
+            # a new key for note 1, which cy may see, not edit: the UPDATE matched note 1, not note 99
+            with pytest.raises(StaleDataError) as e, Session(engine) as s, s.begin():
+                note = s.get(Note, 1)
+                assert note is not None
+                note.id, note.body = 99, "x"
+            assert repr(authz_sa.why_stale_sync(e.value)) == f"Refused({REFUSED!r})"
+            # note 3 (ann's, in the public project: cy may see it, not edit it) is cy's folder 3 too
+            refused = "Refused('permission denied: user 3 may not update row 3 of app.notes')"
+            for change in ({"body": "x"}, {"body": "x", "name": "y"}):  # the note's column; the note's and the folder's
+                with pytest.raises(StaleDataError) as e, Session(engine) as s, s.begin():
+                    filed = s.get(FiledNote, 3)
+                    assert filed is not None
+                    for column, value in change.items():
+                        setattr(filed, column, value)
+                assert repr(authz_sa.why_stale_sync(e.value)) == refused, change
+            with Session(engine) as s, s.begin():  # the folder's column alone: the folder's rule, which allows it
+                filed = s.get(FiledNote, 3)
+                assert filed is not None
+                filed.name = "cy's own"
+        with psycopg.connect(libpq(OWNER)) as owner:
+            assert owner.execute("SELECT name FROM app.folders WHERE id = 3").fetchall() == [("cy's own",)]
+    finally:
+        engine.dispose()
+        with psycopg.connect(libpq(OWNER), autocommit=True) as owner:
+            owner.execute("DELETE FROM app.folders WHERE id = 3")
 
 
 def test_a_flush_of_many_rows_is_asked_about_each() -> None:
