@@ -22,6 +22,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Spring starter's `Problems.problem(e)` and `Problems.response(problem)`: rowstile's answer to an error, for a
   catch-all `@ExceptionHandler(Exception.class)` of the app's own, which comes before the starter's advice and would
   take its errors too ([Spring](docs/stacks/spring.md)).
+- The Rust SDK's `rowstile::axum::SignedIn`: an extractor for who a request acts for, with no connection yet, for a
+  handler that reads a body; `who.begin()` begins its transaction once the body is read. A `Tx` holds a connection,
+  its transaction open, from the moment Axum extracts it, and Axum reads the body last.
 
 ### Changed
 
@@ -77,6 +80,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   that change between minor releases, and it was never run on 8.0.
 - The Ruby SDK's `assert_refused(command:)` asks for the rule's whole word (`select`, `insert`, `update` or
   `delete`), as the Kotlin and Elixir SDKs do. Before, the beginning of one passed (`"up"`, or `""`).
+- The Rust SDK's `SignIn::principal` is async and takes the request's parts mutably, so it can look a session up
+  in a database, fetch a key set, or run another extractor on the request: an app's impl writes
+  `async fn principal(&self, request: &mut Parts) -> Result<Principal, Error>`.
 
 ### Removed
 

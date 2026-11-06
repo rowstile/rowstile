@@ -13,7 +13,7 @@ use axum::http::request::Parts;
 use axum::response::IntoResponse;
 use common::{Check, copied, pool};
 use conformance::authz::{NotePermission, ProjectPermission};
-use rowstile::axum::{SignIn, Tx};
+use rowstile::axum::{SignIn, SignedIn, Tx};
 use rowstile::{CallKind, DbError, Error, Page, Permission, Principal, Problem};
 use serde_json::json;
 use sqlx::Executor;
@@ -466,7 +466,7 @@ impl SignIn for Users {
         &self.0
     }
 
-    fn principal(&self, _: &Parts) -> Result<Principal, Error> {
+    async fn principal(&self, _: &mut Parts) -> Result<Principal, Error> {
         Ok(Principal::user("1"))
     }
 }
@@ -479,15 +479,24 @@ impl SignIn for Robots {
         &self.0
     }
 
-    fn principal(&self, _: &Parts) -> Result<Principal, Error> {
+    async fn principal(&self, _: &mut Parts) -> Result<Principal, Error> {
         Ok(Principal::of("robot", "1"))
     }
 }
 
 #[tokio::test]
 async fn the_extractor_answers_what_it_cant_begin() {
-    let _check = Check("Axum: a request whose transaction can't sign in is answered 500; a bad token 401");
+    let _check = Check(
+        "Axum: a request whose transaction can't sign in is answered 500; a bad token 401; who a request is, with \
+         no connection yet, begins its transaction",
+    );
     let (mut parts, ()) = Request::new(()).into_parts();
+    // who it is, with no connection yet, then its transaction
+    let who = SignedIn::from_request_parts(&mut parts, &Users(pool().await)).await.ok().unwrap();
+    assert_eq!(who.principal(), &Principal::user("1"));
+    let mut tx = who.begin().await.ok().unwrap();
+    let signed: i64 = sqlx::query_scalar("SELECT authz.uid()").fetch_one(&mut *tx).await.unwrap();
+    assert_eq!((signed, tx.principal()), (1, &Principal::user("1")));
     // one that can: its transaction is a connection, read or written
     let tx = Tx::from_request_parts(&mut parts, &Users(pool().await)).await.ok().unwrap();
     let connection: &sqlx::PgConnection = &tx;
@@ -506,6 +515,37 @@ async fn the_extractor_answers_what_it_cant_begin() {
             json!({"type": "https://rowstile.dev/problems/not-signed-in", "title": "Unauthorized", "status": 401, "detail": "bad token"})
         )
     );
+}
+
+#[tokio::test]
+async fn a_request_turned_down_before_its_transaction_takes_no_connection() {
+    let _check = Check(
+        "Axum: a request whose path, query or body doesn't parse is answered at once, and takes no connection (a pool \
+         of one, held)",
+    );
+    let one = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect(copied().app_url.as_deref().unwrap())
+        .await
+        .unwrap();
+    let app = conformance::router(one.clone());
+    let held = one.acquire().await.unwrap();
+    for (method, path, body, status) in [
+        ("PATCH", "/notes/x", json!({"body": "hi"}), 400),
+        ("PATCH", "/notes/1", json!({"text": "hi"}), 422),
+        ("POST", "/notes", json!({"body": "hi"}), 422),
+        ("POST", "/inbox", json!({"recipient_id": "bo"}), 422),
+        ("GET", "/projects/page?limit=x", serde_json::Value::Null, 400),
+        ("DELETE", "/keys/x", serde_json::Value::Null, 400),
+    ] {
+        let answer = common::call(&app, method, path, "1", body, &[]).await;
+        assert_eq!(answer.status.as_u16(), status, "{method} {path}: {}", String::from_utf8_lossy(&answer.body));
+    }
+    // and one that parses waits for the connection, and is answered once it is free
+    drop(held);
+    let edited = common::call(&app, "PATCH", "/notes/1", "1", json!({"body": "plan"}), &[]).await;
+    assert_eq!(edited.status, 200, "{}", edited.json());
 }
 
 #[tokio::test]
