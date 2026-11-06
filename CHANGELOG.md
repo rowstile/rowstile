@@ -19,6 +19,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Go, Rust and PHP SDKs write a principal as text and read it back, as the other SDKs do and as the audit trail
   names who acted (`42`, `service:3`, `nobody`): `String` and `rowstile.ParsePrincipal` in Go, `Display` and
   `FromStr` in Rust, `__toString` and `Principal::parse` in PHP. In Laravel's logs a principal reads `service:3`.
+- The Spring starter's `Problems.problem(e)` and `Problems.response(problem)`: rowstile's answer to an error, for a
+  catch-all `@ExceptionHandler(Exception.class)` of the app's own, which comes before the starter's advice and would
+  take its errors too ([Spring](docs/stacks/spring.md)).
 
 ### Changed
 

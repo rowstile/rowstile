@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.rowstile.NotFound;
 import dev.rowstile.Principal;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
@@ -12,12 +13,16 @@ import jakarta.persistence.OptimisticLockException;
 import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.orm.jpa.EntityManagerHolder;
 import org.springframework.orm.jpa.JpaOptimisticLockingFailureException;
@@ -27,7 +32,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /**
  * What the flush before the commit leaves alone: a version check of the JPA provider's own (a lock). And JPA's
- * transaction managers as the starter hands them out.
+ * transaction managers as the starter hands them out, and its answers for a handler of the app's own.
  */
 class JpaSignInTest {
     static <T> T stand(Class<T> type, Object... answers) {
@@ -94,5 +99,19 @@ class JpaSignInTest {
                             .map(l -> (Object) l.getClass()).toList();
                     assertEquals(List.of(JpaSignIn.class), listeners); // the flush that says why is Hibernate's
                 });
+    }
+
+    @Test
+    @DisplayName("a handler of the app's own (a catch-all) gives rowstile's answers first, as the starter's would")
+    void problems() {
+        ResponseEntity<ProblemDetail> gone = Problems.problem(new NotFound("app.notes", 7)).map(Problems::response)
+                .orElseThrow();
+        assertEquals(List.of(404, MediaType.APPLICATION_PROBLEM_JSON, "app.notes 7 not found"),
+                List.of(gone.getStatusCode().value(), gone.getHeaders().getContentType(), gone.getBody().getDetail()));
+        Optional<ResponseEntity<ProblemDetail>> changed = Problems.problem(new Conflict(new OptimisticLockException()))
+                .map(Problems::response);
+        assertEquals(409, changed.orElseThrow().getStatusCode().value());
+        // the app's own mistake is none of rowstile's
+        assertEquals(Optional.empty(), Problems.problem(new IllegalStateException("the app's")));
     }
 }
