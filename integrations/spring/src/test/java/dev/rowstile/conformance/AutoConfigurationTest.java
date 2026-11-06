@@ -20,6 +20,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -317,6 +319,59 @@ class AutoConfigurationTest extends Conformance {
                 .withBean(PrincipalSource.class, () -> () -> Principal.user(2))
                 .run(ctx -> assertEquals(List.of(2L, 3L), projects(ctx.getBean(JdbcClient.class),
                         ctx.getBean(PlatformTransactionManager.class))));
+    }
+
+    @Test
+    @DisplayName("... whatever stops the sign-in: nothing is left bound to the thread, and the connection goes back")
+    void signInFails() throws SQLException {
+        seed();
+        // the app's own way to say who the request is fails twice: a pool of one connection still serves the third
+        AtomicInteger asked = new AtomicInteger();
+        app(WORKER.appUrl())
+                .withPropertyValues("spring.datasource.hikari.maximum-pool-size=1",
+                        "spring.datasource.hikari.connection-timeout=1000")
+                .withBean(PrincipalSource.class, () -> () -> {
+                    if (asked.incrementAndGet() <= 2) {
+                        throw new IllegalStateException("who is it?");
+                    }
+                    return Principal.user(2);
+                })
+                .run(ctx -> {
+                    JdbcClient jdbc = ctx.getBean(JdbcClient.class);
+                    PlatformTransactionManager tm = ctx.getBean(PlatformTransactionManager.class);
+                    for (int twice = 0; twice < 2; twice++) {
+                        CannotCreateTransactionException e = assertThrows(CannotCreateTransactionException.class,
+                                () -> projects(jdbc, tm));
+                        assertEquals("who is it?", e.getCause().getMessage());
+                        assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty());
+                        assertFalse(TransactionSynchronizationManager.isSynchronizationActive());
+                    }
+                    assertEquals(List.of(2L, 3L), projects(jdbc, tm));
+                });
+        // a transaction of its own (REQUIRES_NEW, a job's) the database won't sign in: it says why, and the one it
+        // suspended goes on as it was; so does the synchronization of a scope without a transaction (SUPPORTS)
+        app(WORKER.appUrl()).run(ctx -> {
+            JdbcClient jdbc = ctx.getBean(JdbcClient.class);
+            PlatformTransactionManager tm = ctx.getBean(PlatformTransactionManager.class);
+            TransactionTemplate tx = new TransactionTemplate(tm);
+            TransactionTemplate own = new TransactionTemplate(tm);
+            own.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            TransactionTemplate supports = new TransactionTemplate(tm);
+            supports.setPropagationBehavior(TransactionDefinition.PROPAGATION_SUPPORTS);
+            Principal typo = Principal.of("servce", 1); // no such principal type: AZ707
+            List<Object> seen = Rowstile.actingAs(Principal.user(1), () -> tx.execute(s -> {
+                CannotCreateTransactionException e = assertThrows(CannotCreateTransactionException.class,
+                        () -> Rowstile.actingAs(typo, () -> own.execute(n -> 1)));
+                return List.of(e.getMessage(), Errors.errorCode(e), signedIn(jdbc), projects(jdbc, tm));
+            }));
+            assertEquals(List.of("the transaction could not be signed in (authz.act_as)", Optional.of("AZ707"), "1",
+                    List.of(1L, 3L)), seen);
+            Optional<String> outside = supports.execute(s -> Errors.errorCode(assertThrows(
+                    CannotCreateTransactionException.class, () -> Rowstile.actingAs(typo, () -> tx.execute(n -> 1)))));
+            assertEquals(Optional.of("AZ707"), outside);
+            assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty());
+            assertFalse(TransactionSynchronizationManager.isSynchronizationActive());
+        });
     }
 
     @Test

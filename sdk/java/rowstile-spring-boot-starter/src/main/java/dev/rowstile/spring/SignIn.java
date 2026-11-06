@@ -26,7 +26,6 @@ import org.springframework.objenesis.SpringObjenesis;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.TransactionExecution;
 import org.springframework.transaction.TransactionExecutionListener;
-import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.ResourceTransactionManager;
@@ -84,26 +83,33 @@ class SignIn implements TransactionExecutionListener {
         if (beginFailure != null || !transaction.isNewTransaction()) {
             return;
         }
+        try {
+            SIGNED.put(TransactionSynchronizationManager.getResource(manager.getResourceFactory()), signIn());
+        } catch (SQLException | RuntimeException | Error e) {
+            // begun, and not signed in (the database refused, the app's PrincipalSource threw): ended here, so that
+            // nothing of it is left bound to the thread. Spring resumes the transaction it suspended for this one
+            // (REQUIRES_NEW), once, as it does when a transaction can't begin: not this rollback
+            DefaultTransactionStatus begun = (DefaultTransactionStatus) transaction;
+            manager.rollback(new DefaultTransactionStatus(begun.getTransactionName(), begun.getTransaction(), true,
+                    begun.isNewSynchronization(), begun.isNested(), begun.isReadOnly(), begun.isDebug(), null));
+            throw new CannotCreateTransactionException("the transaction could not be signed in (authz.act_as)", e);
+        }
+    }
+
+    /** Signs the transaction just begun in, as whoever the code acts for: whom. */
+    private Principal signIn() throws SQLException {
         Principal who = who();
         DataSource ds = dataSource();
         Connection conn = DataSourceUtils.getConnection(ds);
-        SQLException refused = null;
         try {
             Rowstile.signIn(conn, who);
             if (conn instanceof SignedConnection.Signed signed) {
                 signed.signedIn(who, this::who);
             }
-        } catch (SQLException e) {
-            refused = e;
         } finally {
             DataSourceUtils.releaseConnection(conn, ds);
         }
-        if (refused != null) {
-            // begun, and not signed in: ended here, so that nothing is left bound to the thread
-            ((AbstractPlatformTransactionManager) manager).rollback((TransactionStatus) transaction);
-            throw new CannotCreateTransactionException("the transaction could not be signed in (authz.act_as)", refused);
-        }
-        SIGNED.put(TransactionSynchronizationManager.getResource(manager.getResourceFactory()), who);
+        return who;
     }
 
     /** The data source the manager's transactions are on. */
