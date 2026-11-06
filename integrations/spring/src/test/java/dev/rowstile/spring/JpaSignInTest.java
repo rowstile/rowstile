@@ -11,6 +11,7 @@ import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.OptimisticLockException;
 import java.lang.reflect.Proxy;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -56,6 +57,23 @@ class JpaSignInTest {
         } finally {
             TransactionSynchronizationManager.unbindResource(emf);
         }
+    }
+
+    @Test
+    @DisplayName("a JPA transaction manager as the starter hands it out: made by its constructor, holding what it held")
+    void guarded() {
+        EntityManagerFactory emf = stand(EntityManagerFactory.class, new OptimisticLockException());
+        JpaTransactionManager manager = new JpaTransactionManager(emf);
+        manager.setJpaPropertyMap(Map.of("jakarta.persistence.lock.timeout", 100));
+        Object bean = new SignInJpaTransactions(new SignInTransactions(null), null)
+                .postProcessAfterInitialization(manager, "transactionManager");
+        JpaTransactionManager guarded = (JpaTransactionManager) bean;
+        assertNotEquals(JpaTransactionManager.class, guarded.getClass());
+        assertEquals(List.of(emf, Map.of("jakarta.persistence.lock.timeout", 100)),
+                List.of(guarded.getEntityManagerFactory(), guarded.getJpaPropertyMap()));
+        // its final field is its own, the one its constructor made: not written by reflection
+        guarded.getJpaPropertyMap().put("more", 1);
+        assertEquals(Map.of("jakarta.persistence.lock.timeout", 100), manager.getJpaPropertyMap());
     }
 
     @Test
