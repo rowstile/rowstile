@@ -7,14 +7,13 @@ namespace Rowstile;
 use PDOException;
 use Throwable;
 
-use function array_slice, explode, implode, preg_match;
+use function array_pop, array_slice, count, end, explode, implode, preg_match, preg_replace, strlen, substr;
 
 /**
  * What the database said, read from the driver's error (PDOException, or the first of an error's causes that is one:
  * Laravel's QueryException keeps it). pdo_pgsql gives the SQLSTATE and the server's text, its primary message, then
  * its DETAIL, HINT and CONTEXT lines; not the fields that name a table or a constraint, so a refusal's table and
- * command are read from the words the runtime writes ("may not insert this row into app.notes"), nor the function
- * that raised it, so Postgres's own refusal is told by its English words alone.
+ * command are read from the words the runtime writes ("may not insert this row into app.notes").
  *
  * @internal
  */
@@ -43,32 +42,50 @@ final class Said
     /**
      * The server's text, cut at the lines libpq begins each part with ("DETAIL:  ", "HINT:  "): the lines after one
      * (a DETAIL of several lines) are that part's too. The first line is the severity's, in the server's language
-     * ("ERROR:  ", "FEHLER:  "), then the message. A message may quote text that holds a line like a part's (the
-     * request's own input): libpq writes its own parts after the message, so of a part named twice the last is read.
+     * ("ERROR:  ", "FEHLER:  "), then the message. libpq writes the parts once each, in one order (the message,
+     * LINE, DETAIL, HINT, QUERY, CONTEXT), and a part's text may hold what the app sent, a line that looks like a
+     * label among it. So a label out of that order ends the parts it would come after, which were text of the part
+     * before them: the server's HINT, written after the message and the DETAIL, is the last. After a QUERY or a CONTEXT
+     * (the statement a function ran, its literals the app's) only a later part begins.
      */
     private static function read(string $sqlstate, string $text): self
     {
         $lines = explode("\n", $text);
-        $parts = ['MESSAGE' => [preg_match('/^[^\s:]+:  ?(.*)$/', $lines[0], $m) === 1 ? $m[1] : $lines[0]]];
-        $part = 'MESSAGE';
-        foreach (array_slice($lines, 1) as $line) {
-            if (preg_match('/^(DETAIL|HINT|CONTEXT|QUERY|LINE \d+|STATEMENT):  ?(.*)$/', $line, $m) === 1) {
-                $part = $m[1];
-                $parts[$part] = [$m[2]];
+        $lines[0] = (string) preg_replace('/^[^\s:]+:  ?/', '', $lines[0]); // the severity, in the server's language
+        /** @var list<array{int, int, string, int}> $parts where each part begins: its line, its place, its name, its label's length */
+        $parts = [];
+        foreach ($lines as $i => $line) {
+            if (preg_match('/^(?:LINE \d+: |(DETAIL|HINT|QUERY|CONTEXT|STATEMENT):  ?)/', $line, $m) !== 1) {
                 continue;
             }
-            $parts[$part][] = $line;
+            $name = $m[1] ?? 'LINE';
+            $place = self::ORDER[$name];
+            $last = $parts === [] ? 0 : end($parts)[1];
+            if ($place <= $last && $last >= self::ORDER['QUERY']) {
+                continue; // in the statement a function ran, or its context
+            }
+            while ($parts !== [] && end($parts)[1] >= $place) {
+                array_pop($parts); // what began there was text of the part before
+            }
+            $parts[] = [$i, $place, $name, strlen($m[0])];
         }
-        $joined = static fn (string $name): ?string => isset($parts[$name]) ? implode("\n", $parts[$name]) : null;
-        return new self($sqlstate, (string) $joined('MESSAGE'), $joined('DETAIL'), $joined('HINT'));
+        $text = static fn (int $from, int $to): string => implode("\n", array_slice($lines, $from, $to - $from));
+        $said = ['MESSAGE' => $text(0, $parts[0][0] ?? count($lines))];
+        foreach ($parts as $k => [$from, , $name, $label]) {
+            $said[$name] = substr($text($from, $parts[$k + 1][0] ?? count($lines)), $label);
+        }
+        return new self($sqlstate, $said['MESSAGE'], $said['DETAIL'] ?? null, $said['HINT'] ?? null);
     }
 
+    /** Each part's place in the order libpq writes them. */
+    private const ORDER = ['MESSAGE' => 0, 'LINE' => 1, 'DETAIL' => 2, 'HINT' => 3, 'QUERY' => 4, 'CONTEXT' => 5, 'STATEMENT' => 6];
+
     /**
-     * rowstile's code, from the HINT, where the runtime puts it, at its end (rowstile help AZ709), and never the
-     * message, which may hold the request's own input (Postgres's own words quote a value it couldn't read).
+     * rowstile's code, from the HINT, where the runtime puts it: its HINT ends with it ("rowstile help AZ709", or a
+     * sentence then "(rowstile help AZ716)"). Never from the message's words.
      */
     public function code(): ?string
     {
-        return preg_match('/rowstile help (AZ\d{3})\)?$/', (string) $this->hint, $m) === 1 ? $m[1] : null;
+        return preg_match('/\browstile help (AZ\d{3})\)?$/', (string) $this->hint, $m) === 1 ? $m[1] : null;
     }
 }
