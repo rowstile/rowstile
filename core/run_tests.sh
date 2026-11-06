@@ -1,7 +1,7 @@
 #!/bin/bash
 # run_tests.sh: every test, from scratch, against the Postgres the PG* variables point at.
 #   PGHOST=... PGPORT=... PGUSER=postgres ./run_tests.sh           # the full run (long)
-#   ./run_tests.sh --quick                                         # meant to stay under 10 minutes
+#   ./run_tests.sh --quick                                         # shorter: about 25 minutes (CI: its parts side by side, 10 at most)
 #   ./run_tests.sh --proofs                                        # every order of two tree writes, and the stress test (short)
 #   ./run_tests.sh --short                                         # what depends on the Postgres version: --quick
 #                         without the unit part (unit_test.py, the cuts half way of interrupt.py, the fixed policies'
@@ -536,7 +536,7 @@ fi
 
 # Tree writes under concurrency: every order of two of them at each isolation level, and a concurrent stress run;
 # the inheritance tables must stay exact throughout.
-# --proofs runs them on their own, with a short stress run (--quick leaves them out, to stay under 10 minutes).
+# --proofs runs them on their own, with a short stress run (--quick leaves them out: they take half an hour).
 if { [ "$MODE" = full ] || [ "$MODE" = proofs ] || [ "$MODE" = soak ]; } && part races; then
   STRESS=100; [ "$MODE" = proofs ] && STRESS=15; [ "$MODE" = soak ] && STRESS=300
   step "every order of two tree writes, at each isolation level"
