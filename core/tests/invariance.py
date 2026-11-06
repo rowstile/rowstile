@@ -84,6 +84,7 @@ from authzlib.sqlutil import q, qt  # noqa: E402
 from difftest import DB, SESSIONS, Ids, idsql, lit  # noqa: E402
 from genpolicy import INCLUDED as INCLUDED_BY_GENPOLICY  # noqa: E402
 from genpolicy import (  # noqa: E402
+    SLOW_TO_PLAN,
     UUID,
     Spec,
     Spelling,
@@ -1093,7 +1094,7 @@ def check(spec: Spec, db: DB, db2: DB, steps: int, workdir: str) -> tuple[list[s
         base_sql = compiled(text, files)
     except PolicyError as e:
         raise Skipped(str(e)) from None
-    if "view definitions to plan" in base_sql:
+    if SLOW_TO_PLAN in base_sql:
         raise Skipped("authz.lint() warns that a permission or a select rule is slow to plan")
     r = random.Random(f"invariance/{spec.seed}")
     passed: list[str] = []
