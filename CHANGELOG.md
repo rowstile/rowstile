@@ -461,6 +461,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The TypeScript SDK reads a refusal by a restrictive policy of the app's own, which Postgres names in its message
   (`new row violates row-level security policy "p" for table "t"`), as `Refused`, a 403; before, it was no refusal, a
   500.
+- `@rowstile/prisma` reads a nested write whose target isn't there, or is hidden from the user (a `connect`), as
+  `NotFound` naming that target's table. Before, an update named the row it updated, and a create stayed Prisma's
+  error.
 
 ### Upgrading
 
