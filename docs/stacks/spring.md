@@ -147,7 +147,9 @@ refusal's `table`, `command`, `why` (the reason, a line each) and `code`
 (<https://rowstile.dev/problems/refused>). A call the database says names something that isn't there answers 404,
 one it says lacks an argument or has a wrong one 400, one that needs someone signed in, or a login it refuses, 401,
 and a folder moved into one of its own subfolders 409, each with the database's words. Your own
-`@ExceptionHandler`s come first: the starter's advice is the last.
+`@ExceptionHandler`s come first: the starter's advice is the last. So a catch-all of yours
+(`@ExceptionHandler(Exception.class)`) gets rowstile's errors too: have it give their answers first,
+`Problems.problem(e).map(Problems::response)`, and its own for the rest.
 
 ## Lists by permission
 

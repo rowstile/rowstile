@@ -22,7 +22,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * rowstile's answers as problem details (RFC 9457, {@code application/problem+json}): a refusal 403 with the rule and
  * the reason, a row the user can't see 404, an entity changed meanwhile 409; a call the database turns down that is
  * no refusal, as its code's page says, with the database's words (401, 404, 400, 409). Any other error is left as it
- * is: the app's mistakes stay errors, a 500. Last among the app's advice: a handler of the app's own comes first.
+ * is: the app's mistakes stay errors, a 500. Last among the app's advice: a handler of the app's own comes first,
+ * and a catch-all of its own gives rowstile's answers with {@link #problem} and {@link #response}.
  */
 @RestControllerAdvice
 @Order(Ordered.LOWEST_PRECEDENCE)
@@ -47,15 +48,24 @@ public class Problems {
 
     /** {@code e}'s answer, or {@code e} itself, thrown again, when it is none of rowstile's. */
     static ResponseEntity<ProblemDetail> answered(Exception e) throws Exception {
-        Optional<Problem> problem = e instanceof Conflict c ? Optional.of(c.problem()) : Errors.problem(e);
+        Optional<Problem> problem = problem(e);
         if (problem.isEmpty()) {
             throw e; // (the same exception: Spring goes on with it, as if this handler weren't there)
         }
         return response(problem.get());
     }
 
+    /**
+     * rowstile's answer to {@code e}, if it is one: {@link Errors#problem}'s, or a {@link Conflict}'s. For a handler of
+     * the app's own that comes before this advice (a catch-all, {@code @ExceptionHandler(Exception.class)}), which
+     * gives rowstile's answer first: {@code Problems.problem(e).map(Problems::response)}.
+     */
+    public static Optional<Problem> problem(Throwable e) {
+        return e instanceof Conflict c ? Optional.of(c.problem()) : Errors.problem(e);
+    }
+
     /** A problem as Spring's {@link ProblemDetail}, its own members beside the standard ones. */
-    static ResponseEntity<ProblemDetail> response(Problem problem) {
+    public static ResponseEntity<ProblemDetail> response(Problem problem) {
         ProblemDetail body = ProblemDetail.forStatus(problem.status());
         body.setType(URI.create(problem.type()));
         body.setTitle(problem.title());
