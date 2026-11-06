@@ -23,7 +23,17 @@ drop_roles() {   # as the owner, and as the superuser for those the guide made a
   done
 }
 drop_roles
-DIR=$(mktemp -d)
+# what the run made, dropped however it ends: its databases, its roles, its folders (each kept here as it is made)
+TMPS=()
+cleanup() {
+  for d in authz_docs authz_docs_blog authz_docs_compare authz_docs_landing; do dropdb --if-exists "$d" 2>/dev/null; done
+  drop_roles
+  psql -X -q -d postgres -c "DROP ROLE IF EXISTS demo_app" >/dev/null 2>&1
+  [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"
+}
+trap cleanup EXIT
+WORK=$(mktemp -d); TMPS+=("$WORK")  # (for what a function makes in a subshell: removed with it)
+DIR=$(mktemp -d); TMPS+=("$DIR")
 # the folder step 1 puts on the PATH (an indented line, from the repository's root): the command is there
 CLI=$(sed -n 's/^ *export PATH="\$PWD\/\([^:"]*\):\$PATH".*/\1/p' "$GUIDE" | head -n 1)
 [ -n "$CLI" ] && [ -x "../$CLI/rowstile" ] && echo "ok    the guide's PATH line names the command's folder ($CLI)" ||
@@ -114,7 +124,7 @@ drop_roles
 # one). Its blocks run alike, and step 6's authz.connection_check() gives the one row it says, the superuser's
 if [ -n "${PGSUPERUSER:-}" ]; then
   createdb "$DB" || exit 1
-  DIR=$(mktemp -d)
+  DIR=$(mktemp -d); TMPS+=("$DIR")
   out=$(PGUSER="$PGSUPERUSER" walk "$DB" "$DIR")
   rc=$?
   check "every block of the guide runs as the superuser $PGSUPERUSER" "$rc" "0"
@@ -171,7 +181,7 @@ as_app() {   # what the SQL gives as the app role, in a transaction rolled back
   PGOPTIONS="-c client_min_messages=warning" psql -X -At -d "$CMP" -c "BEGIN" -c "SET LOCAL ROLE app_user" -c "$1" \
     -c "ROLLBACK" 2>&1 | grep -v -E '^(BEGIN|SET|ROLLBACK)$'
 }
-B=$(mktemp -d)
+B=$(mktemp -d); TMPS+=("$B")
 # row-level security by hand: user 1 owns folder 1, with folders 2 and 3 below it; user 2 owns 2, 3 and 4
 blocks hand-written-rls.md "$B"
 fresh "CREATE SCHEMA app; CREATE TABLE app.users (id bigint PRIMARY KEY);
@@ -240,7 +250,7 @@ dropdb "$CMP"
 LAND=authz_docs_landing
 landing() {   # page, the SQL's output before, after
   local page=$1 B out
-  B=$(mktemp -d)
+  B=$(mktemp -d "$WORK/landing.XXXXXX")
   out=$(python3 - "../$page" "$B" <<'PY'
 import os, re, sys
 page, out = sys.argv[1:]
