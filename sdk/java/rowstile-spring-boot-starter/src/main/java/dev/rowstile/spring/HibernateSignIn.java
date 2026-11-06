@@ -3,8 +3,8 @@ package dev.rowstile.spring;
 import dev.rowstile.Authz;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.OptimisticLockException;
-import java.util.Locale;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import org.hibernate.StaleObjectStateException;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.springframework.dao.support.DataAccessUtils;
@@ -21,6 +21,13 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * the rules allow the change (the row changed since it was read: 409).
  */
 final class HibernateSignIn extends JpaSignIn {
+    /**
+     * A DELETE, in Hibernate's message about the statement that matched no row: "Unexpected row count (...) [delete
+     * from app.notes where id=?]", the statement after any comment before it ({@code hibernate.use_sql_comments}).
+     */
+    private static final Pattern DELETE = Pattern.compile("\\[\\s*(?:/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/\\s*)*delete\\b",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
     private final Supplier<Authz> authz;
 
     HibernateSignIn(JpaTransactionManager manager, Supplier<PrincipalSource> source, Supplier<Authz> authz) {
@@ -54,9 +61,8 @@ final class HibernateSignIn extends JpaSignIn {
                 .getEntityDescriptor(stale.getEntityName())
                 .getMappedTableDetails()
                 .getTableName();
-        // Hibernate's message holds the statement: "Unexpected row count (...) [delete from app.notes where id=?]"
-        String said = String.valueOf(stale.getMessage()).toLowerCase(Locale.ROOT);
-        String command = said.contains("[delete ") ? "delete" : "update";
+        // the statement the database ran, which its rules refused: a soft delete's (@SQLDelete) is an UPDATE
+        String command = DELETE.matcher(String.valueOf(stale.getMessage())).find() ? "delete" : "update";
         Authz.Verdict verdict = authz.get().verdict(table, command, stale.getIdentifier());
         return verdict.allowed() ? new Conflict(e) : verdict.error();
     }
