@@ -382,8 +382,9 @@ describe("16: the database's answers as their codes' pages say", () => {
   });
 });
 
-// 14: after a policy change and a new migration, the app works with the new generated names
-test("14: a policy change ships as the next migration", () => {
+// 14: after a policy change and a new migration, the app works with the new generated names. One test, the file's
+// last: it migrates the database the servers use, and the running app then has the new permission
+test("14: a policy change ships as the next migration, and the running app has it", async () => {
   const work = join(HERE, ".work", "check14");
   rmSync(work, { recursive: true, force: true });
   for (const part of ["db", "drizzle", "rowstile.toml", "drizzle.config.ts", "src/schema.ts", "src/authz.gen.ts"]) {
@@ -402,9 +403,6 @@ test("14: a policy change ships as the next migration", () => {
     include: ["use.ts", "src/authz.gen.ts"], exclude: [] }));
   const tsc = run("tsc", ["-p", "tsconfig.json"], work);
   expect([tsc.status, tsc.stdout]).toEqual([0, ""]);
-});
-
-test("14: ... and the running app has the new permission", async () => {
   const sent = await fetch(`${SERVER}/api/inbox/quietly`, as("1", json("POST", { recipient_id: 2, body: "hi" })));
   expect(sent.status).toBe(202);
   const [message] = await ids(await fetch(`${SERVER}/api/inbox`, as("2"))) as number[];
