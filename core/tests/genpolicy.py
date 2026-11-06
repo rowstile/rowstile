@@ -92,6 +92,9 @@ SCHEMA = "gp"
 USERS = 5  # users 1..5
 GONE = str(USERS + 1)  # an id the user table doesn't have: links may name it, and it signs in, as nobody
 ROWS = 7  # rows of each object type at the start
+# in the compiled policy: lint's warning that a permission or a rule is slow to plan (the suites that run these
+# policies set such a one aside)
+SLOW_TO_PLAN = "view definitions to plan"
 
 # The database's names as a third of the policies spell them, as an app's own may be named: capitals, words SQL
 # reserves, a double quote, a letter outside ASCII, a name as long as Postgres allows (63 bytes). The policy writes a
@@ -1392,7 +1395,7 @@ def run(
         if why is None:
             return ["the compiler failed, refusing nothing:", *compiled.stderr.strip().splitlines()[-12:]]
         raise Refused(why)
-    if "view definitions to plan" in compiled.stdout and not slow:
+    if SLOW_TO_PLAN in compiled.stdout and not slow:
         raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
     gen = gen_class(spec, policy_path, schema_path)(random.Random(spec.seed))
@@ -1626,7 +1629,7 @@ def covering(pool: int) -> tuple[list[int], set[tuple[str, str]], set[tuple[str,
             sql = Compiler(parse_policy(policy_text(make(best)), "gen.authz")).compile("gen.authz")
         except PolicyError:
             continue
-        if "view definitions to plan" in sql:  # (lint says it is slow to plan: run() would set it aside)
+        if SLOW_TO_PLAN in sql:  # (lint says it is slow to plan: run() would set it aside)
             continue
         chosen.append(best)
         covered |= met[best]

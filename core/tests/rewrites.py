@@ -68,6 +68,7 @@ from difftest import CHANGE, DB, Ids, idsql, lit  # noqa: E402
 from difftest import Reference as Reader  # noqa: E402
 from genpolicy import (  # noqa: E402
     CONDS,
+    SLOW_TO_PLAN,
     Node,
     Spec,
     atoms,
@@ -412,7 +413,7 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
     if compiled.returncode != 0 and refusal(compiled.stderr) is None:
         return ["the compiler failed, refusing nothing:", *compiled.stderr.strip().splitlines()[-12:]]
-    if compiled.returncode != 0 or "view definitions to plan" in compiled.stdout:
+    if compiled.returncode != 0 or SLOW_TO_PLAN in compiled.stdout:
         raise Refused
     r = random.Random(f"rewrites/{spec.seed}")
     base = review.Side(text, None, None)

@@ -11812,6 +11812,54 @@ class SmallPolicies(unittest.TestCase):
         told = {m.what for m in self.s.mutants(spec, text) for w in choice.worlds if m.answers(w) != base(w)}
         self.assertEqual(len(told), choice.told)
 
+    def test_beside_the_worlds_chosen_two_no_part_asked_for(self) -> None:
+        # the database's own mistakes need not look like a part made wrong: the world where the policy grants most is
+        # loaded too, and one drawn, the same each run
+        spec = self.s.decorated(self.spec("type user\ntype t1\n  r1 : user column\n  can p1 = r1"))
+        text = genpolicy.policy_text(spec)
+        base = self.s.reference(text)
+        choice = self.s.choose(spec, text, self.s.canonical(spec))
+        every = list(self.s.worlds(parse_policy(text, "small.authz"), self.s.canonical(spec)))
+        most = max(sum(map(len, base(w).values())) for w in every)
+        self.assertIn(most, [sum(map(len, base(w).values())) for w in choice.worlds])
+        again = self.s.choose(spec, text, self.s.canonical(spec))
+        self.assertEqual(choice.worlds, again.worlds)
+
+    def test_a_column_the_table_lets_be_null_is_null_in_some_worlds(self) -> None:
+        # b1 may be NULL in genpolicy's tables, b3 may not: a world gives b1 false, NULL or true, b3 false or true;
+        # where b1 is NULL, `{b1}` holds nothing and `not {b1}` holds
+        spec = self.s.decorated(self.spec("type user\ntype t1 where\n  r1 : user column\n  can p1 = r1 and not {b1}"))
+        pol = parse_policy(genpolicy.policy_text(spec), "small.authz")
+        _, dims = self.s.dims(pol, 1)
+        values = {opt[0][3]: [o[0][4] for o in d] for d in dims for opt in d[:1] if opt and opt[0][0] == "col"}
+        self.assertEqual(values, {"b1": [False, None, True], "b3": [False, True]})
+        null = [w for w in self.s.worlds(pol, "k") if w.columns["t1"].get("1", {}).get("b1", False) is None and w.pairs]
+        self.assertTrue(null)
+        ref = evaluate.Reference(pol)
+        for w in null:
+            state = ref.evaluate(w, "1")
+            held = {i for i in state[("t1", "r1")] if w.columns["t1"][i].get("b1") is not True}
+            self.assertEqual(state[("t1", "p1")], held & set(w.valid["t1"]))
+        # made smaller, b1 stays NULL; b3, which its table keeps from being NULL, is false
+        world = dataclasses.replace(null[0], columns={"t1": {"1": {"b1": None, "b3": None}}, "user": {}})
+        self.assertEqual(self.s.revalid(pol, world).columns["t1"]["1"], {"b1": None, "b3": False})
+        rows, _ = self.s.load_sql(pol, self.s.revalid(pol, world))
+        self.assertIn('("id", "b1", "b3") VALUES (1, NULL, false)', rows)
+
+    def test_a_batch_postgres_refuses_fails_its_policies_and_the_run_goes_on(self) -> None:
+        # SQL Postgres refuses (psql's error), or a rule's policy missing (the checker stops): every policy of the
+        # batch failed, with the first lines of what was said, and the next batch is checked
+        import difftest
+
+        spec = self.s.decorated(self.spec("type user\ntype t1\n  r1 : user column\n  can p1 = r1"))
+        items = [self.s.Item("3/1", spec, []), self.s.Item("3/2", spec, [])]
+        for error in (RuntimeError("psql failed:\nERROR:  division by zero"), SystemExit("1 rules, 0 policies")):
+            with mock.patch.object(self.s, "batch_checks", side_effect=error):
+                found = self.s.check_batch(difftest.DB("unused"), items, "/nowhere", True)
+            self.assertEqual(set(found), {"3/1", "3/2"})
+            self.assertEqual(found["3/1"][0], "the checks could not go on:")
+            self.assertIn(str(error).splitlines()[-1], found["3/2"])
+
 
 class Decisions(unittest.TestCase):
     """tests/decisions.py, which says which parts of a policy decided an answer in difftest's worlds, on worlds made by
