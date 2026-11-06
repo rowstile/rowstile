@@ -339,22 +339,32 @@ jobs:
           name: sdk-coverage-dotnet
           path: ${{ runner.temp }}/sdk-coverage-dotnet/report.txt
           if-no-files-found: ignore
-  # The Ruby SDK's conformance suite: Rails 8, Active Record on pg, Puma, Active Job, Minitest (integrations/rails).
-  # Ruby runs in a container, on the image integrations/images/Dockerfile pins. It fails unless its checks run every
-  # line and branch of the gem (SimpleCov); the report it prints is kept
+  # The Ruby SDK's conformance suite: Rails 8.1, Active Record on pg, Puma, Active Job, Minitest (integrations/rails).
+  # Ruby runs in a container, on an image integrations/images/Dockerfile pins: the newest Ruby, and 3.3, the oldest the
+  # gem claims, a job each (conformance-rails, on the newest, and conformance-rails (Ruby 3.3)). It fails unless its
+  # checks run every line and branch of the gem (SimpleCov); the report it prints is kept
   conformance-rails:
+    name: ${{ matrix.ruby == '4.0' && 'conformance-rails' || format('conformance-rails (Ruby {0})', matrix.ruby) }}
     needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {ruby: "4.0", stage: ruby}
+          - {ruby: "3.3", stage: ruby33}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {persist-credentials: false}
       - run: bash integrations/rails/test.sh
-        env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-ruby"}
+        env:
+          RUBY: ${{ matrix.stage }}
+          CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-ruby"
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
-          name: sdk-coverage-ruby
+          name: sdk-coverage-ruby-${{ matrix.ruby }}
           path: ${{ runner.temp }}/sdk-coverage-ruby/report.txt
           if-no-files-found: ignore
   # The Java SDK's conformance suite (preview): Spring Boot, Spring Security, JPA and JdbcClient over HikariCP,

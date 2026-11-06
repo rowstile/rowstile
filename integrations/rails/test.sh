@@ -3,6 +3,7 @@
 #   integrations/rails/test.sh              # PG_MAJOR=17 or 18 for another version; KEEP=1 keeps the database
 #   POOLER=pgbouncer integrations/rails/test.sh       # the app through PgBouncer in transaction mode
 #   integrations/rails/test.sh -i /test_7/            # some of the checks (Minitest's options)
+#   RUBY=ruby33 integrations/rails/test.sh            # on Ruby 3.3, the oldest the gem claims (a stage of ../images/Dockerfile)
 # Ruby runs in a container (ruby.Dockerfile, on the Ruby image ../images/Dockerfile pins), on the host's network,
 # as the caller, the gems outside the checkout (ROWSTILE_RAILS_BUNDLE, ~/.cache/rowstile/rails-bundle by default).
 # First the gem: built and installed from the build, and its signatures checked with Steep. Then check 11: a fresh
@@ -16,8 +17,10 @@ NAME=rowstile-conformance-rails
 PORT=${CONFORMANCE_PORT:-25500}
 ROOT=$(cd ../.. && pwd)
 HERE=$PWD
-RUBY_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS ruby$/\1/p' ../images/Dockerfile)
-IMAGE=rowstile-rails
+RUBY=${RUBY:-ruby}
+RUBY_IMAGE=$(sed -n "s/^FROM \([^ ]*\) AS $RUBY\$/\1/p" ../images/Dockerfile)
+[ -n "$RUBY_IMAGE" ] || { echo "FAIL  ../images/Dockerfile has no stage $RUBY"; exit 1; }
+IMAGE=rowstile-rails:$RUBY
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker build -q -t "$IMAGE" --build-arg "RUBY_IMAGE=$RUBY_IMAGE" -f ruby.Dockerfile . >/dev/null || exit 1
 LOG=$(mktemp -d)
