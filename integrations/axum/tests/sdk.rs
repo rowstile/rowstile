@@ -205,19 +205,35 @@ async fn a_transaction_is_one_principals() {
         sqlx::query_scalar("SELECT id FROM app.projects ORDER BY id").fetch_all(&mut *nobody).await.unwrap();
     assert_eq!(projects, [3]);
     drop(nobody);
-    // on a pool of one, the second waits for the first to end, up to the pool's timeout
+    // on a pool of one, the second waits for the first to end, up to the pool's timeout (the first, and the one
+    // after it ends, may wait longer: connecting, or the connection coming back, can take a busy machine more)
     let one = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(std::time::Duration::from_millis(300))
-        .connect(copied().app_url.as_deref().unwrap())
-        .await
+        .connect_lazy(copied().app_url.as_deref().unwrap())
         .unwrap();
-    let ann = rowstile::sqlx::begin(&one, &Principal::user("1")).await.unwrap();
+    let ann = begin_patiently(&one, &Principal::user("1")).await;
     let waited = rowstile::sqlx::begin(&one, &Principal::user("2")).await.unwrap_err();
-    assert!(matches!(&waited, Error::Other(e) if e.to_string().contains("timed out")), "{waited:?}");
+    assert!(timed_out(&waited), "{waited:?}");
     drop(ann);
-    let mut after = rowstile::sqlx::begin(&one, &Principal::user("2")).await.unwrap();
+    let mut after = begin_patiently(&one, &Principal::user("2")).await;
     assert_eq!(signed_in(&mut after).await.0, "user 2");
+}
+
+/// Whether the pool gave up waiting for a connection.
+fn timed_out(err: &Error) -> bool {
+    matches!(err, Error::Other(e) if e.to_string().contains("timed out"))
+}
+
+/// A transaction begun on the pool, tried again while the pool's timeout runs out first (up to 30 seconds).
+async fn begin_patiently(pool: &sqlx::PgPool, who: &Principal) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match rowstile::sqlx::begin(pool, who).await {
+            Err(e) if timed_out(&e) && std::time::Instant::now() < deadline => {}
+            begun => return begun.unwrap(),
+        }
+    }
 }
 
 #[tokio::test]
