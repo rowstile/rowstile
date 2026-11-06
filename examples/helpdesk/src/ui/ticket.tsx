@@ -9,7 +9,8 @@ import { LiveRefresh } from "./live-refresh.tsx";
 interface Ticket {
   id: string; subject: string; status: string; perms: string[];
   requester: { name: string };
-  comments: { id: string; body: string; internal: boolean; author: { name: string } | null }[];
+  // author: null where the user may not see who wrote it
+  comments: { id: string; body: string; internal: boolean; byEmail: boolean; author: { name: string } | null }[];
 }
 
 export function TicketView({ id }: { id: string }) {
@@ -38,7 +39,7 @@ export function TicketView({ id }: { id: string }) {
       <ProblemNote problem={problem} />
       {ticket.comments.map((c) => (
         <section key={c.id} className={c.internal ? "internal" : ""}>
-          <b>{c.author?.name ?? "by email"}</b>{c.internal && " (internal note)"}<br />{c.body}
+          <b>{c.author?.name ?? "someone"}</b>{c.byEmail && " (by email)"}{c.internal && " (internal note)"}<br />{c.body}
         </section>
       ))}
       {may("reply") && (
