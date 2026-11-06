@@ -239,7 +239,8 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
 - **Rust: preview.** `rowstile::sqlx::begin(pool, who)` and `rowstile::pg::begin(client, who)` begin a transaction
   signed in; each module has `can`, `perms_of`, `list` (with a `Page`), `expect` and `check`. `Error` is `Refused`,
   `NotFound`, `Call`, `NotSignedIn`, `Connection`, `Database` or `Other`, with `code()` and `problem()`. With the
-  `axum` feature, `Tx` is an extractor for a state that is `SignIn`, and `Error` a response; with `testing`,
+  `axum` feature, `Tx` and `SignedIn` (who, with no connection yet: for a handler that reads a body) are extractors
+  for a state that is `SignIn`, whose `principal` is async, and `Error` is a response; with `testing`,
   `per_binary`, `refused` and `not_found`. `rowstile client rust` writes the policy's names: a constant for each
   type and an enum of each type's permissions, implementing `Permission`. A transaction is one principal's, and
   neither `begin` runs inside another: `sqlx::begin` takes a connection of its own from the pool, and `pg::begin`

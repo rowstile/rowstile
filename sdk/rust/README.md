@@ -37,7 +37,9 @@ tx.commit().await?;
 - `check`: at start-up, refuse a connection that skips row-level security.
 - `can`, `perms_of`, `list`: take only the policy's names, which `rowstile client rust` writes.
 - `axum` (feature `axum`): `Tx`, an extractor that begins each request's transaction signed in as whoever the
-  app's state says it is (`SignIn`), and `Error` as a response, `application/problem+json`.
+  app's state says it is (`SignIn`, whose `principal` is async); `SignedIn`, who the request acts for with no
+  connection yet, for a handler that reads a body (`begin()` once it is read); and `Error` as a response,
+  `application/problem+json`.
 - `testing` (feature `testing`): a copy of the migrated test database for each test binary, and `refused` and
   `not_found` assertions.
 

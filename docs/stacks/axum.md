@@ -46,9 +46,11 @@ names (`app role conf_app`), which row-level security applies to.
 
 The app's state says where the pool is and who a request is (`rowstile::axum::SignIn`): `Principal::user("42")`,
 `Principal::of("service", "3")`, or `Principal::Nobody`, who sees only what `anyone` may. `principal` reads the
-session or the token from the request; an error from it is the answer (`Error::unauthorized`: 401). Here it is
-`session_user`, the app's own: yours reads your session cookie or token. The conformance app has no sign-in, so its
-stands in for one, and this page doesn't show it.
+session or the token from the request; an error from it is the answer (`Error::unauthorized`: 401). It is async: it
+may look the session up in a database or in Redis, or check a token against a key set it fetched, and it may run
+another extractor on the request (a session's, a cookie jar's), before any connection is taken from the pool. Here
+it is `session_user`, the app's own: yours reads your session cookie or token. The conformance app has no sign-in,
+so its stands in for one, and this page doesn't show it.
 
 ```rust
 impl SignIn for App {
@@ -56,7 +58,7 @@ impl SignIn for App {
         &self.pool
     }
 
-    fn principal(&self, request: &Parts) -> Result<Principal, Error> {
+    async fn principal(&self, request: &mut Parts) -> Result<Principal, Error> {
         auth::session_user(request)
     }
 }
@@ -74,6 +76,18 @@ async fn notes(mut tx: Tx) -> Result<Json<Vec<i64>>, Error> {
     tx.commit().await?;
     Ok(Json(notes))
 }
+```
+
+`Tx` takes a connection from the pool when Axum extracts it, before the handler runs, and Axum extracts in the order
+the handler names them, the body last. So name `Path` and `Query` before `Tx`: a request they turn down (400) then
+takes no connection. A handler that reads a body takes `rowstile::axum::SignedIn` instead: who the request acts for,
+with no connection yet. Once the body is read, `who.begin()` begins the transaction, signed in. With `Tx` there, a
+slow upload would hold a connection, idle in its transaction, while the client sends it, and a body that doesn't
+parse (422) would cost one:
+
+```rust
+async fn edit_note(Path(id): Path<i64>, who: SignedIn, Json(e): Json<Edit>) -> Result<Json<Value>, Error> {
+    let mut tx = who.begin().await?;
 ```
 
 A background job acts for a principal of its own, whatever started it (`type service = app.services principal` in

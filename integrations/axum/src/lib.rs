@@ -1,6 +1,7 @@
 //! The conformance app: no permission checks anywhere. Each request's transaction signs in as its user (the
-//! rowstile::axum::Tx extractor), the database filters reads and refuses writes, and the SDK answers a refusal 403
-//! and a hidden row 404.
+//! rowstile::axum::Tx extractor, or SignedIn where a handler reads a body: it begins once the body is read), the
+//! database filters reads and refuses writes, and the SDK answers a refusal 403 and a hidden row 404. Path and Query
+//! come before Tx, so that a request they turn down takes no connection.
 
 mod auth;
 pub mod authz;
@@ -10,7 +11,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
-use rowstile::axum::{SignIn, Tx};
+use rowstile::axum::{SignIn, SignedIn, Tx};
 use rowstile::{Error, Page, Permission, Principal};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -30,7 +31,7 @@ impl SignIn for App {
         &self.pool
     }
 
-    fn principal(&self, request: &Parts) -> Result<Principal, Error> {
+    async fn principal(&self, request: &mut Parts) -> Result<Principal, Error> {
         auth::session_user(request)
     }
 }
@@ -93,14 +94,14 @@ struct PageQuery {
     after: Option<String>,
 }
 
-async fn page(mut tx: Tx, Query(q): Query<PageQuery>) -> Result<Json<Vec<String>>, Error> {
+async fn page(Query(q): Query<PageQuery>, mut tx: Tx) -> Result<Json<Vec<String>>, Error> {
     // the projects the user may see, a page at a time: the database says when the size or the cursor is wrong
     let page = Page { after: q.after, limit: q.limit };
     let listed = rowstile::sqlx::list(&mut tx, ProjectPermission::View, Some(&page)).await?;
     Ok(Json(listed))
 }
 
-async fn revoke_key(mut tx: Tx, Path(id): Path<i64>) -> Result<StatusCode, Error> {
+async fn revoke_key(Path(id): Path<i64>, mut tx: Tx) -> Result<StatusCode, Error> {
     // one of the user's API keys: someone else's, or one that isn't there, is 404
     sqlx::query("SELECT 1 FROM authz.revoke_api_key($1)").bind(id).execute(&mut *tx).await?;
     tx.commit().await?;
@@ -114,7 +115,12 @@ struct NewKey {
     principal_id: Option<String>,
 }
 
-async fn create_key(mut tx: Tx, headers: HeaderMap, Json(k): Json<NewKey>) -> Result<(StatusCode, Json<Value>), Error> {
+async fn create_key(
+    headers: HeaderMap,
+    who: SignedIn,
+    Json(k): Json<NewKey>,
+) -> Result<(StatusCode, Json<Value>), Error> {
+    let mut tx = who.begin().await?; // the body is read: now its transaction, signed in
     // an API key, for the user or a principal whose keys they manage; a request that brings a key (x-api-key) signs
     // in with it first, in the same transaction: the database says who may make which
     if let Some(key) = headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
@@ -127,7 +133,7 @@ async fn create_key(mut tx: Tx, headers: HeaderMap, Json(k): Json<NewKey>) -> Re
     Ok((StatusCode::CREATED, Json(json!({"key": key}))))
 }
 
-async fn shares(mut tx: Tx, Path(id): Path<String>) -> Result<Json<Vec<String>>, Error> {
+async fn shares(Path(id): Path<String>, mut tx: Tx) -> Result<Json<Vec<String>>, Error> {
     let shared = "SELECT subject_id FROM authz.list_shares('project', $1::text)";
     Ok(Json(sqlx::query_scalar(shared).bind(id).fetch_all(&mut *tx).await?))
 }
@@ -139,10 +145,11 @@ struct Asked {
 }
 
 async fn request_access(
-    mut tx: Tx,
     Path(id): Path<String>,
+    who: SignedIn,
     Json(a): Json<Asked>,
 ) -> Result<(StatusCode, Json<Value>), Error> {
+    let mut tx = who.begin().await?; // the body is read: now its transaction, signed in
     // access asked for: the policy shares no relation of a project, so this is the app's mistake (a 500), once the
     // database knows who asks
     let asked = "SELECT authz.request_access('project', $1::text, $2, $3)";
@@ -151,7 +158,7 @@ async fn request_access(
     Ok((StatusCode::CREATED, Json(json!({"id": id}))))
 }
 
-async fn notes_as(mut tx: Tx, Path(user): Path<String>) -> Result<Json<Vec<i64>>, Error> {
+async fn notes_as(Path(user): Path<String>, mut tx: Tx) -> Result<Json<Vec<i64>>, Error> {
     // who is signed in, changed by hand: the database doesn't believe it (the app's bug, a 500)
     sqlx::query("SELECT set_config('authz.user_id', $1, true)").bind(user).execute(&mut *tx).await?;
     Ok(Json(sqlx::query_scalar("SELECT id FROM app.notes ORDER BY id").fetch_all(&mut *tx).await?))
@@ -162,7 +169,8 @@ struct Moved {
     parent_id: Option<i64>,
 }
 
-async fn move_folder(mut tx: Tx, Path(id): Path<i64>, Json(m): Json<Moved>) -> Result<Json<Value>, Error> {
+async fn move_folder(Path(id): Path<i64>, who: SignedIn, Json(m): Json<Moved>) -> Result<Json<Value>, Error> {
+    let mut tx = who.begin().await?; // the body is read: now its transaction, signed in
     // inside one of its own subfolders: 409, the database's words
     let moved = sqlx::query("UPDATE app.folders SET parent_id = $2 WHERE id = $1")
         .bind(id)
@@ -180,7 +188,8 @@ struct NewNote {
     body: String,
 }
 
-async fn add_note(mut tx: Tx, Json(n): Json<NewNote>) -> Result<(StatusCode, Json<Value>), Error> {
+async fn add_note(who: SignedIn, Json(n): Json<NewNote>) -> Result<(StatusCode, Json<Value>), Error> {
+    let mut tx = who.begin().await?; // the body is read: now its transaction, signed in
     let author = signed_in(&tx);
     let added = "INSERT INTO app.notes (project_id, author_id, body) VALUES ($1, $2, $3) RETURNING id";
     // a refused insert: 403, with the rule and the reason
@@ -194,7 +203,8 @@ struct Edit {
     body: String,
 }
 
-async fn edit_note(mut tx: Tx, Path(id): Path<i64>, Json(e): Json<Edit>) -> Result<Json<Value>, Error> {
+async fn edit_note(Path(id): Path<i64>, who: SignedIn, Json(e): Json<Edit>) -> Result<Json<Value>, Error> {
+    let mut tx = who.begin().await?;
     let changed =
         sqlx::query("UPDATE app.notes SET body = $2 WHERE id = $1").bind(id).bind(e.body).execute(&mut *tx).await?;
     // 0 rows: expect asks the database why, and answers 404 (hidden) or 403 (with the reason)
@@ -203,7 +213,7 @@ async fn edit_note(mut tx: Tx, Path(id): Path<i64>, Json(e): Json<Edit>) -> Resu
     Ok(Json(json!({"id": id})))
 }
 
-async fn delete_note(mut tx: Tx, Path(id): Path<i64>) -> Result<StatusCode, Error> {
+async fn delete_note(Path(id): Path<i64>, mut tx: Tx) -> Result<StatusCode, Error> {
     let deleted = sqlx::query("DELETE FROM app.notes WHERE id = $1").bind(id).execute(&mut *tx).await?;
     rowstile::sqlx::expect(&mut tx, deleted.rows_affected(), "app.notes", "delete", id).await?;
     tx.commit().await?;
@@ -219,7 +229,8 @@ struct Message {
 const SEND: &str = "INSERT INTO app.inbox (sender_id, recipient_id, body) VALUES ($1, $2, $3)";
 const SEND_READ_BACK: &str = "INSERT INTO app.inbox (sender_id, recipient_id, body) VALUES ($1, $2, $3) RETURNING id";
 
-async fn send_message(mut tx: Tx, Json(m): Json<Message>) -> Result<(StatusCode, Json<Value>), Error> {
+async fn send_message(who: SignedIn, Json(m): Json<Message>) -> Result<(StatusCode, Json<Value>), Error> {
+    let mut tx = who.begin().await?; // the body is read: now its transaction, signed in
     // reads the id back (RETURNING): only the recipient may read it
     let sender = signed_in(&tx);
     let id: i64 =
@@ -228,7 +239,8 @@ async fn send_message(mut tx: Tx, Json(m): Json<Message>) -> Result<(StatusCode,
     Ok((StatusCode::CREATED, Json(json!({"id": id}))))
 }
 
-async fn send_quietly(mut tx: Tx, Json(m): Json<Message>) -> Result<(StatusCode, Json<Value>), Error> {
+async fn send_quietly(who: SignedIn, Json(m): Json<Message>) -> Result<(StatusCode, Json<Value>), Error> {
+    let mut tx = who.begin().await?; // the body is read: now its transaction, signed in
     // without reading the row back
     let sender = signed_in(&tx);
     sqlx::query(SEND).bind(sender).bind(m.recipient_id).bind(m.body).execute(&mut *tx).await?;
