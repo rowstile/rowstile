@@ -11,8 +11,9 @@ them into --out (the first DIR if not given): .coverage, coverage.json (coverage
   - for each file, its lines and branches, and how many of them the suites run (this part is printed too);
   - the lines and branches nothing runs, with their text, the files with the most first;
   - compiled, never judged: what runs of the code that writes the SQL deciding who may do what (DECIDES), but only
-    in steps that don't compare the database's answers with the reference evaluator (ORACLE): its SQL was made,
-    and difftest, genpolicy and around never judged it;
+    in steps that don't compare the database's answers with another's (ORACLE): its SQL was made, and difftest,
+    genpolicy, around and the small policies (the reference evaluator's answers) and the hand answers (answers
+    worked out from the language's reference) never judged it;
   - what the database runs: the kinds of rowstile's functions (authz_gen."<table>:update:refuse", a tree's
     refresh, authz.share) no suite ever called, and those whose every call raised, from the counts
     tests/coverage_functions.sh kept (functions.tsv beside each DIR or data file);
@@ -47,7 +48,9 @@ CODE = os.path.dirname(HERE)  # core/: where the measured code is
 SETTINGS = os.path.join(HERE, "coverage.ini")
 # the steps of run_tests.sh that compare the database's answers with the reference evaluator's, by their names
 # (CoverageReport in unit_test.py checks it against the steps that run difftest, genpolicy and around)
-ORACLE = re.compile(r"compared with the reference evaluator|in random worlds")
+ORACLE = re.compile(
+    r"compared with the reference evaluator|in random worlds|against the reference evaluator|held against the database"
+)
 # the code that writes the SQL deciding who may do what: the checks and lists, the trees, and what every check
 # calls of identity.py (who is signed in: authz_int.session_ok(); the scopes: scope_cmd, scope_perm, writable).
 # Not refusals.py: its functions run once a check has said no, to say why
@@ -401,6 +404,23 @@ def changed(diff: str) -> dict[str, set[int]]:
     return out
 
 
+def held(code: list[str], lines: set[int]) -> set[int]:
+    """The changed lines and, for each, the first line of the innermost statement that holds it: coverage.py names a
+    statement (and its branches) by its first line, so a change to its second line (an argument, an `if`'s
+    condition, a line of a long message) is a change to it."""
+    try:
+        tree = ast.parse("\n".join(code))
+    except SyntaxError:
+        return set(lines)
+    spans = [(s.lineno, s.end_lineno or s.lineno) for s in ast.walk(tree) if isinstance(s, ast.stmt)]
+    out = set(lines)
+    for n in lines:
+        inside = [first for first, last in spans if first <= n <= last]
+        if inside:
+            out.add(max(inside))
+    return out
+
+
 def source(name: str) -> list[str]:
     try:
         with open(os.path.join(CODE, name), encoding="utf-8") as fh:
@@ -542,7 +562,7 @@ def main(argv: Sequence[str]) -> int:
             floor_failed = True
         else:
             said, floor_failed = coverage_plpgsql.judge(
-                coverage_plpgsql.never_run(each), coverage_plpgsql.read_floor(a.floor), a.floor
+                coverage_plpgsql.never_run(each), coverage_plpgsql.read_floor(a.floor), a.floor, each.unreadable
             )
             print("", *said, sep="\n")
     if not a.diff:
@@ -556,7 +576,7 @@ def main(argv: Sequence[str]) -> int:
         text=True,
         check=True,
     ).stdout
-    new = changed(diff)
+    new = {name: held(source(name), lines) for name, lines in changed(diff).items()}
     found = [line for f in files if f.name in new for line in not_run(f, new[f.name])]
     print(f"\nChanged since {a.diff} and not run: {len(found)} (each a run of lines, or a branch never taken)")
     for f in files:

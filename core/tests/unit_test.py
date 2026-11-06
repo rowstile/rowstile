@@ -15415,6 +15415,21 @@ class CoverageReport(unittest.TestCase):
             "diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-x\n+y\n"
         )
         self.assertEqual(self.report.changed(diff), {"authzlib/parse.py": {12, 22, 23, 24}})
+        # a line of a statement past its first (an argument, a condition's second line): the statement's first line
+        # too, as coverage.py names it; a line of its own, alone
+        code = [
+            "def f(x):",
+            "    if (x",
+            "        and x > 1):",
+            "        fail(",
+            "            'a',",
+            "        )",
+            "    y = 1",
+        ]
+        self.assertEqual(self.report.held(code, {3}), {2, 3})
+        self.assertEqual(self.report.held(code, {5}), {4, 5})
+        self.assertEqual(self.report.held(code, {7}), {7})
+        self.assertEqual(self.report.held(["(  # not Python"], {1}), {1})
 
     def test_never_judged(self) -> None:
         judged = "random changes, compared with the reference evaluator (docs, 15 changes)"
@@ -15587,10 +15602,10 @@ class CoverageReport(unittest.TestCase):
         for text in steps:
             label = text.split('"', 1)[0]
             body = re.split(r"\n\s*record ", text, maxsplit=1)[0]  # the step's own commands
-            runs = re.search(r"tests/(?:difftest|genpolicy|around)\.py", body) is not None
+            runs = re.search(r"tests/(?:(?:difftest|genpolicy|around|small)\.py|hand_answers\.sh)", body) is not None
             compares += runs
             self.assertEqual(bool(self.report.ORACLE.search(label)), runs, label)
-        self.assertGreaterEqual(compares, 6)
+        self.assertGreaterEqual(compares, 8)
 
     def test_the_settings_name_the_code(self) -> None:
         settings = read("tests/coverage.ini")
@@ -15853,6 +15868,19 @@ END outer;"""
         self.assertEqual(
             (said[2], failed), ("  authz_gen: 3 4, and the floor has no line for it: add `authz_gen 3 4`", True)
         )
+        # a function of a floored schema whose source wasn't read: its branches would read as fewer, unjudged
+        said, failed = self.p.judge(
+            {"authz": (10, 20), "authz_gen": (3, 4)}, floor, "f.txt", {"authz.share(x integer)": "?", "app.f()": "?"}
+        )
+        self.assertEqual(
+            (said[1], failed),
+            (
+                "  authz.share(x integer): its source wasn't read here, so its branches aren't counted (the report's "
+                "Sources not read)",
+                True,
+            ),
+        )
+        self.assertNotIn("app.f()", "".join(said))
         # counted from the totals: a statement or branch never run, in the floor's schemas alone
         line = {"schema": "authz", "name": "share", "args": "x integer", "md5": "m", "ratios": self.RATIOS}
         with tempfile.TemporaryDirectory() as d:
@@ -15871,6 +15899,28 @@ END outer;"""
             t.statements[(kind, str(n))] = self.p.Seen("authz", kind, "RETURN", f"line {n}", made=1, called=called)
         t.branches[("authz.can", "b")] = self.p.Seen("authz", "authz.can", "ELSE", "b", made=1, called=False)
         self.assertEqual(self.p.never_run(t), {"authz": (2, 0), "authz_gen": (0, 0)})
+
+    def test_two_guards_of_the_same_words_are_two(self) -> None:
+        # the same message on other conditions (authz.login_key's two 'invalid API key'): one ran, the other not
+        source = "\nBEGIN\n  IF x = 1 THEN\n    RAISE EXCEPTION 'no';\n  ELSIF x = 2 THEN\n    RAISE EXCEPTION 'no';\n  END IF;\n  RETURN 1;\nEND "
+        profile = [
+            [1, None, 1, 2, "statement block", 2, 1],
+            [2, 1, 1, 3, "IF", 2, 1],
+            [3, 2, 1, 4, "RAISE", 1, 1],
+            [4, 2, 2, 6, "RAISE", 0, 0],
+            [5, 1, 2, 8, "RETURN", 1, 0],
+        ]
+        line = {"schema": "authz", "name": "share", "args": "x integer", "md5": "m2", "ratios": self.RATIOS}
+        with tempfile.TemporaryDirectory() as d:
+            self.p.save(
+                d,
+                "step",
+                "authz_a",
+                ["connected", json.dumps({**line, "source": source, "statements": profile}), "read"],
+            )
+            m = self.p.measured([d])
+        raises = [x for x in self.p.totals(m, self.kind).statements.values() if x.raise_]
+        self.assertEqual(sorted((x.under, x.ran) for x in raises), [("ELSIF x = 2 THEN", 0), ("IF x = 1 THEN", 1)])
 
     def test_a_raise_never_run_comes_first(self) -> None:
         profile = [[*r[:5], 0 if r[0] == 5 else r[5], 0] for r in self.PROFILE]
