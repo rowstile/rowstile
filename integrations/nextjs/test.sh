@@ -103,7 +103,8 @@ node ../../node_modules/next/dist/bin/next build >"$LOG/build.log" 2>&1 || { cat
 # API in the SDK fails
 node ../../node_modules/next/dist/bin/next build edge >"$LOG/build-edge.log" 2>&1 || { cat "$LOG/build-edge.log"; echo "FAIL  next build edge"; exit 1; }
 if grep -q "Node.js API is used" "$LOG/build.log" "$LOG/build-edge.log"; then
-  cat "$LOG/build-edge.log"; echo "FAIL  the SDK uses a Node.js API the edge runtime lacks"; rc=1
+  grep -A3 "Node.js API is used" "$LOG/build.log" "$LOG/build-edge.log"   # the warnings, in whichever build said them
+  echo "FAIL  the SDK uses a Node.js API the edge runtime lacks"; rc=1
 fi
 NEXT="node ../../node_modules/next/dist/bin/next"
 $NEXT start -p "$WEB" >"$LOG/server.log" 2>&1 & servers+=($!)
