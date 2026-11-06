@@ -293,7 +293,7 @@ has no check against another answer, or when a refusal isn't asked for by its wo
 Every feature that grants or revokes access is in tier 1. Requests for access, breaking the glass and access reviews
 are tried by one user in each snapshot of the random changes, each attempt undone, and held to the reference
 evaluator: what each call says, the requests it shows, the shares it makes or revokes, and the lines it writes in
-the audit trail. <!-- checked: tests/difftest.py "the decisions say"; tests/difftest.py "authz.decide_request("; tests/unit_test.py "test_a_feature_that_grants_outside_tier_one_is_named_on_the_page" -->
+the audit trail. <!-- checked: tests/difftest.py "the decisions say"; tests/difftest.py "authz.decide_request("; tests/unit_test.py "test_a_feature_that_grants_or_revokes_is_tier_one" -->
 Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `python3 core/tests/features.py
 --matrix` prints each feature against each suite.
 

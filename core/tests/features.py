@@ -13,8 +13,8 @@ to the parser), the error codes (errors.CODES), what the SDKs export, the langua
 server's tools and Studio's routes. Each item is in one feature, and each feature names:
 
 - its tier: 1 decides access, grants or revokes it, or keeps data; 2 is an answer shown to people; 3 is delivery.
-  A feature that grants or revokes access (it covers an authz.* function that writes authz.shares, or calls one
-  that does) and isn't tier 1 is named on docs/how-it-is-checked.md, among those its own suites check alone;
+  A feature that grants or revokes access (it covers an authz.* function that writes authz.shares or what a custom
+  role gives, or calls one that does) is tier 1, as docs/how-it-is-checked.md says;
 - where the docs say it: a page, and a heading on it (or the bold words a paragraph starts with, or a table's
   first cell);
 - its fixed checks: a suite, and words that suite holds (a check's label as it prints it, a test's name, the call
@@ -518,7 +518,7 @@ FEATURES: list[Feature] = [
             T("interleave.py", 'name="docs_after"'),
             Check(ELECTRIC, "E17: after commit, a share arrives once the worker runs, and not before"),
         ),
-        (T(DIFF, "One seed in three keeps the index after commit"),),
+        (T(DIFF, '"sync after commit\\n" if seed % 3'),),
         note="a preview, like the index",
     ),
     Feature(
@@ -1670,21 +1670,40 @@ def lsp_methods() -> set[str]:
 
 
 def sdk_python() -> set[str]:
-    """What the Python package exports: its __all__, the public names of the modules beside it, and the __all__ of
-    each package inside it."""
+    """What the Python package exports: its __all__, the public names of the modules beside it, and of each package
+    inside it its __all__ and its own public modules' (their __all__, else their public names: rowstile.django's
+    testing module, say)."""
     out: set[str] = set()
     folder = os.path.join(REPO, "sdk", "python", "rowstile")
+
+    def listed(tree: ast.Module) -> list[str] | None:
+        """A module's __all__, or None when it has none."""
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
+            ):
+                assert isinstance(node.value, ast.List | ast.Tuple)
+                return [str(ast.literal_eval(e)) for e in node.value.elts]
+        return None
+
     for name in sorted(os.listdir(folder)):
         if os.path.isfile(os.path.join(folder, name, "__init__.py")):  # a package of its own (rowstile.django)
-            tree = ast.parse(read(f"sdk/python/rowstile/{name}/__init__.py"))
             out |= {
-                f"sdk.py.{name}.{ast.literal_eval(e)}"
-                for node in tree.body
-                if isinstance(node, ast.Assign)
-                and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)
-                and isinstance(node.value, ast.List | ast.Tuple)
-                for e in node.value.elts
+                f"sdk.py.{name}.{x}" for x in listed(ast.parse(read(f"sdk/python/rowstile/{name}/__init__.py"))) or []
             }
+            for module in sorted(os.listdir(os.path.join(folder, name))):
+                if not module.endswith(".py") or module.startswith("_"):
+                    continue
+                tree = ast.parse(read(f"sdk/python/rowstile/{name}/{module}"))
+                public = listed(tree)
+                if public is None:
+                    public = [
+                        n.name
+                        for n in tree.body
+                        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+                        and not n.name.startswith("_")
+                    ]
+                out |= {f"sdk.py.{name}.{module[:-3]}.{x}" for x in public}
             continue
         if not name.endswith(".py") or (name.startswith("_") and name != "__init__.py"):
             continue
@@ -1895,7 +1914,8 @@ def surface() -> dict[str, set[str]]:
 
 def granting() -> set[str]:
     """The authz.* functions that grant or revoke access: those of the docs app's compiled policy that write
-    authz.shares, or call a function that does (`api.share`, ...)."""
+    authz.shares or what a custom role gives (authz.role_permissions; a role deleted from authz.roles), or call a
+    function that does (`api.share`, ...), by its name or its quoted name."""
     from authzlib import Compiler, parse_policy, statements
 
     path = os.path.join(CORE, "example", "docs.authz")
@@ -1906,32 +1926,20 @@ def granting() -> set[str]:
         if m := re.match(r'CREATE (?:OR REPLACE )?FUNCTION ((?:authz|authz_int|authz_gen)\.(?:"[^"]+"|\w+))\(', st):
             name = m[1].replace('"', "")
             bodies[name] = bodies.get(name, "") + st
-    found = {
-        n for n, body in bodies.items() if re.search(r"\b(?:INSERT INTO|DELETE FROM|UPDATE) authz\.shares\b", body)
-    }
+    writes = re.compile(
+        r"\b(?:(?:INSERT INTO|DELETE FROM|UPDATE) authz\.(?:shares|role_permissions)|DELETE FROM authz\.roles)\b"
+    )
+    found = {n for n, body in bodies.items() if writes.search(body)}
+
+    def called(f: str) -> re.Pattern[str]:
+        schema, name = f.split(".", 1)
+        return re.compile(rf"(?<!')\b{schema}\.(?:{re.escape(name)}|\"{re.escape(name)}\")\(")
+
     while True:  # and what calls them (not a name in a string: lint lists signatures)
-        more = {
-            n
-            for n, body in bodies.items()
-            if n not in found and any(re.search(rf"(?<!')\b{re.escape(f)}\(", body) for f in found)
-        }
+        more = {n for n, body in bodies.items() if n not in found and any(called(f).search(body) for f in found)}
         if not more:
             return {f"api.{n.removeprefix('authz.')}" for n in found if n.startswith("authz.")}
         found |= more
-
-
-EXCEPTIONS = "that grant or revoke access are tier 2 instead"
-
-
-def exceptions(page: str = "docs/how-it-is-checked.md") -> set[str]:
-    """The features docs/how-it-is-checked.md names as granting or revoking access outside tier 1 (`api.requests`,
-    in the paragraph that says so)."""
-    text = read(page)
-    at = text.find(EXCEPTIONS)
-    if at < 0:
-        return set()
-    paragraph = text[at : text.find("<!--", at)]
-    return set(re.findall(r"`([a-z]+\.[\w.]+)`", paragraph))
 
 
 def owner(item: str, features: Iterable[Feature] = FEATURES) -> list[str]:
@@ -2034,7 +2042,9 @@ def runs(text: str, cmd: str) -> re.Pattern[str]:
 
 
 def unused_flags(every: set[str]) -> list[str]:
-    """The command's flags no suite uses: no line of a suite (but comments) gives the flag to its command."""
+    """The command's flags no suite uses: no line of a suite (but comments) gives the flag to its command: the
+    command's word (or a call of a helper that runs it) before the flag on the line, as a command line has it (a
+    variable named like a command after the flag is no run of it)."""
     texts = list(suite_texts().values())
     out = []
     for item in sorted(i for i in every if i.startswith("cli.") and " " in i):
@@ -2045,7 +2055,10 @@ def unused_flags(every: set[str]) -> list[str]:
             if not word.search(t):
                 continue
             run = runs(t, cmd)
-            if any(word.search(line) and run.search(line) and not COMMENT.match(line) for line in t.split("\n")):
+            if any(
+                (at := word.search(line)) and run.search(line, 0, at.start()) and not COMMENT.match(line)
+                for line in t.split("\n")
+            ):
                 used = True
                 break
         if not used:
@@ -2053,9 +2066,21 @@ def unused_flags(every: set[str]) -> list[str]:
     return out
 
 
+def under(text: str, head: re.Pattern[str], line: re.Pattern[str]) -> bool:
+    """Whether a line is in the table a head starts, in a TOML text: after it, before the next table's head."""
+    for m in head.finditer(text):
+        nxt = TABLE_HEAD.search(text, m.end())
+        if line.search(text, m.end(), nxt.start() if nxt else len(text)):
+            return True
+    return False
+
+
+TABLE_HEAD = re.compile(r"(?m)^\s*\[[\w.-]+\]")
+
+
 def unset_settings(every: set[str]) -> list[str]:
     """The settings of rowstile.toml no suite writes (in a rowstile.toml a suite writes, or one a conformance app
-    has): a line `key = ...`, in a text that also has the line `[table]` for a table's."""
+    has): a line `key = ...`; for a table's, under the line `[table]`, before the next table's."""
     texts = list(suite_texts().values())
     texts += [
         read(os.path.relpath(p, REPO))
@@ -2067,7 +2092,7 @@ def unset_settings(every: set[str]) -> list[str]:
         *table, key = item.removeprefix("toml.").split(".")
         line = re.compile(rf"(?m)(?:^|[\"'])\s*{re.escape(key)}\s*=\s*[\"\[\d]")  # a line, or a string's first
         head = re.compile(rf"(?m)^\s*\[{re.escape(table[0])}\]") if table else None
-        if not any(line.search(t) and (head is None or head.search(t)) for t in texts):
+        if not any(line.search(t) if head is None else under(t, head, line) for t in texts):
             out.append(item)
     return out
 
@@ -2102,11 +2127,7 @@ def problems(features: list[Feature] = FEATURES) -> list[str]:
     out += [f"rowstile.toml: {item}: no suite sets it" for item in unset_settings(every)]
     cases, hands = grammar_cases(), anchors()
     texts: dict[str, str] = {}
-    grant, named_out = granting(), exceptions()
-    out += [
-        f"docs/how-it-is-checked.md names {i} among the features {EXCEPTIONS}, and it is no feature of tier 2 or 3"
-        for i in sorted(named_out - {f.id for f in features if f.tier != 1})
-    ]
+    grant = granting()
     for f in features:
         if f.tier not in (1, 2, 3):
             out.append(f"{f.id}: tier {f.tier}")
@@ -2138,10 +2159,10 @@ def problems(features: list[Feature] = FEATURES) -> list[str]:
         if f.tier == 1 and not f.oracle:
             out.append(f"{f.id}: tier 1, and no check holds it to another answer at random")
         grants = sorted(set(f.covers) & grant)
-        if f.tier != 1 and grants and f.id not in named_out:
+        if f.tier != 1 and grants:
             out.append(
-                f"{f.id}: tier {f.tier}, and it grants or revokes access ({', '.join(grants)}): make it tier 1, or "
-                f"name it on docs/how-it-is-checked.md where it says which features {EXCEPTIONS}"
+                f"{f.id}: tier {f.tier}, and it grants or revokes access ({', '.join(grants)}): make it tier 1, as "
+                "docs/how-it-is-checked.md says every such feature is"
             )
         if not os.path.exists(os.path.join(REPO, f.doc.page)):
             out.append(f"{f.id}: {f.doc.page} is gone")
