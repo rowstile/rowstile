@@ -469,6 +469,9 @@ A user deleted loses their keys, so their queries empty; the endpoints then answ
   A revoke stops delivery: Zero removes the row from the client's copy when it next syncs. <!-- checked: integrations/zero/tests/zero.test.ts "Z2: a share made: the row arrives live; revoked: it leaves" -->
 - The window after a change is zero-cache's replication lag, and for a share that ends, until the next
   `authz.sync_tick()` too. <!-- checked: integrations/zero/tests/zero.test.ts "Z6: a share that ends: the row leaves at the next authz.sync_tick(), and not before" -->
+- zero-cache asks the endpoints again when a client adds a query or connects again. Until then, a client signed in
+  with a key revoked, or a session ended, since keeps getting its open queries' changes; one that connects with
+  the key now is refused. <!-- checked: integrations/zero/tests/zero.test.ts "Z15: a session limited by scopes is refused" -->
 - What the index leaves out (caveats, links, scopes) gives nothing through Zero either. <!-- checked: tests/difftest.py "without shares that have a caveat and without links" -->
 - zero-cache is trusted: it holds BYPASSRLS and every row of what it publishes, and rowstile can't check what it
   serves. <!-- unchecked: what an engine serves is the engine's, outside the database -->
@@ -563,6 +566,10 @@ request is, as Electric's route does (`syncPrincipal(c)`, from `@rowstile/client
   each principal may read, without scopes; <!-- checked: integrations/powersync/tests/powersync.test.ts "P15: a session limited by scopes gets no token" -->
 - a token another key signed is refused by the service. <!-- checked: integrations/powersync/tests/powersync.test.ts "P8: a token the app didn't sign is refused by the service" -->
 
+The app's token lasts five minutes: PowerSync's client asks for another when it ends, and the app asks the
+database again. <!-- checked: integrations/powersync/tests/powersync.test.ts "P8: a token the app didn't sign is refused by the service" -->
+The app doesn't start without the key it signs tokens with, of 32 characters at least. <!-- checked: integrations/powersync/test.sh "the app refuses to start with the token key" -->
+
 The clients' writes go back through the app's own routes, signed in as the request's user: a refused one is the
 app's 403, in the database's words. <!-- checked: integrations/powersync/tests/powersync.test.ts "P11: writes through the app arrive; a refused one from a client's queue says why" -->
 Applying the policy, applying it again and a changed policy keep the mirrors, and the clients go on syncing. <!-- checked: integrations/powersync/tests/powersync.test.ts "P12: lint, then rowstile apply and reapply leave the clients syncing" -->
@@ -573,6 +580,8 @@ Applying the policy, applying it again and a changed policy keep the mirrors, an
   A revoke stops delivery: the row leaves the client once it is in none of its buckets. <!-- checked: integrations/powersync/tests/powersync.test.ts "P2: a share made: the row arrives live; revoked: it leaves" -->
 - The window after a change is the service's replication lag, and for a share that ends, until the next
   `authz.sync_tick()` too. <!-- checked: integrations/powersync/tests/powersync.test.ts "P6: a share that ends: the row leaves at the next authz.sync_tick(), and not before" -->
+- The service believes a token until it ends, so a key revoked or a session ended since keeps syncing that long
+  (five minutes, the app's); the app gives it no new one. <!-- checked: integrations/powersync/tests/powersync.test.ts "P15: a session limited by scopes gets no token" -->
 - A mirrored line can't be keyed by a type (AZ811), so a move rewrites the readers of what is below it, in the mirror
   too. <!-- checked: tests/policy_errors.py "a mirrored sync line keyed by a type"; tests/sync.sh "a folder moved: the readers of the files below it change in their mirror rows too" -->
 - The service is trusted: it holds BYPASSRLS and every row of what it publishes, and rowstile can't check what it
