@@ -476,6 +476,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   checked exception the work doesn't declare (Kotlin's, Lombok's `@SneakyThrows`) left its writes to be committed when
   the connection went back to auto-commit mode. It also takes a connection out of auto-commit mode with no transaction
   open on it (a pool's `autoCommit=false`), and leaves it in its mode, instead of saying a transaction is open.
+- The Spring starter ends a transaction whose sign-in fails for any reason, the app's `PrincipalSource` throwing too.
+  Before, only the database's refusal did: otherwise the begun transaction stayed bound to the thread, its connection
+  out of the pool, and later work on that thread joined it, signed in to no one. A `REQUIRES_NEW` transaction the
+  database won't sign in says why (`CannotCreateTransactionException`), instead of Spring's `IllegalStateException`
+  about a resource bound already.
 
 ### Upgrading
 

@@ -88,6 +88,10 @@ carries one request's user into the next, and PgBouncer in transaction mode is s
 fails with the not-signed-in error (AZ701): run your queries in transactions. Spring Data's repositories have their
 own.
 
+A sign-in that fails (the database refuses the principal, or your `PrincipalSource` throws) ends the transaction it
+began: Spring's `CannotCreateTransactionException` says why, and nothing of it is left to the thread or holds a
+connection.
+
 ## Controllers
 
 A list is plain JPA:
