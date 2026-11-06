@@ -495,6 +495,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   to refuse.
 - The Kotlin module leaves alone the statements of Exposed's R2DBC transactions, which run its check that a
   transaction is one principal's too: with the module on the classpath, each failed with a `ClassCastException`.
+- The Ktor plugin asks who a request is once, when its code first reads it, as its docs say: it asked again on every
+  `actingFor()`.
 
 ### Upgrading
 

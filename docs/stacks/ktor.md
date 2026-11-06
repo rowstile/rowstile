@@ -75,8 +75,8 @@ the policy's tests: `GRANT conf_app TO conf_owner`, once (the command says so wh
 The plugin gives each request's code whoever the request is: `actingFor()` reads it. By default that is the
 principal Ktor's Authentication found: a `UserIdPrincipal` is the user whose id is its name, a `dev.rowstile.Principal`
 is itself (`Principal.of("service", 3)` for a service), and nobody when no one is signed in. Another principal (a
-`JWTPrincipal`) is yours to read: `install(Rowstile) { principal = { call -> ... } }`. The plugin asks as the first
-transaction begins, after Authentication has run.
+`JWTPrincipal`) is yours to read: `install(Rowstile) { principal = { call -> ... } }`. The plugin asks once a
+request, when its code first reads it (as its first transaction begins), after Authentication has run.
 
 ```kotlin
 install(Rowstile) { dataSource = pool }

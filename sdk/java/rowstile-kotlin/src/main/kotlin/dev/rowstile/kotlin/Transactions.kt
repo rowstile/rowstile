@@ -25,15 +25,15 @@ private val CURRENT = ThreadLocal<ActingAs?>()
  * launch(ActingAs(Principal.of("service", 3))) { suspendTransaction(actingFor()) { ... } }  // a job
  * ```
  *
- * The Ktor plugin gives each request's coroutine one, which asks who the request is when it is first read: after
- * Ktor's Authentication has run.
+ * The Ktor plugin gives each request's coroutine one, which asks who the request is once, when it is first read:
+ * after Ktor's Authentication has run.
  */
-public class ActingAs internal constructor(private val resolve: () -> Principal) : ThreadContextElement<ActingAs?> {
+public class ActingAs internal constructor(resolve: () -> Principal) : ThreadContextElement<ActingAs?> {
     /** Acting for [who]. */
     public constructor(who: Principal) : this({ who })
 
-    /** Who. */
-    public val principal: Principal get() = resolve()
+    /** Who: asked once, when first read. */
+    public val principal: Principal by lazy(resolve)
 
     /** The key of the element in a coroutine's context. */
     public companion object Key : CoroutineContext.Key<ActingAs>

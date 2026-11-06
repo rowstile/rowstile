@@ -50,6 +50,7 @@ import org.junit.jupiter.api.Test
 import org.postgresql.ds.PGSimpleDataSource
 import java.sql.SQLException
 import java.util.ServiceLoader
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -337,17 +338,25 @@ class SdkTest {
     @Test
     @DisplayName("Ktor: who a request is, from Authentication's principal; another kind is the app's to say")
     fun ktor() = runBlocking {
-        // the plugin without the app's connections: nothing to check at start-up, and each call as the app says
+        // the plugin without the app's connections: nothing to check at start-up, and each call as the app says,
+        // asked once a request however often its code reads it
+        val asked = AtomicInteger()
         val bare = TestApplication {
             application {
-                install(Rowstile) { principal = { call -> Principal.user(call.request.headers["x-who"]) } }
-                routing { get("/who") { call.respondText(actingFor().toString()) } }
+                install(Rowstile) {
+                    principal = { call ->
+                        asked.incrementAndGet()
+                        Principal.user(call.request.headers["x-who"])
+                    }
+                }
+                routing { get("/who") { call.respondText("${actingFor()} ${actingFor()}") } }
             }
         }
         bare.start()
         try {
-            assertEquals("7", bare.send("GET", "/who", null, headers = mapOf("x-who" to "7")).text)
-            assertEquals("nobody", bare.send("GET", "/who", null).text)
+            assertEquals("7 7", bare.send("GET", "/who", null, headers = mapOf("x-who" to "7")).text)
+            assertEquals("nobody nobody", bare.send("GET", "/who", null).text)
+            assertEquals(2, asked.get())
         } finally {
             bare.stop()
         }
