@@ -2,7 +2,7 @@
 """interleave: every order of the steps of two tree writes, each session at each isolation level.
 
     python3 tests/interleave.py [--levels "read committed,repeatable read,serializable"] [--db authz_interleave]
-                                [--worlds docs,cross,parts,boxes] [--pairs create-move]
+                                [--worlds docs,cross,parts,boxes,docs_by,docs_after] [--pairs create-move]
 
 Two sessions each run one transaction on a small subtree: a read, which takes the snapshot (of a table no write
 touches, so that what SERIALIZABLE notices is the writes' own doing; the BEGIN goes with it: a BEGIN takes no
