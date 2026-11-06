@@ -9,8 +9,13 @@ import dev.rowstile.kotlin.refusal
  * `select`): the refusal, else an [AssertionError]. Any other error is thrown again as it is.
  *
  * ```
- * val refused = assertRefused("update") { client.patch("/notes/1") { ... } ... }
+ * val refused = assertRefused("update") {
+ *     transaction(Principal.user(3), db) { calls.expect(Notes.update({ Notes.id eq 1 }) { ... }, Notes, "update", 1) }
+ * }
  * ```
+ *
+ * A request to the app is no block for it: the plugin answers a refusal with a 403, which the client reads as an
+ * answer, not an error.
  */
 public suspend fun assertRefused(command: String? = null, block: suspend () -> Unit): Refused {
     val refused =
