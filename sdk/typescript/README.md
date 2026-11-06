@@ -31,7 +31,7 @@ export const PATCH = route(async (req: Request, { params }: { params: Promise<{ 
 
 | package | what |
 |---|---|
-| `@rowstile/client` | `actingAs(who, fn)`, `job(who, fn)`, `current()`, `Refused`, `NotFound`, `NotSignedIn`, `translate(e)`, `problemOf(e)` and `problemResponse(e)` for any driver's error (a problem's fields: `status`, `type`, `title`, `detail`, and a refusal's `table`, `command`, `why` and `code`), `errorCode(e)` (rowstile's code: `AZ709`), `notSignedIn(e)` (whether it is the not-signed-in error, AZ701; a login refused, AZ703, settings changed by hand, AZ702, and Postgres's own refusal to connect, with no code, have its SQLSTATE but are not it), `calls(queryable)` (the runtime's functions), the `Register` the generated names fill in |
+| `@rowstile/client` | `actingAs(who, fn)`, `job(who, fn)`, `current()`, `Refused`, `NotFound`, `NotSignedIn`, `translate(e)`, `problemOf(e)` and `problemResponse(e)` for any driver's error (a problem's fields: `status`, `type`, `title`, `detail`, and a refusal's `table`, `command`, `why` and `code`), `errorCode(e)` (rowstile's code: `AZ709`), `notSignedIn(e)` (whether it is the not-signed-in error, AZ701; a login refused, AZ703, settings changed by hand, AZ702, and Postgres's own refusal to connect, with no code, have its SQLSTATE but are not it; through Prisma, whose driver adapter keeps no HINT for that SQLSTATE, a login refused has no code, and stays Prisma's error), `calls(queryable)` (the runtime's functions), the `Register` the generated names fill in |
 | `@rowstile/prisma` | `signedIn(adapter, { user })`: every transaction Prisma begins signs in; `authz()`: P2025 as `NotFound` or `Refused` with the reason, refused creates naming the rule, `db.$authz` (`can`, `ids`, `permsOf`, `share`, `check`, ...; `tableName("Note")`: the table as the policy names it, `public.Note`, as a refusal's `table` names it) |
 | `@rowstile/pg` | `authz(pool, { user })`: `transaction(fn)`, `query()`, the runtime's functions; `changes(pool)` for live updates; the pool is pg's, or (preview) Neon's serverless driver's, over WebSockets, for an edge runtime too |
 | `@rowstile/postgres` | `authz(sql, { user })`: `begin(fn)`, the runtime's functions |
@@ -43,7 +43,7 @@ export const PATCH = route(async (req: Request, { params }: { params: Promise<{ 
 
 They run on Node 22.12 or newer, with Next.js 16, React 19, Prisma 7, node-postgres 8, postgres.js 3, Drizzle
 0.45, Vitest 4 or 5 and Jest 30. Each package's `peerDependencies` names the majors the checks run, from the version they
-ran (`"next": "^16.4.0"`), so npm refuses another unless told to.
+ran (a caret range, such as `"next": "^16.4.3"`), so npm refuses another unless told to.
 
 Who a transaction acts for: `42` or `"42"` (a user), `["service", 3]` (another principal type of the policy),
 or `null` (nobody: only what `anyone` may see). A plain id is always a user's, whatever it holds: `"service:3"`
@@ -67,7 +67,10 @@ Traps it handles:
 
 - **Next.js caching.** Before a transaction signs in as someone, `@rowstile/next` calls Next's `connection()`:
   the render is dynamic, and a signed-in read inside `"use cache"` or `unstable_cache` fails instead of being
-  cached for the next user. Reads as nobody may be cached.
+  cached for the next user. Reads as nobody may be cached. A route that says `export const dynamic =
+  "force-static"` is outside this: Next.js renders it once, and `connection()` lets it be. rowstile's reads must
+  never be in one: a read there signed in as someone the code names (a `job`, `actingAs(42, ...)`) would be served to
+  everyone.
 - **Prisma answers some calls together.** It dispatches the `findUnique` calls of one tick, and array
   transactions, from the first caller's context. `authz()` runs each `findUnique` in a transaction of its own,
   and refuses `$transaction([...])` (use `$transaction(async (tx) => ...)`), so no query runs as someone else.

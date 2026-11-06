@@ -60,7 +60,9 @@ export async function register() {
 
 - Before a transaction signs in as someone, it calls Next's `connection()`: the render is dynamic, and a
   signed-in read inside `"use cache"` or `unstable_cache` fails instead of being cached for the next user.
-  Reads as nobody may be cached.
+  Reads as nobody may be cached. A route with `export const dynamic = "force-static"` is outside this: Next.js
+  renders it once, and `connection()` lets it be. rowstile's reads must never be in one: one signed in as someone
+  the code names (a `job`, `actingAs(42, ...)`) would be served to everyone.
 - `authzRoutes({ calls, changes })` in `app/api/authz/[...authz]/route.ts` serves `@rowstile/react`:
   permissions for a list, shares, access requests, live updates. A request that names no type, or a body
   that isn't a JSON object, is 400.

@@ -100,7 +100,10 @@ into 404 or 403 with the reason, and adds `db.$authz`. Use the client `$extends(
 that one: the client it was made from is refused whenever it is used, inside your own Prisma extensions too
 (add them to the client `authz()` returns: they are placed before it, and each hook runs once for a call).
 Importing `@rowstile/next` keeps signed-in reads out of Next.js's caches, and `authz.gen.ts` (written by
-`rowstile client`) gives the SDK the policy's names, so a misspelled permission doesn't type-check.
+`rowstile client`) gives the SDK the policy's names, so a misspelled permission doesn't type-check. A route with
+`export const dynamic = "force-static"` is outside this: Next.js renders it once, at build time, and `connection()`
+lets it be. rowstile's reads must never be in one: a read there signed in as someone the code names (a `job`,
+`actingAs(42, ...)`) would be served to everyone.
 The imports below end in `.ts` and the app's own start with `@/`: `allowImportingTsExtensions`, and
 `"paths": { "@/*": ["./src/*"] }`, in `tsconfig.json`.
 
@@ -207,10 +210,12 @@ Two Prisma habits are handled: each `findUnique` runs in a transaction of its ow
 one tick together, from the first caller's context), and array transactions, `$transaction([...])`, are
 refused for the same reason. Use `$transaction(async (tx) => ...)`; inside it, why a write was refused is asked
 through the transaction, and so is what `db.$authz` (or `tx.$authz`) asks for its principal: it sees what the
-transaction wrote, and needs no second connection. Those transactions wait for a connection
-as long as Prisma's `transactionOptions` say, 2 seconds by default: with the database far away and many
-`findUnique` calls at once, give the client a longer `maxWait` (or a bigger pool), or they fail with
-"Unable to start a transaction in the given time".
+transaction wrote, and needs no second connection. The `findUnique` transactions follow Prisma's
+`transactionOptions`: they wait for a connection as long as `maxWait` says, 2 seconds by default, and last at most
+`timeout`, 5 seconds by default. With the database far away and many `findUnique` calls at once, give the client
+a longer `maxWait` (or a bigger pool), or they fail with "Unable to start a transaction in the given time". A
+`findUnique` slower than `timeout` (a large `include`) fails with "Transaction already closed": give a longer
+`timeout`.
 
 A transaction is one principal's: a sign-in lasts the database transaction. Inside `$transaction(async (tx) =>
 ...)`, a query through `db` (not `tx`) for anyone else, after `actingAs` or in a job, throws an `Error` before a
