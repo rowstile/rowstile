@@ -219,15 +219,21 @@ def test_7_a_row_hidden_before_the_update_is_404(data: str) -> None:
 
 
 # 8: an insert read back works when the select rule allows it, and is explained when not
-def test_8_insert_then_read_back() -> None:
+def test_8_insert_then_read_back(data: str) -> None:
     c = Client()
-    ok = send(c, "post", "/notes", {"project_id": 1, "body": "new"}, **as_("1"))
-    unreadable = send(c, "post", "/inbox", {"recipient_id": 2, "body": "hi bo"}, **as_("1"))
-    quiet = send(c, "post", "/inbox/quietly", {"recipient_id": 2, "body": "hi bo"}, **as_("1"))
-    assert ok.status_code == 201 and ok.json()["id"] > 100, ok.content
-    assert unreadable.status_code == 403, unreadable.content
-    assert unreadable.json()["command"] == "select" and "may not see the row as written" in unreadable.json()["detail"]
-    assert quiet.status_code == 202, quiet.content
+    try:
+        ok = send(c, "post", "/notes", {"project_id": 1, "body": "new"}, **as_("1"))
+        unreadable = send(c, "post", "/inbox", {"recipient_id": 2, "body": "hi bo"}, **as_("1"))
+        quiet = send(c, "post", "/inbox/quietly", {"recipient_id": 2, "body": "hi bo"}, **as_("1"))
+        assert ok.status_code == 201 and ok.json()["id"] > 100, ok.content
+        assert unreadable.status_code == 403, unreadable.content
+        assert unreadable.json()["command"] == "select"
+        assert "may not see the row as written" in unreadable.json()["detail"]
+        assert quiet.status_code == 202, quiet.content
+    finally:
+        with psycopg.connect(data, autocommit=True) as owner:  # as it was, for the checks that count the notes
+            owner.execute("DELETE FROM notes WHERE id > 100 AND body = 'new'")
+            owner.execute("DELETE FROM inbox WHERE body = 'hi bo'")
 
 
 # 9: the generated names type-check, and a wrong permission name doesn't

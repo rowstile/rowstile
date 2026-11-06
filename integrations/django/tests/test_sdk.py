@@ -364,7 +364,9 @@ def test_the_start_up_check_inside_a_tests_transaction_keeps_it(unchecked: None)
     assert connection.in_atomic_block and connection.connection is not None
 
 
-def test_check_names_what_is_wrong() -> None:
+@pytest.fixture
+def owner_alias() -> Iterator[str]:
+    """A second alias, "owner", that connects as the tables' owner."""
     port = os.environ["ROWSTILE_OWNER_DSN"].rsplit(":", 1)[1].split("/")[0]  # the owner connects directly
     connections.settings["owner"] = {
         **connection.settings_dict,
@@ -373,38 +375,61 @@ def test_check_names_what_is_wrong() -> None:
         "PORT": port,
     }
     try:
-        assert authz_dj.connection_check("default") == []
-        with pytest.raises(ConnectionProblem, match="an owner skips row-level security") as e:
-            authz_dj.check("owner")
-        assert "conf_owner" in e.value.problems[0]
+        yield "owner"
     finally:
         connections["owner"].close()
         del connections["owner"]
         del connections.settings["owner"]
 
 
+def test_check_names_what_is_wrong(owner_alias: str) -> None:
+    assert authz_dj.connection_check("default") == []
+    with pytest.raises(ConnectionProblem, match="an owner skips row-level security") as e:
+        authz_dj.check(owner_alias)
+    assert "conf_owner" in e.value.problems[0]
+
+
+def test_the_start_up_check_checks_the_aliases_the_setting_names(unchecked: None, owner_alias: str) -> None:
+    checked = override_settings(ROWSTILE_CHECK_DATABASES=["default", owner_alias])
+    with checked, pytest.raises(ConnectionProblem, match="an owner skips row-level security"):
+        authz_dj.Middleware(respond)
+    assert authz_dj._checked == {"default"}  # default passed; the owner's alias didn't, and isn't taken as checked
+    with override_settings(ROWSTILE_CHECK_DATABASES=[owner_alias]):  # the setting alone says which: not default
+        authz_dj._checked.clear()
+        with pytest.raises(ConnectionProblem):
+            authz_dj.Middleware(respond)
+        assert authz_dj._checked == set()
+
+
 # --- writes that changed nothing, and queries by permission --------------------------------------------
 def test_expect_and_save(data: str) -> None:
-    with rowstile.acting_as(3):  # cy may edit note 4, not note 1
-        assert authz_dj.expect(Note.objects.filter(pk=4).update(body="idea"), Note, "update", 4) == 1
-        with pytest.raises(Refused) as refused:
-            authz_dj.expect(Note.objects.filter(pk=1).update(body="x"), "notes", "update", 1)
-        assert refused.value.message == "permission denied: user 3 may not update row 1 of public.notes"
-        assert refused.value.why[0].startswith("no")
-        with pytest.raises(NotFound):  # allowed, but the statement matched nothing for another reason
-            authz_dj.expect(Note.objects.filter(pk=4, body="else").update(body="x"), Note, "update", 4, using="default")
-        deleted = authz_dj.expect(Note.objects.filter(pk=4).delete(), Note, "delete", 4)
-        assert deleted == (1, {"app.Note": 1})
-        note = Note(project_id=1, author_id=3, body="idea")  # a new instance: inserted
-        authz_dj.save(note)
-        assert note.pk is not None and Note.objects.filter(pk=note.pk).exists()
-        note.body = "a better one"
-        authz_dj.save(note)
-    with rowstile.acting_as(1):
-        assert Note.objects.get(pk=note.pk).body == "a better one"
-    with psycopg.connect(data, autocommit=True) as owner:  # as it was
-        owner.execute("DELETE FROM notes WHERE id > 100")
-        owner.execute("INSERT INTO notes (id, project_id, author_id, body) VALUES (4, 1, 3, 'idea')")
+    try:
+        with rowstile.acting_as(3):  # cy may edit note 4, not note 1
+            assert authz_dj.expect(Note.objects.filter(pk=4).update(body="idea"), Note, "update", 4) == 1
+            with pytest.raises(Refused) as refused:
+                authz_dj.expect(Note.objects.filter(pk=1).update(body="x"), "notes", "update", 1)
+            assert refused.value.message == "permission denied: user 3 may not update row 1 of public.notes"
+            assert refused.value.why[0].startswith("no")
+            with pytest.raises(NotFound):  # allowed, but the statement matched nothing for another reason
+                authz_dj.expect(
+                    Note.objects.filter(pk=4, body="else").update(body="x"), Note, "update", 4, using="default"
+                )
+            deleted = authz_dj.expect(Note.objects.filter(pk=4).delete(), Note, "delete", 4)
+            assert deleted == (1, {"app.Note": 1})
+            note = Note(project_id=1, author_id=3, body="idea")  # a new instance: inserted
+            authz_dj.save(note)
+            assert note.pk is not None and Note.objects.filter(pk=note.pk).exists()
+            note.body = "a better one"
+            authz_dj.save(note)
+        with rowstile.acting_as(1):
+            assert Note.objects.get(pk=note.pk).body == "a better one"
+    finally:
+        with psycopg.connect(data, autocommit=True) as owner:  # as it was, however the check ends
+            owner.execute("DELETE FROM notes WHERE id > 100")
+            owner.execute(
+                "INSERT INTO notes (id, project_id, author_id, body) VALUES (4, 1, 3, 'idea') "
+                "ON CONFLICT (id) DO UPDATE SET project_id = 1, author_id = 3, body = 'idea'"
+            )
 
 
 class QuotedNote(models.Model):
