@@ -46,7 +46,7 @@ module Rowstile
   private def self.field_text: (Integer | String | nil value) -> String
   private def self.generic_refusal: (String message, MatchData match) -> Refused
   def self.expect: (Integer changed, String table, String command, id key,
-                    ?connection: ActiveRecord::ConnectionAdapters::PostgreSQLAdapter,
+                    ?connection: ActiveRecord::ConnectionAdapters::PostgreSQLAdapter | singleton(ActiveRecord::Base),
                     ?stale: ActiveRecord::StaleObjectError?) -> Integer
   def self.connection_check: (?singleton(ActiveRecord::Base) model) -> Array[[String, String]]
   def self.check_connection!: (?singleton(ActiveRecord::Base) model) -> void
@@ -126,6 +126,7 @@ module Rowstile
     def can: (T type, id id, P perm) -> bool
     def perms_of: (T type, Array[id] ids) -> Hash[String, Array[P]]
     def permitted: [R < ActiveRecord::Relation] (R scope, T type, P perm) -> R
+    private def listed: (T type, P perm, String cast) -> Arel::Nodes::SqlLiteral
   end
 
   class Middleware

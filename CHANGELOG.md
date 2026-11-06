@@ -521,8 +521,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Ruby SDK keeps Rails from running a statement again on a new connection when the connection drops right after
   the sign-in: the connection's error is raised. Before, Rails began the transaction again without the sign-in, and
   the statement was refused (AZ701).
+- The Ruby SDK's `Queries#permitted` works on a model with a composite key. Before, it raised `KeyError`.
 - The Ruby SDK holds a statement named `SCHEMA` (as Rails names its reads of the catalog) to the transaction's
   principal, as any other: in a transaction signed in as someone else, it raises before anything is sent.
+- The Ruby SDK no longer keeps a connection leased after a refused update or destroy, outside Rails' executor (a
+  thread of the app's own). `Rowstile.expect` takes `connection: Note` (a model) as well as a connection.
 
 ### Upgrading
 
