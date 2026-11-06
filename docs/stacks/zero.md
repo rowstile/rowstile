@@ -198,6 +198,8 @@ whether the row was hidden or refused, and why; the client keeps Zero's own upda
   delivery, and Zero removes the row when the client next syncs.
 - The window after a change is zero-cache's replication lag, and for a share that ends, until the next
   `authz.sync_tick()` too.
+- zero-cache asks the endpoints again when a client adds a query or connects again. Until then, a client signed in
+  with a key revoked, or a session ended, since goes on getting its queries' changes.
 - A client syncs the rows its queries read, the index's among them: its own keys and the readers rows they lead to,
   never another user's key.
 - zero-cache is trusted: it holds BYPASSRLS and every row of what it publishes. rowstile can't check what it

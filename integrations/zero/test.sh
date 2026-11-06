@@ -12,8 +12,8 @@
 #     after    after commit (`sync after commit`): a worker beside the app runs authz.sync_work() in a loop
 # Check 11 first: a fresh database, migrated (the app's SQL migrations, the policy's, and Zero's publication; in
 # another mode, then the migration rowstile migrate writes from the lock file to that mode's policy), then the
-# policy's tests, then the lock files. Then zero-cache starts on the migrated database, the app is built and started,
-# and the other checks run.
+# policy's tests, then the lock files. Then zero-cache starts on the migrated database, the app is built and started
+# twice (a pool of five connections, which zero-cache calls, and a pool of one), and the other checks run.
 set -u
 # what the run makes in /tmp, removed however it ends (a coverage folder CONFORMANCE_COVERAGE names stays)
 TMPS=()
@@ -132,6 +132,12 @@ PORT=$APP node build/src/server.js >"$LOG/server.log" 2>&1 & servers+=($!)
 for _ in $(seq 60); do grep -q "^listening on $APP$" "$LOG/server.log" && break; sleep 1; done
 grep -q "^listening on $APP$" "$LOG/server.log" || { cat "$LOG/server.log"; echo "FAIL  the app doesn't start"; exit 1; }
 export CONFORMANCE_SERVER="http://localhost:$APP"
+# ... and again with a pool of one connection, which the checks call themselves (the stack's 4), at the port it says
+PG_POOL_MAX=1 PORT=0 node build/src/server.js >"$LOG/server-one.log" 2>&1 & servers+=($!)
+one() { sed -n 's/^listening on \([0-9]*\)$/\1/p' "$LOG/server-one.log"; }
+for _ in $(seq 60); do [ -n "$(one)" ] && break; sleep 1; done
+[ -n "$(one)" ] || { cat "$LOG/server-one.log"; echo "FAIL  the app with a pool of one doesn't start"; exit 1; }
+export CONFORMANCE_SERVER_ONE="http://localhost:$(one)"
 # zero-cache: its role, the app's publication, its replica in the container, and the app's endpoints on the host
 docker run -d --name "$NAME-zero" --network "$NAME-net" --add-host=host.docker.internal:host-gateway \
   -p "$((PORT + 1)):4848" \
