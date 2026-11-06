@@ -287,8 +287,11 @@ jobs:
         with: {version: "0.12.21"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with: {node-version: "24"}
-      # uv writes a .gitignore into the folder it builds into: not a file to download (0.1.0-alpha.1 had it)
-      - run: uv build --out-dir dist sdk/python && rm -f dist/.gitignore && uvx twine@7.0.0 check --strict dist/*
+      # uv writes a .gitignore into the folder it builds into: not a file to download (0.1.0-alpha.1 had it). The
+      # build's own packages (hatchling and what it needs) by their hashes (sdk/python/build-requirements.txt)
+      - run: |
+          uv build --build-constraint sdk/python/build-requirements.txt --require-hashes --out-dir dist sdk/python
+          rm -f dist/.gitignore && uvx twine@7.0.0 check --strict dist/*
       # the extension starts the language server with vscode-languageclient: the .vsix carries it (package.json's
       # files lists node_modules; vsce keeps the production dependencies only). vsce is the one editor/publish's
       # lock file holds, as the vscode job's

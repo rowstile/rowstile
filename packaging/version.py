@@ -10,7 +10,7 @@ A version is X.Y.Z; X.Y.Z-alpha.N, X.Y.Z-beta.N or X.Y.Z-rc.N before it (npm's f
 X.Y.Z, never published (PyPI: 0.2.0.dev0). The grammar is the compiler's (core/authzlib/versions.py), the one the
 command orders versions by: a version's alphas, then its betas, its candidates, then the version itself.
 The compiler's version (core/authzlib/__init__.py) is the one the command and the Python package read. The others
-copy it: the TypeScript SDK's packages and their dependencies on each other, the .NET SDK's (sdk/dotnet/Version.props), the Ruby gem, the Java SDK's POMs (its Kotlin module's too), the Rust crate (sdk/rust/Cargo.toml) and the lock files that name it, the Elixir package (sdk/elixir/mix.exs), the PHP SDK's Version (sdk/php/src/Version.php; Composer's version is its tag), the workspace's lock file, the Go
+copy it: the TypeScript SDK's packages and their dependencies on each other, the .NET SDK's (sdk/dotnet/Version.props), the Ruby gem (and the Rails app's lock file, as RubyGems spells it), the Java SDK's POMs (its Kotlin module's too), the Rust crate (sdk/rust/Cargo.toml) and the lock files that name it, the Elixir package (sdk/elixir/mix.exs), the PHP SDK's Version (sdk/php/src/Version.php; Composer's version is its tag), the workspace's lock file, the Go
 module's Version (sdk/go/version.go; Go's tools read a tag sdk/go/vX.Y.Z, which no release makes yet), the MCP registry's entry (server.json), and the review for CI, which installs the release its tag names (its
 action and its GitLab template). The lines that show how to use the review for CI (its action's and its template's
 comments, docs/reference/review.md's workflow) name the newest release, to be copied: a release sets them, and
@@ -61,6 +61,21 @@ PLACES = [
     (["sdk/php/src/Version.php"], r"^    public const VERSION = '([^']+)';"),  # the PHP SDK's; Composer reads tags
 ]
 
+# where the version is written as RubyGems spells it (0.2.0-rc.1 is 0.2.0.pre.rc.1, 0.2.0-dev 0.2.0.pre.dev): the Rails
+# app's lock file, which names the gem it depends on by path (in its PATH spec and its CHECKSUMS)
+GEMS = [(["integrations/rails/Gemfile.lock"], r"^ +rowstile \(([^)]+)\)$")]
+
+
+def gem(version: str) -> str:
+    """A version as RubyGems spells it."""
+    return version.replace("-", ".pre.", 1)
+
+
+def ungem(version: str) -> str:
+    """A version RubyGems spelled, as everything else writes it."""
+    return version.replace(".pre.", "-", 1)
+
+
 # the lines that show how to use the review for CI, with the tag to copy: a release's, set by a release alone
 EXAMPLES = [
     (["review-ci/github/action.yml", "docs/reference/review.md"], r"review-ci/github@v(\S+)"),
@@ -93,6 +108,13 @@ def found(listed: list[tuple[list[str], str]] = PLACES) -> dict[str, list[str]]:
             raise SystemExit(f"version.py: {path} has no match for {rx.pattern}")
         for v in hits:
             out.setdefault(v, []).append(path)
+    if listed is PLACES:
+        for path, rx in places(GEMS):
+            hits = rx.findall(read(path))
+            if not hits:
+                raise SystemExit(f"version.py: {path} has no match for {rx.pattern}")
+            for v in hits:
+                out.setdefault(ungem(v), []).append(path)
     return out
 
 
@@ -120,6 +142,11 @@ def set_version(new: str) -> None:
     for path, rx in places(PLACES if new.endswith("-dev") else PLACES + EXAMPLES):
         text = texts.get(path, read(path))
         texts[path] = rx.sub(lambda m: m.string[m.start(0) : m.start(1)] + new + m.string[m.end(1) : m.end(0)], text)
+    for path, rx in places(GEMS):
+        text = texts.get(path, read(path))
+        texts[path] = rx.sub(
+            lambda m: m.string[m.start(0) : m.start(1)] + gem(new) + m.string[m.end(1) : m.end(0)], text
+        )
     for path, text in texts.items():
         with open(os.path.join(ROOT, path), "w", encoding="utf-8", newline="") as fh:
             fh.write(text)

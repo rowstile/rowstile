@@ -10,7 +10,8 @@
     "CONTRIBUTING.md",
     "RELEASING.md",
     "CONTEXT-MAP.md",
-    "command-files.txt"
+    "command-files.txt",
+    "build-requirements.txt"
   ],
   "rules": [
     "The policy is one .authz file named by rowstile.toml, with its tests beside it. Everything that gives access is written there: app code checks nothing by hand.",

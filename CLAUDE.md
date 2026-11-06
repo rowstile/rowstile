@@ -262,7 +262,7 @@ For one suite, start a container and run it inside:
   long as the container. Its `wal_level` is `logical`: `governance.sh` copies the audit trail to another database
   by a subscription (skipped, saying why, on a server without it). `difftest.py` asks a snapshot's questions in up to four sessions side by side
   (`DIFFTEST_SESSIONS=1`: one), each user's in one session, two users or more to a session.
-- Everything is LF (`.gitattributes`). New scripts are executable in git (`chmod +x`; `Executable` in
+- Everything is LF (`.gitattributes`), but Windows' batch files (`*.cmd`, CRLF when checked out). New scripts are executable in git (`chmod +x`; `Executable` in
   `unit_test.py` checks).
 - `tests/client_types.py` type-checks the generated TS client (CI's `javascript` job; needs `tsc`, no database);
   `tests/tools_test.py` runs the same check if `tsc` is there (skipped otherwise).
