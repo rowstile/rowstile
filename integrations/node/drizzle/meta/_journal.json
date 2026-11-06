@@ -169,6 +169,13 @@
       "when": 1793970248540,
       "tag": "0023_authz_governance_records",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793971327317,
+      "tag": "0024_authz_compiler_cleanup",
+      "breakpoints": true
     }
   ]
 }
