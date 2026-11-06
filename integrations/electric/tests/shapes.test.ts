@@ -33,11 +33,32 @@ let worker: SyncWorker | null = null;
 /** After commit, once the worker's next run has ended: the index holds every change committed before; else at once. */
 const settled = async (): Promise<void> => worker?.ran();
 
-/** Every user's shapes hold what authz.list gives them, of the files and of the folders. */
+/** The users deleted (E14): their shapes are held to nothing more. */
+const gone = new Set<string>();
+let barriers = 0;
+/** Every user's shapes hold what authz.list gives them, of the files and of the folders, once each has had every
+ *  change committed so far: a rename of one of the shape's rows, all in one transaction after the changes, arrives
+ *  after them. (A shape that holds no row has none to rename: it is held to what it holds when asked.) */
 async function asListed(): Promise<void> {
-  for (const user of USERS) {
-    await live[user]!.file.holds(await listed(user, "file"));
-    await live[user]!.folder.holds(await listed(user, "folder"));
+  await settled();                                               // after commit: the index has the changes first
+  const want: { user: string; file: number[]; folder: number[] }[] = [];
+  for (const user of USERS.filter((u) => !gone.has(u))) {
+    want.push({ user, file: await listed(user, "file"), folder: await listed(user, "folder") });
+  }
+  const mark = ` #${++barriers}`;
+  const first = (kind: "file" | "folder") => [...new Set(want.flatMap((w) => w[kind].slice(0, 1)))];
+  await run(`WITH files AS (UPDATE app.files SET name = regexp_replace(name, ' #[0-9]+$', '') || $1 WHERE id = ANY($2::int[]))
+    UPDATE app.folders SET name = regexp_replace(name, ' #[0-9]+$', '') || $1 WHERE id = ANY($3::int[])`,
+    [mark, first("file"), first("folder")]);
+  for (const w of want) {
+    for (const kind of ["file", "folder"] as const) {
+      const [renamed] = w[kind];
+      if (renamed !== undefined) {
+        await live[w.user]![kind].until((l) => String(l.row(renamed)?.name).endsWith(mark),
+          `${kind} ${renamed} renamed after the changes`);
+      }
+      await live[w.user]![kind].holds(w[kind]);
+    }
   }
 }
 
@@ -271,6 +292,32 @@ test("E10: answers vary on who asks, and a cache never gives one user's shape to
   expect(nobody.status).toBe(401);
 });
 
+// A client that leaves while Electric's answer is still streaming (a live shape over SSE, a tab closed) ends that
+// answer alone: the app answers the next request
+test("a client that leaves mid-answer ends that answer alone", async () => {
+  const first = await fetch(`${SERVER}/shapes/files?offset=-1`, { headers: as("1") });
+  const [handle, offset] = [first.headers.get("electric-handle"), first.headers.get("electric-offset")];
+  await first.arrayBuffer();
+  const gone = new AbortController();
+  // the answer's headers come with its first event: a change ann reads, made once the stream is open
+  const streaming = fetch(`${SERVER}/shapes/files?offset=${offset}&handle=${handle}&live=true&live_sse=true`,
+    { headers: as("1"), signal: gone.signal });
+  streaming.catch(() => undefined);              // (awaited below; a rejection is seen there)
+  try {
+    await run("UPDATE app.files SET name = 'while streaming' WHERE id = 1");
+    const sse = await streaming;
+    expect([sse.status, sse.headers.get("content-type")]).toEqual([200, expect.stringMatching(/^text\/event-stream/)]);
+    gone.abort();                                                // the client leaves, the answer still open
+    await new Promise((resolve) => setTimeout(resolve, 500));    // the app sees it go, and aborts Electric's answer
+    const again = await fetch(`${SERVER}/shapes/files?offset=-1`, { headers: as("1") });
+    expect(again.status).toBe(200);
+  } finally {
+    gone.abort();
+    await run("UPDATE app.files SET name = 'a' WHERE id = 1");
+  }
+  await live["1"]!.file.until((l) => l.row(1)?.name === "a", "file 1 as it was");
+});
+
 // E11: writes through the app, as its users: an allowed one arrives in the shapes of those who may read the row; a
 // refused one is 403 with the reason, a hidden row 404
 test("E11: writes through the app arrive in the shapes", async () => {
@@ -303,9 +350,11 @@ test("E12: lint, then rowstile apply and reapply leave the shapes as they are", 
   const errors = async () => ((await run("SELECT object || ': ' || problem AS p FROM authz.lint() WHERE severity = 'error'"))
     .rows as { p: string }[]).map((r) => r.p);
   expect(await errors()).toEqual([]);
-  // the shapes as E12 starts: their handles, and how many controls each was sent so far
-  const handles = Object.fromEntries(USERS.map((u) => [u, live[u]!.file.stream.shapeHandle]));
-  const sent = Object.fromEntries(USERS.map((u) => [u, live[u]!.file.controls.length]));
+  // the shapes as E12 starts, the files' and the folders': their handles, and how many controls each was sent so far
+  const shapesOf = (u: string) => [["file", live[u]!.file], ["folder", live[u]!.folder]] as const;
+  const handlesNow = () => Object.fromEntries(USERS.flatMap((u) => shapesOf(u).map(([k, l]) => [`${u} ${k}`, l.stream.shapeHandle])));
+  const handles = handlesNow();
+  const sent = Object.fromEntries(USERS.flatMap((u) => shapesOf(u).map(([k, l]) => [`${u} ${k}`, l.controls.length])));
   // as whoever runs the database: what the app's owner can't do to a role
   const admin = (sql: string) => owner((c) => c.query(sql), process.env.ROWSTILE_ADMIN_DSN ?? "");
   for (const [broken, mended, says] of [
@@ -343,9 +392,11 @@ test("E12: lint, then rowstile apply and reapply leave the shapes as they are", 
     await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '1')");
     await live["1"]!.file.holds([1, 2, 3, 4, 6]);
     await asListed();
-    expect(Object.fromEntries(USERS.map((u) => [u, live[u]!.file.stream.shapeHandle]))).toEqual(handles);
+    expect(handlesNow()).toEqual(handles);
     for (const u of USERS) {
-      expect([u, live[u]!.file.controls.slice(sent[u]).filter((c) => c === "must-refetch")]).toEqual([u, []]);
+      for (const [k, l] of shapesOf(u)) {
+        expect([u, k, l.controls.slice(sent[`${u} ${k}`]).filter((c) => c === "must-refetch")]).toEqual([u, k, []]);
+      }
     }
   } finally {
     await run(unshare);
@@ -405,6 +456,7 @@ test("E14: a user deleted: their keys go, and their shape empties", async () => 
     expect((await fetch(`${SERVER}/shapes/files?offset=-1`, { headers: as("4") })).status).toBe(401);
   } finally {
     dee.close();
+    gone.add("4");                                               // her shapes are refused from now on
   }
 });
 

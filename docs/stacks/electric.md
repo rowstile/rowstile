@@ -134,10 +134,15 @@ const electric = { url: process.env.ELECTRIC_URL ?? "", secret: process.env.ELEC
 export const routes = new Map<string, (req: Request) => Promise<Response>>([
   ["files", electricShape(shapes["app.files"], electric)],
   ["folders", electricShape(shapes["app.folders"], electric)],
-  // the policy masks the notes' body: the columns to sync leave it out
+  // the policy masks the notes' body: the columns to sync leave it out; Electric serves the route only while the
+  // notes are published, and they aren't: here, only a check publishes them, for a moment
   ["notes", electricShape(shapes["app.notes"] satisfies ElectricShape, { ...electric, columns: ["id", "file_id", "author_id"] })],
 ]);
 ```
+
+The notes' route serves nothing while the notes aren't in the publication, as here: Electric serves a table only
+once it is published. The suite's check of the masked column publishes them for a moment, and lint reports it. To
+sync such a table, keep the masked column in a table of its own: the route then needs no `columns`.
 
 Express hands each route fetch's `Request` (the app's `fetched`, in `src/app.ts`); a framework whose route
 handlers take fetch's `Request` (a Next.js route handler, Hono) takes the route as it is, for GET and POST:

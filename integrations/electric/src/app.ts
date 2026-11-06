@@ -1,7 +1,7 @@
 // The app: Express 5. Its shape routes stand in front of Electric: each asks the database who the request is, then
 // hands Electric the shape the policy gives them (@rowstile/client's electricShape, on the constants rowstile client
 // electric writes). Its other routes write through the database, which refuses what the user may not write.
-import { Readable } from "node:stream";
+import { Readable, pipeline } from "node:stream";
 import express, { type NextFunction, type Request as ExpressRequest, type Response as ExpressResponse } from "express";
 import { actingAs, electricShape, problemOf, syncPrincipal, type ElectricShape } from "@rowstile/client";
 import { KEY, USER, keyOf, userOf } from "./auth.js";
@@ -27,7 +27,8 @@ const electric = { url: process.env.ELECTRIC_URL ?? "", secret: process.env.ELEC
 export const routes = new Map<string, (req: Request) => Promise<Response>>([
   ["files", electricShape(shapes["app.files"], electric)],
   ["folders", electricShape(shapes["app.folders"], electric)],
-  // the policy masks the notes' body: the columns to sync leave it out
+  // the policy masks the notes' body: the columns to sync leave it out; Electric serves the route only while the
+  // notes are published, and they aren't: here, only a check publishes them, for a moment
   ["notes", electricShape(shapes["app.notes"] satisfies ElectricShape, { ...electric, columns: ["id", "file_id", "author_id"] })],
 ]);
 
@@ -44,7 +45,9 @@ async function fetched(handler: (req: Request) => Promise<Response>, req: Expres
     { method: req.method, headers, body, signal: gone.signal, duplex: "half" } as RequestInit));
   res.status(answer.status);
   answer.headers.forEach((value, name) => res.setHeader(name, value));
-  if (answer.body) Readable.fromWeb(answer.body as import("node:stream/web").ReadableStream).pipe(res);
+  // (pipeline, not pipe: a client that leaves mid-answer, a live shape over SSE, aborts Electric's answer, and that
+  // error ends this answer alone, not the process)
+  if (answer.body) pipeline(Readable.fromWeb(answer.body as import("node:stream/web").ReadableStream), res, () => {});
   else res.end();
 }
 
