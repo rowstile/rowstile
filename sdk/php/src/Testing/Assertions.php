@@ -13,8 +13,6 @@ use Rowstile\Refused;
 use Rowstile\Rowstile;
 use Throwable;
 
-use function str_starts_with;
-
 /**
  * PHPUnit assertions for apps on rowstile, for a TestCase:
  *
@@ -37,8 +35,8 @@ trait Assertions
     }
 
     /**
-     * $fn must be refused by the policy (by the rule for $command, on $table, when given); returns the Refused. A
-     * database error that is no refusal fails the test with it.
+     * $fn must be refused by the policy (by the rule for $command, when given: select, insert, update or delete; on
+     * $table, when given); returns the Refused. A database error that is no refusal fails the test with it.
      */
     public function assertRefused(Closure $fn, ?string $command = null, ?string $table = null): Refused
     {
@@ -47,7 +45,7 @@ trait Assertions
         } catch (Throwable $e) {
             $refused = Rowstile::refusal($e) ?? throw $e;
             if ($command !== null) {
-                Assert::assertTrue(str_starts_with((string) $refused->command, $command), "expected the {$command} rule to refuse it, but: {$refused->command}: {$refused->getMessage()}");
+                Assert::assertSame($command, $refused->command, "expected the {$command} rule to refuse it, but: {$refused->command}: {$refused->getMessage()}");
             }
             if ($table !== null) {
                 Assert::assertSame($table, $refused->table);

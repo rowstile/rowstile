@@ -436,6 +436,10 @@ final class SdkTest extends TestCase
         $refused = $this->asUser(3, fn (): Refused => $this->assertRefused(static fn () => Note::query()->findOrFail(1)->update(['body' => 'x']), 'update', 'app.notes'));
         self::assertSame('update', $refused->command);
         $this->assertRefused(static fn () => throw new Refused('no'));
+        // the command, equal: not how it begins
+        foreach (['upd', ''] as $part) {
+            self::assertInstanceOf(AssertionFailedError::class, self::thrown(fn () => $this->asUser(3, fn (): Refused => $this->assertRefused(static fn () => Note::query()->findOrFail(1)->update(['body' => 'x']), $part))));
+        }
         self::assertInstanceOf(QueryFailed::class, self::thrown(fn () => $this->assertRefused(static fn () => throw new QueryFailed())));
         self::assertInstanceOf(AssertionFailedError::class, self::thrown(fn () => $this->assertRefused(static fn (): int => 1)));
         self::assertInstanceOf(NotFound::class, $this->assertNotFound(static fn () => throw new NotFound()));
