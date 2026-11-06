@@ -1294,6 +1294,9 @@ class LanguageForms(unittest.TestCase):
             "/* don't } */ true",
             "/* a /* nested } */ ' { */ true",
             "price$$ > 0",
+            # (as in Postgres, every character beyond ASCII goes on a name: an em dash's, an emoji's)
+            "x\u2014$$ > 0",
+            "x\U0001f600$$ > 0",
             "a$ = $1",
             "$$ $$$$}$$ <> ''",
         ):
