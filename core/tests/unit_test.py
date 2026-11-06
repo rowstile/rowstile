@@ -16159,31 +16159,26 @@ class Features(unittest.TestCase):
             features.problems([gone if x is f else x for x in features.FEATURES]),
         )
 
-    def test_a_feature_that_grants_outside_tier_one_is_named_on_the_page(self) -> None:
-        # what writes authz.shares, itself or through a call (lint only names signatures in strings)
+    def test_a_feature_that_grants_or_revokes_is_tier_one(self) -> None:
+        # what writes authz.shares or what a custom role gives, itself or through a call (lint only names signatures
+        # in strings)
         self.assertEqual(
             features.granting(),
             {"api.share", "api.unshare", "api.create_link", "api.revoke_link", "api.decide_request"}
-            | {"api.break_glass", "api.close_review"},
+            | {"api.break_glass", "api.close_review"}
+            | {"api.create_role", "api.set_role_permissions", "api.delete_role"},
         )
-        self.assertEqual(features.exceptions(), set())  # every one is in tier 1
-        # a granting feature put in tier 2 without the page saying so; one the page names; one it names wrongly
+        # a granting feature put in tier 2: refused, saying the page's rule
         lowered = [
-            dataclasses.replace(x, tier=2) if x.id in ("api.links", "api.reviews") else x for x in features.FEATURES
+            dataclasses.replace(x, tier=2) if x.id in ("api.links", "api.roles") else x for x in features.FEATURES
         ]
+        found = features.problems(lowered)
         self.assertIn(
-            "api.links: tier 2, and it grants or revokes access (api.create_link, api.revoke_link): make it tier 1, or "
-            f"name it on docs/how-it-is-checked.md where it says which features {features.EXCEPTIONS}",
-            features.problems(lowered),
-        )
-        with mock.patch.object(features, "exceptions", return_value={"api.reviews", "api.sharing"}):
-            found = features.problems(lowered)
-        self.assertFalse([p for p in found if p.startswith("api.reviews: tier 2")], found)
-        self.assertIn(
-            f"docs/how-it-is-checked.md names api.sharing among the features {features.EXCEPTIONS}, and it is no "
-            "feature of tier 2 or 3",
+            "api.links: tier 2, and it grants or revokes access (api.create_link, api.revoke_link): make it tier 1, as "
+            "docs/how-it-is-checked.md says every such feature is",
             found,
         )
+        self.assertTrue([p for p in found if p.startswith("api.roles: tier 2, and it grants or revokes access")], found)
 
     def test_the_surface_is_read_from_the_code(self) -> None:
         found = features.surface()
@@ -16192,6 +16187,8 @@ class Features(unittest.TestCase):
         self.assertIn("cli.migrate --one-phase", found["the command"])
         self.assertIn("cli.migrate --check", found["the command"])
         self.assertNotIn("cli.review --check", found["the command"])  # 'migrate --check' on review's lines
+        # a sub-package's own modules (rowstile.django.testing), not its __init__ alone
+        self.assertIn("sdk.py.django.testing.database_per_worker", set().union(*found.values()))
         self.assertIn("lsp.documentSymbol", found["the language server"])
         self.assertIn("studio.decide", found["Studio"])
         self.assertIn("sdk.ts.prisma.AuthzCalls", found["the TypeScript SDK"])

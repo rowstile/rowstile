@@ -276,6 +276,8 @@ want=$(PSQL -c "SELECT array_to_string(authz.perms('folder', 1), E'\n')")  # nob
 run perms --as anyone folder 1; [ $rc -eq 0 ] && [ "$out" = "${want:-(none)}" ] && ok "--as anyone asks as nobody signed in" || bad "--as anyone" "$rc $out (wanted $want)"
 run perms --as 5 folder 1; [ $rc -eq 2 ] && [ "$out" = "--as 5: write it as user:42, bot:7 or anyone" ] && ok "--as without a type is refused, with how to write it" || bad "--as 5" "$rc $out"
 run can folder 1 view; [ $rc -eq 2 ] && [ "$out" = "rowstile can: as whom? --as user:42 (or bot:7, or anyone)" ] && ok "a question without --as asks as whom" || bad "can without --as" "$rc $out"
+# who may go without --as (it asks as the owner); with it, it signs in first: a type that doesn't sign in is refused
+run who --as nobody:x folder 1 view; case "$out" in *"nobody is not a type that signs in"*"AZ707"*) [ $rc -eq 1 ] && ok "who --as signs in first: as a type that doesn't sign in, refused" || bad "who --as exit" "$rc";; *) bad "who --as" "$out";; esac
 run can --as user:5 folder 1
 [ "$rc $out" = "2 rowstile can takes 3 arguments, not 2:
 rowstile can     --as WHO TYPE ID PERM         yes or no" ] && ok "a question an argument short is refused, with its usage" || bad "can short" "$rc $out"

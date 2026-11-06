@@ -5,7 +5,7 @@ adversarial 122
 apply 177
 capitals 106
 children 162
-cli 189
+cli 190
 concurrency 38
 confidence 66
 cookbook 103
@@ -33,7 +33,7 @@ migrate vs apply 97
 migrations 87
 moves 23
 multi scenario 119
-policy errors 293
+policy errors 298
 principals 135
 reference 31
 review 60
