@@ -15,5 +15,6 @@ COPY examples/messenger/backend/ ./
 COPY examples/messenger/db/ /ms/db/
 COPY --from=web /web/dist /ms/frontend/dist
 ENV PATH=/ms/backend/.venv/bin:$PATH
-# migrations and the policy first, as the database owner; then the app, as ms_app
-CMD ["sh", "-c", "python /ms/db/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# the app, as ms_app. The migrations and the policy run before it, as the database owner, in a service of their
+# own (docker-compose.yml: python /ms/db/migrate.py), so the app never holds the owner's password
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

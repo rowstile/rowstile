@@ -3,7 +3,8 @@
 #   docker compose up -d db                 # just the database, for running the backend on the host
 # The database is published on this machine only (127.0.0.1). Its superuser makes the database and ms_owner
 # (db/owner.sql), once; the migrations, the policy and the tests run as ms_owner, the tables' owner, as rowstile's
-# setup has it: no superuser.
+# setup has it: no superuser. The migrations run in a service of their own, which ends before the app starts: the
+# app never holds the owner's password, only ms_app's, which row-level security applies to.
 services:
   db:
     build: {context: ../.., dockerfile: core/Dockerfile, args: {PG_MAJOR: "16"}}
@@ -12,12 +13,17 @@ services:
     ports: ["127.0.0.1:25433:5432"]
     volumes: [db:/var/lib/postgresql/data, ./db/owner.sql:/docker-entrypoint-initdb.d/owner.sql:ro]
     healthcheck: {test: ["CMD", "pg_isready", "-U", "postgres", "-d", "messenger"], interval: 2s, retries: 30}
-  app:
+  migrate:
     build: {context: ../.., dockerfile: examples/messenger/backend/Dockerfile}
+    command: ["python", "/ms/db/migrate.py"]
     depends_on: {db: {condition: service_healthy}}
     environment:
       MS_ADMIN_URL: postgresql://ms_owner:ms_owner@db:5432/messenger
       MS_APP_PASSWORD: ms_app
+  app:
+    build: {context: ../.., dockerfile: examples/messenger/backend/Dockerfile}
+    depends_on: {migrate: {condition: service_completed_successfully}}
+    environment:
       MS_DATABASE_URL: postgresql://ms_app:ms_app@db:5432/messenger
     ports: ["8001:8000"]
 volumes: {db: {}}
