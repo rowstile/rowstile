@@ -493,6 +493,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Spring starter makes the transaction manager it hands out with its class's constructor, where it has one without
   arguments (Spring's own managers), and writes no final field by reflection, which JDK 26 warns of and a later JDK is
   to refuse.
+- The Kotlin module leaves alone the statements of Exposed's R2DBC transactions, which run its check that a
+  transaction is one principal's too: with the module on the classpath, each failed with a `ClassCastException`.
 
 ### Upgrading
 

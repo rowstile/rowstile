@@ -59,11 +59,12 @@ private fun JdbcTransaction.check() {
  * Before each statement Exposed runs, in any of its transactions (a global interceptor, which Exposed finds by its
  * service file): in one [transaction] or [suspendTransaction] signed in, while the code acts for someone else (an
  * [ActingAs] of another principal's), or for nobody, the statement is refused before it is sent
- * (IllegalStateException, [Rowstile.signedInAlready]), and the transaction is left as it was.
+ * (IllegalStateException, [Rowstile.signedInAlready]), and the transaction is left as it was. Exposed's R2DBC
+ * transactions, which run it too, are none of this module's: their statements go on as they are.
  */
 internal class OnePrincipal : GlobalStatementInterceptor {
     override fun beforeExecution(transaction: Transaction, context: StatementContext) {
-        (transaction as JdbcTransaction).check()
+        (transaction as? JdbcTransaction)?.check()
     }
 }
 
