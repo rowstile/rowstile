@@ -503,6 +503,12 @@ defmodule Conformance.SdkTest do
 
     wrong = assert_raise ExUnit.AssertionError, fn -> assert_refused(refused, "delete") end
     assert wrong.message =~ "expected the delete rule to refuse it, but: insert"
+    # the rule's whole name: a part of it, or none, is no rule's
+    for part <- ["ins", ""] do
+      cut = assert_raise ExUnit.AssertionError, fn -> assert_refused(refused, part) end
+      assert cut.message =~ "expected the #{part} rule to refuse it, but: insert"
+    end
+
     none = assert_raise ExUnit.AssertionError, fn -> assert_refused({:ok, 1}) end
     assert none.message =~ "expected a refusal"
 
