@@ -1366,6 +1366,7 @@ class LanguageForms(unittest.TestCase):
                 (7, 19, 8, 23),
             ),
             ("  can view = owner and {a = 'x\n  y'}\n", (5, 29, 5, 30)),  # (the line break: the end of its line)
+            ('  can view = owner\ntest "t"\n  as user 1 sees 1 {SELECT "x}\n  user 1 can view doc 1\n', (7, 19, 8, 23)),
         ):
             with self.subTest(tail), self.assertRaises(PolicyError) as e:
                 Compiler(parse_policy(base + tail)).compile("x")
