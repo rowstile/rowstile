@@ -24,6 +24,7 @@ test "customers open tickets in their workspace, unassigned"
   as user $cy allowed {INSERT INTO hd.tickets (workspace_id, subject, requester_id) VALUES ($a, 'Printer', $cy)}
   as user $cy refused {INSERT INTO hd.tickets (workspace_id, subject, requester_id) VALUES ($a, 'Printer', $di)}
   as user $cy refused {INSERT INTO hd.tickets (workspace_id, subject, requester_id, team_id) VALUES ($a, 'Printer', $cy, $support)}
+  as user $cy refused {INSERT INTO hd.tickets (workspace_id, subject, requester_id, status) VALUES ($a, 'Printer', $cy, 'closed')}
   as user $cy sees 1 {SELECT FROM hd.tickets}
   as user $di sees 0 {SELECT FROM hd.tickets}
 
@@ -131,6 +132,11 @@ test "a customer org's people see each other's tickets when it says so"
   given {UPDATE hd.customer_orgs SET shared_tickets = true WHERE id = $o}
   user $mi can view ticket $t
   user $mi cannot reply ticket $t
+  -- an agent takes someone out of the org, and with it out of its tickets
+  given al = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'agent', 'Al', 'al@acme') RETURNING id}
+  as user $mi refused {UPDATE hd.users SET customer_org_id = NULL WHERE id = $mi}
+  as user $al allowed {UPDATE hd.users SET customer_org_id = NULL WHERE id = $mi}
+  user $mi cannot view ticket $t
 
 test "copied in: someone of the workspace, never of another"
   given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
@@ -180,6 +186,15 @@ test "the vendor's staff: by break glass only, where the workspace lets them in"
   -- and responder is for staff only, whoever gives it
   as user $ann refused {SELECT authz.share('ticket', $t::text, 'responder', 'user', $cy::text)}
 
+test "support access that ended lets no one in"
+  given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
+  given cy = {INSERT INTO hd.users (workspace_id, kind, name, email) VALUES ($a, 'customer', 'Cy', 'cy@mail') RETURNING id}
+  given sam = {INSERT INTO hd.users (kind, name, email) VALUES ('staff', 'Sam', 'sam@vendor') RETURNING id}
+  given t = {INSERT INTO hd.tickets (workspace_id, subject, requester_id) VALUES ($a, 'Help', $cy) RETURNING id}
+  given {INSERT INTO hd.support_access (workspace_id, staff_id, until) VALUES ($a, $sam, now() - interval '1 minute')}
+  user $sam cannot break_glass ticket $t
+  as user $sam refused {SELECT authz.break_glass('ticket', $t::text, 'responder', 'case 7', '1 hour')}
+
 test "an admin views the app as someone of their workspace"
   given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
   given b = {INSERT INTO hd.workspaces (name) VALUES ('Globex') RETURNING id}
@@ -209,3 +224,62 @@ test "the email intake: its key makes tickets and customers, and nothing more"
   as integration $mail with scope intake refused {UPDATE hd.tickets SET subject = 'x' WHERE id = $t}
   -- a reply, never an internal note
   as integration $mail with scope intake refused {INSERT INTO hd.comments (ticket_id, integration_id, internal, body) VALUES ($t, $mail, true, 'a note')}
+  -- the key reads only what the scope names: the integration itself may read its own row
+  as integration $mail sees 1 {SELECT FROM hd.integrations}
+  as integration $mail with scope intake sees 0 {SELECT FROM hd.integrations}
+
+test "a workspace may open its queue to every agent"
+  given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
+  given oz = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'agent', 'Oz', 'oz@acme') RETURNING id}
+  given cy = {INSERT INTO hd.users (workspace_id, kind, name, email) VALUES ($a, 'customer', 'Cy', 'cy@mail') RETURNING id}
+  given t = {INSERT INTO hd.tickets (workspace_id, subject, requester_id) VALUES ($a, 'Help', $cy) RETURNING id}
+  user $oz cannot work ticket $t
+  given {UPDATE hd.workspaces SET open_queue = true WHERE id = $a}
+  user $oz can work ticket $t
+  user $cy cannot work ticket $t
+
+test "an admin sets who is an admin, and who is active; no one changes what kind someone is"
+  given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
+  given ann = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'admin', 'Ann', 'ann@acme') RETURNING id}
+  given al = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'agent', 'Al', 'al@acme') RETURNING id}
+  given oz = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'agent', 'Oz', 'oz@acme') RETURNING id}
+  given cy = {INSERT INTO hd.users (workspace_id, kind, name, email) VALUES ($a, 'customer', 'Cy', 'cy@mail') RETURNING id}
+  as user $al refused {UPDATE hd.users SET role = 'admin' WHERE id = $al}
+  as user $al refused {UPDATE hd.users SET active = false WHERE id = $oz}
+  as user $ann allowed {UPDATE hd.users SET role = 'admin' WHERE id = $al}
+  as user $ann refused {UPDATE hd.users SET kind = 'agent', role = 'agent' WHERE id = $cy}
+
+test "a deactivated user or integration is nobody"
+  given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
+  given al = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'agent', 'Al', 'al@acme') RETURNING id}
+  given cy = {INSERT INTO hd.users (workspace_id, kind, name, email) VALUES ($a, 'customer', 'Cy', 'cy@mail') RETURNING id}
+  given mail = {INSERT INTO hd.integrations (workspace_id, name) VALUES ($a, 'Email') RETURNING id}
+  given t = {INSERT INTO hd.tickets (workspace_id, subject, requester_id, assignee_id) VALUES ($a, 'Help', $cy, $al) RETURNING id}
+  user $al can work ticket $t
+  user $cy can view ticket $t
+  integration $mail can view ticket $t
+  given {UPDATE hd.users SET active = false WHERE id IN ($al, $cy)}
+  given {UPDATE hd.integrations SET active = false WHERE id = $mail}
+  user $al cannot view ticket $t
+  user $cy cannot view ticket $t
+  integration $mail cannot view ticket $t
+
+test "a lead moves a team only under one they manage"
+  given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
+  given lea = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'agent', 'Lea', 'lea@acme') RETURNING id}
+  given support = {INSERT INTO hd.teams (workspace_id, name) VALUES ($a, 'Support') RETURNING id}
+  given sales = {INSERT INTO hd.teams (workspace_id, name) VALUES ($a, 'Sales') RETURNING id}
+  given billing = {INSERT INTO hd.teams (workspace_id, name) VALUES ($a, 'Billing') RETURNING id}
+  given {INSERT INTO hd.team_leads (workspace_id, team_id, user_id) VALUES ($a, $support, $lea), ($a, $billing, $lea)}
+  as user $lea refused {UPDATE hd.teams SET parent_id = $sales WHERE id = $billing}
+  as user $lea allowed {UPDATE hd.teams SET parent_id = $support WHERE id = $billing}
+
+test "only an admin deletes a ticket"
+  given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
+  given ann = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'admin', 'Ann', 'ann@acme') RETURNING id}
+  given al = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'agent', 'Al', 'al@acme') RETURNING id}
+  given cy = {INSERT INTO hd.users (workspace_id, kind, name, email) VALUES ($a, 'customer', 'Cy', 'cy@mail') RETURNING id}
+  given t = {INSERT INTO hd.tickets (workspace_id, subject, requester_id, assignee_id) VALUES ($a, 'Help', $cy, $al) RETURNING id}
+  as user $al refused {DELETE FROM hd.tickets WHERE id = $t}
+  as user $cy refused {DELETE FROM hd.tickets WHERE id = $t}
+  as user $ann allowed {DELETE FROM hd.tickets WHERE id = $t}
