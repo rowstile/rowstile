@@ -484,6 +484,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Spring starter signs in JPA's transactions on any JPA provider (EclipseLink), not on Hibernate alone: without
   it, `JpaTransactionManager`'s transactions were signed in to no one, and their queries failed (AZ701). Saying why an
   entity's update or delete changed nothing is still Hibernate's.
+- The Spring starter reads a refused entity delete as a delete with Hibernate's comments in its SQL
+  (`hibernate.use_sql_comments`). Before, it asked the update rule why, and could answer 409 where the delete rule
+  refused (403).
 
 ### Upgrading
 
