@@ -30,7 +30,7 @@ import textwrap
 import threading
 import types
 import unittest
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import ClassVar, Protocol, cast
@@ -8272,15 +8272,16 @@ class Fmt(unittest.TestCase):
         self.assertEqual(format(src), want)
 
     def test_every_policy_formats_the_same_twice_and_says_the_same(self) -> None:
+        # the suites' fixed policies, the docs app's tests, and each recipe's and each app's policy and tests, found
         from authzlib.fmt import format
         from authzlib.migrate import meaning_lines
 
-        for rel in list(POLICIES.values()) + [
-            "example/docs.test.authz",
-            "../docs/cookbook/sharing-and-links/policy.authz",
-            "../examples/filemanager/db/policy.authz",
-            "../examples/messenger/db/policy.authz",
-        ]:
+        repo = os.path.dirname(ROOT)
+        apps = [os.path.dirname(p) for p in sweep_plan.app_policies(repo)]
+        found = glob.glob("docs/cookbook/*/*.authz", root_dir=repo)
+        found += [p for app in apps for p in [f"{app}/policy.authz", *glob.glob(f"{app}/tests/*.authz", root_dir=repo)]]
+        self.assertGreater(len(apps), 10)
+        for rel in list(POLICIES.values()) + ["example/docs.test.authz"] + [f"../{p}" for p in sorted(found)]:
             text = read(rel)
             once = format(text)
             self.assertEqual(format(once), once, rel)
@@ -15989,8 +15990,8 @@ class ScannerSteps(unittest.TestCase):
 
 class FuzzParser(unittest.TestCase):
     """tests/fuzz_parser.py, each push's robustness check of the parser: it mutates every fixed policy of the suites,
-    the docs app with its named tests and the hand-answered policies, and puts in the language's words, as the
-    parser looks for them, not the forms it dropped."""
+    the docs app with its named tests, the hand-answered policies and every app's, and puts in the language's words,
+    as the parser looks for them, not the forms it dropped."""
 
     def test_it_starts_from_the_suites_policies(self) -> None:
         import fuzz_parser
@@ -15999,7 +16000,8 @@ class FuzzParser(unittest.TestCase):
         files = glob.glob(os.path.join(ROOT, "tests", "*.authz")) + glob.glob(
             os.path.join(ROOT, "tests", "hand", "*.authz")
         )
-        self.assertEqual(len(texts), len(files) + 3)  # (and the docs app with its named tests, the two example apps)
+        apps = sweep_plan.app_policies(os.path.dirname(ROOT))
+        self.assertEqual(len(texts), len(files) + 1 + len(apps))  # (and the docs app with its named tests, the apps)
         every = "\n".join(texts)
         # forms only a few of them have: named tests and their lines, scopes in a test, a principal type, dollar
         # quotes and E'' strings, a link table's where with this., cascade from
@@ -19436,12 +19438,100 @@ class Mutants(unittest.TestCase):
             {"id": "gc", "result": "MISSED"},
             {"id": "gd", "result": "not run"},
             {"id": "ge", "result": "scenario"},
+            {"id": "gf", "result": "compiler fails"},
+            {"id": "gg", "result": "same"},
+            {"id": "gh", "result": "unreached"},
+            {"id": "gi", "result": "a suite since taken out"},
+            {"id": "gj", "result": "error"},
         ]
+        ids = {"ga", "gb", "gc", "gd", "gf", "gg", "gh", "gi", "gj"}
         with tempfile.TemporaryDirectory() as d:
             sweep.write_jsonl(os.path.join(d, "results.jsonl"), rows)
-            got = sweep.carried_over(d, {"ga", "gb", "gc", "gd"}, {"gc": ("equivalent", "why"), "gb": ("lead", "")})
-        # a lead runs again (its check may be written by now); ge's line changed
-        self.assertEqual([r["id"] for r in got], ["ga", "gc"])
+            got = sweep.carried_over(d, ids, {"gc": ("equivalent", "why"), "gb": ("lead", "")})
+        # a lead runs again (its check may be written by now); ge's line changed. `same` and `unreached` are decided
+        # again: they hang on more than the line (a new app's policy, what the suites ran); so is a catch by a suite
+        # the sweep no longer has
+        self.assertEqual([r["id"] for r in got], ["ga", "gc", "gf"])
+        self.assertTrue(all(r["carried"] for r in got))
+
+    def test_every_apps_policy_is_compiled(self) -> None:
+        # the cheap phase's other outputs (and the parser fuzzer's seeds): every app's policy and its tests, found;
+        # a mutant that changes only an app's SQL is no `same`
+        found = set()
+        for top in ("examples", "integrations"):
+            for d, dirs, files in os.walk(os.path.join(self.REPO, top)):
+                dirs[:] = [x for x in dirs if x not in {"node_modules", ".venv", "dist", "vendor", "deps", "_build"}]
+                found |= {os.path.relpath(os.path.join(d, f), self.REPO) for f in files if f == "policy.authz"}
+        apps = sweep_plan.app_policies(self.REPO)
+        self.assertEqual(apps, sorted(found))
+        self.assertIn("integrations/laravel/database/policy.authz", apps)
+        import fuzz_parser
+
+        self.assertEqual([f"../{p}" for p in sweep_plan.APPS], list(fuzz_parser.APPS))
+        outputs = {(label, policy, tests) for label, policy, tests, _ in sweep_plan.other_outputs(self.REPO)}
+        for p in apps:
+            app = os.path.dirname(os.path.dirname(p))
+            self.assertIn((app, p, None), outputs)
+            for t in glob.glob(os.path.join(os.path.dirname(p), "tests", "*.authz"), root_dir=self.REPO):
+                self.assertIn((f"{app} tests {os.path.basename(t)}", p, t), outputs)
+        self.assertEqual(len({label for label, *_ in outputs}), len(outputs))
+
+    def calls_at(self, root: str, data: Mapping[str, object]) -> sweep_plan.Calls:
+        path = os.path.join(root, "calls.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        return sweep_plan.Calls.load(path, root)
+
+    def test_the_call_data_is_read_at_the_sweeps_commit(self) -> None:
+        # CI's coverage run may be at another commit than the sweep's: its lines are moved through git's diff, and
+        # those changed since are unknown (none taken as unreached); a commit the checkout lacks: nothing is known
+        git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "core", "authzlib")
+            os.makedirs(src)
+
+            def commit(text: str) -> str:
+                with open(os.path.join(src, "x.py"), "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                subprocess.run([*git, "-C", d, "add", "-A"], check=True, capture_output=True)
+                subprocess.run([*git, "-C", d, "commit", "-qm", "x"], check=True, capture_output=True)
+                return subprocess.run(
+                    ["git", "-C", d, "rev-parse", "HEAD"], capture_output=True, text=True
+                ).stdout.strip()
+
+            subprocess.run(["git", "init", "-q", d], check=True)
+            old = commit("".join(f"line {n}\n" for n in range(1, 11)))
+            # two lines in before line 3, line 6 changed, line 9 dropped
+            lines = [f"line {n}\n" for n in range(1, 11)]
+            lines[5] = "changed\n"
+            del lines[8]
+            commit("".join(lines[:2] + ["new\n", "new\n"] + lines[2:]))
+            data = {"source": "a run", "functions": {}, "lines": {"authzlib/x.py": {"cli": [[1, 10]]}}}
+            calls = self.calls_at(d, {**data, "commit": old})
+            self.assertEqual(calls.lines["authzlib/x.py"]["cli"], [[1, 2], [5, 7], [9, 11]])
+            self.assertEqual(calls.unknown["authzlib/x.py"], [[3, 4], [8, 8]])
+            self.assertEqual([calls.known("authzlib/x.py", n) for n in (2, 3, 8, 9)], [True, False, False, True])
+            self.assertIn("its lines moved to this checkout's, from", calls.source)
+            same = self.calls_at(d, {**data, "commit": "HEAD"})
+            self.assertEqual((same.lines["authzlib/x.py"]["cli"], same.unknown, same.source), ([[1, 10]], {}, "a run"))
+            for gone in ({**data, "commit": "0" * 40}, data):
+                lost = self.calls_at(d, gone)
+                self.assertEqual((lost.lines, lost.measured, lost.known("authzlib/x.py", 1)), ({}, False, False))
+                self.assertIn("not found in this checkout: no line taken as unreached", lost.source)
+        self.assertEqual([sweep_plan.moved([(3, 0, 4, 2), (6, 1, 8, 1)], n) for n in (3, 4, 6, 7)], [3, 6, 0, 9])
+
+    def test_no_line_the_call_data_cant_speak_for_is_unreached(self) -> None:
+        text = "def view(t: str) -> str:\n    return f'SELECT 1 WHERE {t} AND b'\n"
+        m = next(m for m in self.made(text) if m.op == "sql AND->OR")
+        base = sweep_plan.Base(self.REPO, sweep_plan.Group("", {}, {}), [])
+        known = sweep_plan.Calls({}, {}, "test")
+        for calls, kind in (
+            (known, "unreached"),
+            (sweep_plan.Calls({}, {}, "test", unknown={"authzlib/view.py": [[2, 2]]}), "python"),
+            (sweep_plan.Calls.load(None), "python"),
+        ):
+            got = sweep_plan.Planner(base, calls).classify(m, text, "core")
+            self.assertEqual((got.kind, got.selected), (kind, []), calls)
 
     def test_the_survivors_file(self) -> None:
         listed = sweep.read_survivors(sweep.SURVIVORS)
@@ -19635,6 +19725,9 @@ class Mutants(unittest.TestCase):
         self.assertLess(timeout, 360)  # GitHub's runners stop a job at six hours
         self.assertLessEqual(budget + 60, timeout)  # the mutant in flight when the budget is used up still ends
         self.assertEqual(set(re.findall(r"sweep\.py (\w+)", text)), {"calls", "prepare", "run", "collect"})
+        # the call data: a green run of this very commit, else main's latest, and the commit it was measured at
+        self.assertIn('for pick in "--commit=$GITHUB_SHA" --branch=main; do', text)
+        self.assertIn('--commit "$sha" --out .mutants/prepared/calls.json', text)
         # the next run resumes from what collect keeps: every run's results, but a run that didn't carry the latest
         # ones (resume: none or a run id; a run of every mutant still runs 30 a shard) keeps them under another name
         self.assertIn("-n mutants-results ", text)
