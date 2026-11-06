@@ -191,3 +191,16 @@ describe("the email intake", () => {
     expect((await al.send("POST", `/api/integrations/${EMAIL_INTAKE}/keys`, { name: "mine" })).status).toBe(403);
   });
 });
+
+describe("who may see a ticket but not who asked", () => {
+  // the vendor's staff after break glass, and someone copied in from another org (the tests above made both)
+  test("the inbox shows the ticket all the same", async () => {
+    for (const email of ["sam@vendor.test", "milton@initech.test"]) {
+      const person = await as(email);
+      expect((await person.get(`/api/tickets/${tickets.password}`)).json.requester).toBeNull();
+      const inbox = await fetch(`${SERVER}/inbox`, { headers: { cookie: person.cookie() } });
+      expect(inbox.status).toBe(200);
+      expect(await inbox.text(), email).toContain("Password reset never arrives");
+    }
+  });
+});

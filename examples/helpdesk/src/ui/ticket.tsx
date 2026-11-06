@@ -8,7 +8,8 @@ import { LiveRefresh } from "./live-refresh.tsx";
 
 interface Ticket {
   id: string; subject: string; status: string; perms: string[];
-  requester: { name: string };
+  // null where the user may see the ticket but not who asked (the vendor's staff, someone copied in)
+  requester: { name: string } | null;
   // author: null where the user may not see who wrote it
   comments: { id: string; body: string; internal: boolean; byEmail: boolean; author: { name: string } | null }[];
 }
@@ -35,7 +36,7 @@ export function TicketView({ id }: { id: string }) {
     <>
       <h1>{ticket.subject}</h1>
       <LiveRefresh table="comments" onChange={load} />
-      <p>From {ticket.requester.name} · <span className="tag">{ticket.status}</span> · you may: {ticket.perms.join(", ") || "nothing"}</p>
+      <p>From {ticket.requester?.name ?? "someone"} · <span className="tag">{ticket.status}</span> · you may: {ticket.perms.join(", ") || "nothing"}</p>
       <ProblemNote problem={problem} />
       {ticket.comments.map((c) => (
         <section key={c.id} className={c.internal ? "internal" : ""}>

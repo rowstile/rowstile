@@ -3,7 +3,9 @@ import { inTx } from "@/db.ts";
 import { LiveRefresh } from "@/ui/live-refresh.tsx";
 
 // The tickets the database shows the user: an agent sees the workspace's, and works those of their teams; a
-// customer sees their own (and their org's, where it shares them). The page asks which ones the user works.
+// customer sees their own (and their org's, where it shares them). The page asks which ones the user works. Someone
+// may see a ticket and not who asked (the vendor's staff by break glass, a customer copied in from another org):
+// Prisma then gives no requester, whatever its type says.
 async function Tickets() {
   const { tickets, mine } = await inTx(async (tx) => {
     const tickets = await tx.ticket.findMany({
@@ -21,7 +23,7 @@ async function Tickets() {
         {tickets.map((t) => (
           <tr key={t.id}>
             <td><a href={`/tickets/${t.id}`}>{t.subject}</a></td>
-            <td>{t.requester.name}</td>
+            <td>{t.requester?.name ?? "someone"}</td>
             <td>{t.team?.name ?? ""}</td>
             <td>{t.status}</td>
             <td>{mine.has(t.id) && <span className="tag">yours to work</span>}</td>
