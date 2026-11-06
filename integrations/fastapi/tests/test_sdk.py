@@ -962,6 +962,45 @@ def test_an_app_without_a_driver_has_no_handler_for_its_errors() -> None:
     assert got.returncode == 0 and got.stdout.strip() == handled, (got.stdout, got.stderr)
 
 
+DRIVER_ALONE = """
+import asyncio
+import sys
+
+sys.modules["sqlalchemy"] = None  # not installed
+
+import httpx
+import psycopg
+import rowstile.psycopg as pgp
+from fastapi import FastAPI
+from rowstile.fastapi import Rowstile
+
+app = FastAPI()
+Rowstile(app, None, user=lambda request: "2")
+
+
+@app.post("/notes")
+async def add() -> None:
+    async with await psycopg.AsyncConnection.connect(sys.argv[1]) as aconn, pgp.atransaction(aconn):
+        await aconn.execute("INSERT INTO app.notes (project_id, author_id, body) VALUES (3, 2, 'hi')")
+
+
+async def main() -> None:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://sdk") as c:
+        refused = await c.post("/notes")
+    ours = [e for e in app.exception_handlers if isinstance(e, type) and not e.__module__.startswith(("starlette", "fastapi"))]
+    print(refused.status_code, refused.json()["command"], sorted(e.__module__ + "." + e.__name__ for e in ours))
+
+
+asyncio.run(main())
+"""
+
+
+def test_an_app_on_psycopg_or_asyncpg_alone_needs_no_sqlalchemy() -> None:
+    got = subprocess.run([sys.executable, "-c", DRIVER_ALONE, libpq(APP)], capture_output=True, text=True)
+    handled = "['asyncpg.exceptions._base.PostgresError', 'psycopg.Error', 'rowstile.NotFound', 'rowstile.Refused']"
+    assert got.returncode == 0 and got.stdout.strip() == f"403 insert {handled}", (got.stdout, got.stderr)
+
+
 async def test_asyncpg_blocks_inside_a_block_and_expect() -> None:
     conn = await asyncpg.connect(libpq(APP))
     try:
