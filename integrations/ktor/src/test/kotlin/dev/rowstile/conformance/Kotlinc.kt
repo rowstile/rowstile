@@ -45,14 +45,29 @@ object Kotlinc {
         return Files.writeString(file, text)
     }
 
-    /** The rowstile command (test.sh's ROWSTILE_CLI), run in [dir]: what it printed. */
+    /**
+     * The rowstile command (test.sh's ROWSTILE_CLI), run in [dir]: what it printed. Its output goes to a file, so that
+     * the wait has its limit: a command that hangs is stopped after two minutes, and the check says so.
+     */
     fun rowstile(dir: Path, vararg args: String): String {
-        val p = ProcessBuilder(System.getenv("ROWSTILE_CLI").split(" ") + args)
-            .directory(dir.toFile())
-            .redirectErrorStream(true)
-            .start()
-        val out = p.inputStream.readAllBytes().toString(Charsets.UTF_8)
-        check(p.waitFor(120, TimeUnit.SECONDS) && p.exitValue() == 0) { "rowstile ${args.joinToString(" ")}: $out" }
-        return out
+        val said = Files.createTempFile("rowstile", ".out")
+        try {
+            val p = ProcessBuilder(System.getenv("ROWSTILE_CLI").split(" ") + args)
+                .directory(dir.toFile())
+                .redirectErrorStream(true)
+                .redirectOutput(said.toFile())
+                .start()
+            val done = p.waitFor(120, TimeUnit.SECONDS)
+            if (!done) {
+                p.destroyForcibly().waitFor()
+            }
+            val out = Files.readString(said)
+            check(done && p.exitValue() == 0) {
+                "rowstile ${args.joinToString(" ")}: ${if (done) "" else "no answer in two minutes: "}$out"
+            }
+            return out
+        } finally {
+            Files.deleteIfExists(said)
+        }
     }
 }
