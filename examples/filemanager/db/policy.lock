@@ -135,7 +135,7 @@ function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type t
 function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 493c2d0fe148 shape=9eda2a73
 function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 8a2c1c44fbcc shape=961eacc3
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | e4efce2de16b shape=3053d63c
-function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 71bf7d31b848 shape=386e2b78
+function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | c565abc6deb9 shape=386e2b78
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 87f2949cb44e shape=1caa9ec9
 function authz.share(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 66d709f69121 shape=d26f54a1
 function authz.share(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 64daabdd2acd shape=a7761e79
@@ -152,7 +152,7 @@ function authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type
 function authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | 9c287ae61155 shape=0bec2b1b
 function authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text) | 66234f034396 shape=cc8a7dbb
 function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text) | 3ffeeac7471d shape=83104d14
-function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | a2f7d53a50b8 shape=d4ebe9cc
+function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | fc5abfbbdbc4 shape=d4ebe9cc
 function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text) | d9181c30d80d shape=42efbb66
 function authz.unshare(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text) | a99d6de12de8 shape=d37015bf
 function authz.unshare(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | 5f197b2fa529 shape=2446d596
@@ -392,7 +392,7 @@ function authz_int.b64url(p text) | 5692fc0b5c1e shape=17f0c842
 function authz_int.caller_is_admin() | 33a690b7bfd1 shape=268ddaf7
 function authz_int.caller_role() | f21245c06777 shape=96997846
 function authz_int.can(p_type text, p_id text, p_perm text) | 2656f5b5e940 shape=ab126b5f
-function authz_int.canon(p_type text, p_id text) | 2a3ac59562a6 shape=ab774d8a
+function authz_int.canon(p_type text, p_id text) | 163b5e69cbee shape=ab774d8a
 function authz_int.changed(p_type text, p_ids text[], p_cause text) | a711a89ca6d9 shape=7a5b1adc
 function authz_int.check_manage_keys(p_type text, p_id text) | 5c1c44f7a9a5 shape=391727a0
 function authz_int.check_writable() | 87ff3161cc1d shape=a16d3e7b
@@ -428,7 +428,7 @@ function authz_int.session_refused() | 1bba4bdf36fe shape=3950e31a
 function authz_int.session_sig() | fc1acf146ca0 shape=7531c149
 function authz_int.share_if(p_key text, p_object_id text, p_subject_type text, p_subject_id text, p_subject_relation text) | 36fbdc8a3756 shape=f9b63b7b
 function authz_int.share_why(p_type text, p_id text, p_perms text[]) | 1c3f979cfb86 shape=5e37bd9b
-function authz_int.shares_canon() | 641cdc251996 shape=ebabc566
+function authz_int.shares_canon() | 3181e0c19201 shape=ebabc566
 function authz_int.sign() | 26fda3872285 shape=de0f1c18
 function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b078e77 shape=13054e65
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
@@ -463,15 +463,15 @@ rls "fm"."group_members" | ee33dea70fbf
 rls "fm"."groups" | 81615f18f2ef
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
-step base | 2175b4f10f33
+step base | 0191e50ac02f
 step cascades | 4b3dc6c5499f
 step grant_api | 555f7af430e0
 step grant_functions | b71705286cf2
 step grant_views | f5e06792b144
 step mask_privileges | ef21e3cee165
-step share_indexes | 06f2a06178e6
+step share_indexes | 44bd1b62a0b9
 step sweep | a91797a846f7
-step tables | 1d5cab63d07d
+step tables | 489cb15b722f
 table authz_gen.policy_lines | 061bc9901cca shape=dcfedc96
 table authz_int."folder__parent__tree" | 533ed647de51 shape=533ed647 tree=folder__parent__tree
 table authz_int."group__parent__tree" | f4724b0f333d shape=f4724b0f tree=group__parent__tree
@@ -578,7 +578,7 @@ trigger authz_role_perm_audit ON authz.role_permissions | 00c06f622ad5
 trigger authz_role_perm_feed_del ON authz.role_permissions | 718bb2791f0d
 trigger authz_role_perm_feed_ins ON authz.role_permissions | 8eadbd50d772
 trigger authz_share_audit ON authz.shares | 71f2e2c3290d
-trigger authz_shares_canon ON authz.shares | 93a3fd26e809
+trigger authz_shares_canon ON authz.shares | 01de580f7b5b
 view authz_int."file__edit" | 994cbaada15d
 view authz_int."file__editor" | 420036abc2ee
 view authz_int."file__folder__edit" | 9e5565180980
