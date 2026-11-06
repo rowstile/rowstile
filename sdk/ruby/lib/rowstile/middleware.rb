@@ -26,32 +26,4 @@ module Rowstile
       [status, { "content-type" => "application/problem+json" }, [JSON.generate(problem)]]
     end
   end
-
-  class << self
-    # The problem body for an error, or nil when it is none of rowstile's answers (the app's to answer). A query
-    # in a transaction nobody signed in to is the app's bug: NotSignedIn, which says how.
-    def problem_of(error)
-      case error
-      when Refused, NotFound then error.problem
-      when ActiveRecord::RecordNotFound then NotFound.new(table_of(error.model), error.id).problem
-      when ActiveRecord::StaleObjectError then CONFLICT
-      else
-        found = refusal(error)&.problem || call_problem(error)
-        if found.nil? && not_signed_in?(error)
-          raise NotSignedIn, "a query ran in a transaction nobody signed in to: every transaction must begin with " \
-                             "authz.act_as() (rowstile signs in Active Record's while the code acts for someone: a " \
-                             "request, a job, Rowstile.acting_as)"
-        end
-        found
-      end
-    end
-
-    private
-
-    # the table of the model Active Record names ("Note": app.notes)
-    def table_of(model)
-      found = model && ActiveSupport::Inflector.safe_constantize(model)
-      found.table_name if found.is_a?(Class) && found < ActiveRecord::Base
-    end
-  end
 end

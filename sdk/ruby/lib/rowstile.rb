@@ -269,6 +269,25 @@ module Rowstile
       { "type" => kind, "title" => title, "status" => status, "detail" => said.message, "code" => said.code }
     end
 
+    # The problem body for an error, or nil when it is none of rowstile's answers (the app's to answer). A query
+    # in a transaction nobody signed in to is the app's bug: NotSignedIn, which says how. (The Railtie's middleware
+    # answers with it; an app without Rails may too.)
+    def problem_of(error)
+      case error
+      when Refused, NotFound then error.problem
+      when ActiveRecord::RecordNotFound then NotFound.new(table_of(error.model), error.id).problem
+      when ActiveRecord::StaleObjectError then CONFLICT
+      else
+        found = refusal(error)&.problem || call_problem(error)
+        if found.nil? && not_signed_in?(error)
+          raise NotSignedIn, "a query ran in a transaction nobody signed in to: every transaction must begin with " \
+                             "authz.act_as() (rowstile signs in Active Record's while the code acts for someone: a " \
+                             "request, a job, Rowstile.acting_as)"
+        end
+        found
+      end
+    end
+
     # A row's key as Postgres writes it: 7, or (1,2) for a composite key, an Array of its values (a field quoted only
     # where Postgres would: empty, or holding a comma, a quote, a backslash, a parenthesis or one of ASCII's six
     # spaces, and for no other character).
@@ -290,6 +309,12 @@ module Rowstile
     end
 
     private
+
+    # the table of the model Active Record names ("Note": app.notes)
+    def table_of(model)
+      found = model && ActiveSupport::Inflector.safe_constantize(model)
+      found.table_name if found.is_a?(Class) && found < ActiveRecord::Base
+    end
 
     def field_text(value)
       return "" if value.nil?

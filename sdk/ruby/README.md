@@ -25,7 +25,7 @@ config.active_record.schema_format = :sql                          # db/structur
 | `Rowstile::Job` | `include Rowstile::Job` and `acts_for ["service", 1]`: the job acts for its principal, whatever enqueued it, and reads its arguments (a record) as it |
 | `Rowstile::Testing` | Minitest: `as_user`, `assert_refused(command:, table:)`, `assert_not_found`; `Rowstile::Testing.database_per_worker(owner_url, worker)`, a copy of the migrated test database for each `parallelize` worker |
 | the dump | a dump of a database with a policy can't make one (no grants, none of the policy's rows): `db:migrate` and `db:prepare` migrate an empty database from its first migration, and loading the dump any other way raises `Rowstile::SchemaLoadRefused`, before `db:test:prepare` empties the test database |
-| errors | `Rowstile.refusal(error)`, `error_code(error)` (`AZ709`: `rowstile help AZ709`), `sqlstate`, `not_signed_in?`, `problem_of(error)` |
+| errors | `Rowstile.refusal(error)`, `error_code(error)` (`AZ709`: `rowstile help AZ709`), `sqlstate`, `not_signed_in?`, `problem_of(error)` (with Rails or without) |
 
 Signatures: `sig/rowstile.rbs` (RBS), for Steep. `rowstile client ruby` writes the policy's names as constants
 (`Authz::Note::EDIT`), and `rowstile client rbs` their signatures, whose literal types make Steep refuse a
