@@ -78,6 +78,13 @@ class Loc:
             return None
         if end <= start:  # a place, not words (an empty item between two commas): the character there
             start, end = (start, start + 1) if start < len(self.text) else (max(0, start - 1), max(1, start))
+        # the space or line break put between two lines is no words: a span ends before it, and one that is only that
+        # is the character before it (the end of its line)
+        joints = {s - 1 for s, _, _ in self.origin[1:]}
+        while end - 1 > start and end - 1 in joints:
+            end -= 1
+        if end - 1 == start and start in joints:
+            start, end = start - 1, start
         last = self.at(end - 1)
         return (*self.at(start), last[0], last[1] + 1)
 

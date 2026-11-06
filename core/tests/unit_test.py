@@ -1355,6 +1355,17 @@ class LanguageForms(unittest.TestCase):
             ("  can view = owner\ninvariants\n  never doc view\n", (7, 12, 7, 16)),
             ('  can view = owner\ntest "t"\n  as user 1 sees 3x {SELECT 1}\n', (7, 17, 7, 19)),
             ("  can view = owner\nscope files-:read = doc.view\n", (6, 12, 6, 13)),
+            # a quote left open in a test's braces: its lines are the step's, to the end, where the words end (not
+            # the line break after the last one, nor the blank lines)
+            (
+                '  can view = owner\ntest "t"\n  as user 1 sees 1 {SELECT \'a}\n  user 1 can view doc 1\n',
+                (7, 19, 8, 23),
+            ),
+            (
+                '  can view = owner\ntest "t"\n  as user 1 sees 1 {SELECT \'a}\n  user 1 can view doc 1\n\n',
+                (7, 19, 8, 23),
+            ),
+            ("  can view = owner and {a = 'x\n  y'}\n", (5, 29, 5, 30)),  # (the line break: the end of its line)
         ):
             with self.subTest(tail), self.assertRaises(PolicyError) as e:
                 Compiler(parse_policy(base + tail)).compile("x")
