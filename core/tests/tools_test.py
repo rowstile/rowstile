@@ -94,6 +94,25 @@ def statements(client: str) -> int:
     return len(re.findall(r"[\"'`]SELECT\b", client))
 
 
+def unprepared(conn: pgwire.Connection, texts: list[str], prefix: str) -> list[tuple[str, str]]:
+    """The statements that don't prepare as the app role, and why. Postgres checks a schema's USAGE as it reads a
+    statement: so as the app role, which the clients' statements run as, not as the owner, who may name anything.
+    Each in a savepoint, so one that fails leaves the others to be tried."""
+    bad: list[tuple[str, str]] = []
+    conn.execute("BEGIN")
+    conn.execute("SET LOCAL ROLE app_user")
+    for i, text in enumerate(texts):
+        conn.execute("SAVEPOINT prepared")
+        try:
+            conn.query(f"PREPARE {prefix}_{i} AS {text}")
+            conn.execute(f"DEALLOCATE {prefix}_{i}")
+        except pgwire.PgError as e:
+            conn.execute("ROLLBACK TO SAVEPOINT prepared")
+            bad.append((text, e.message))
+    conn.execute("ROLLBACK")
+    return bad
+
+
 def psql(db: str, *cmds: str) -> str:
     args = ["psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-d", db]
     for c in cmds:
@@ -286,16 +305,18 @@ def main() -> None:
     check("use_links: the tokens are for the transaction, none left after it", left == [("",)], left)
     py = compiler.client("py", "docs.authz")
     client_sql = re.findall(r'"(SELECT [^"]+)"', py)
-    bad = []
-    for i, text in enumerate(client_sql):
+    # (a statement the app role can't read is refused: the check reads as the app role reads)
+    hidden = unprepared(conn, ["SELECT authz_int.canon('file', $1::text)"], "hidden")
+    denied = [why for _, why in hidden] == ["permission denied for schema authz_int"]
+    check("a statement that names authz_int doesn't prepare as the app role", denied, hidden)
+    numbered: list[str] = []
+    for text in client_sql:
         n = text.count("%s")
         text = text.replace("%s", "$@")
         for k in range(1, n + 1):
             text = text.replace("$@", f"${k}", 1)
-        try:
-            conn.query(f"PREPARE py_{i} AS {text}")
-        except pgwire.PgError as e:
-            bad.append((text, e.message))
+        numbered.append(text)
+    bad = unprepared(conn, numbered, "py")
     # each statement is found: as many as the client has strings that start with SELECT, whatever their quotes
     found = len(client_sql) == statements(py) > 20
     check(
@@ -305,12 +326,7 @@ def main() -> None:
     print("-- the TypeScript client (--client ts)")
     ts = compiler.client("ts", "docs.authz")
     ts_sql = re.findall(r'"(SELECT [^"]+)"', ts)
-    bad = []
-    for i, text in enumerate(ts_sql):
-        try:
-            conn.query(f"PREPARE ts_{i} AS {text}")
-        except pgwire.PgError as e:
-            bad.append((text, e.message))
+    bad = unprepared(conn, ts_sql, "ts")
     found = len(ts_sql) == statements(ts) > 20
     check(
         f"every statement of the TypeScript client prepares ({len(ts_sql)})", found and not bad, (statements(ts), bad)
