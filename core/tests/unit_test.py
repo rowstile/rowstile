@@ -6695,8 +6695,7 @@ class Wire(unittest.TestCase):
                 data += chunk
             return data
 
-        def said(kind: bytes, body: bytes = b"") -> bytes:
-            return kind + struct.pack("!i", 4 + len(body)) + body
+        said = Wire.said
 
         def sasl(conn: socket.socket) -> bool:
             salt, rounds = b"0123456789abcdef", 4096
@@ -8275,12 +8274,18 @@ class Fmt(unittest.TestCase):
         from authzlib.fmt import format
         from authzlib.migrate import meaning_lines
 
+        # every policy and test file in the repository (the cookbook's, the hand answers', the apps'), but the editor's
+        # fixture that includes a file it doesn't have (it is a grammar's case, not a policy)
         repo = os.path.dirname(ROOT)
-        apps = [os.path.dirname(p) for p in sweep_plan.app_policies(repo)]
-        found = glob.glob("docs/cookbook/*/*.authz", root_dir=repo)
-        found += [p for app in apps for p in [f"{app}/policy.authz", *glob.glob(f"{app}/tests/*.authz", root_dir=repo)]]
-        self.assertGreater(len(apps), 10)
-        for rel in list(POLICIES.values()) + ["example/docs.test.authz"] + [f"../{p}" for p in sorted(found)]:
+        every = sorted(
+            os.path.relpath(f, ROOT)
+            for f in glob.glob(os.path.join(repo, "**", "*.authz"), recursive=True)
+            if not {"node_modules", "dist", ".git"} & set(os.path.relpath(f, repo).split(os.sep))
+        )
+        self.assertGreater(len(every), 100)
+        for rel in every:
+            if rel == os.path.join("..", "editor", "test", "blocks.authz"):
+                continue
             text = read(rel)
             once = format(text)
             self.assertEqual(format(once), once, rel)
@@ -12806,6 +12811,41 @@ class SearchPath(unittest.TestCase):
                     self.assertIn("SET search_path FROM CURRENT", st.split("$f$")[0], f"{name}: {st[:120]}")
 
 
+RAISE_END = re.compile(r";(?=\n|\"|')")  # a RAISE statement's end, in SQL or in a string
+
+
+def raise_statements() -> Iterator[tuple[str, int, str]]:
+    """Each RAISE EXCEPTION statement in authzlib's code: its file (authzlib/x.py), its line, its text to its end."""
+    for name in sorted(os.listdir(os.path.join(ROOT, "authzlib"))):
+        if not name.endswith(".py"):
+            continue
+        src = read(f"authzlib/{name}")
+        for m in re.finditer(r"RAISE EXCEPTION", src):
+            end = RAISE_END.search(src, m.start())
+            yield f"authzlib/{name}", src.count("\n", 0, m.start()) + 1, src[m.start() : end.end() if end else len(src)]
+
+
+def code_strings(src: str) -> list[str]:
+    """The strings a Python source's code holds (messages, SQL), not its comments nor its docstrings: where a code
+    that is used is written."""
+    import ast
+
+    tree = ast.parse(src)
+    docs = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+    return [
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs
+    ]
+
+
 class ErrorCodes(unittest.TestCase):
     """Every mistake has a stable code and a page (authzlib/errors.py; docs/errors/ is written from it)."""
 
@@ -12850,8 +12890,18 @@ class ErrorCodes(unittest.TestCase):
                     f"authzlib/{name} line {node.lineno}: a mistake without a known code",
                 )
                 used.add(str(value))
-            used |= {a or b for a, b in re.findall(r"\[(AZ\d{3})\]|rowstile help (AZ\d{3})", src)}
+            used |= {
+                a or b
+                for text in code_strings(src)
+                for a, b in re.findall(r"\[(AZ\d{3})\]|rowstile help (AZ\d{3})", text)
+            }
         self.assertEqual(sorted(set(CODES) - used), [], "codes nothing raises (retire them in errors.py instead)")
+
+    def test_a_code_counts_as_used_where_code_writes_it(self) -> None:
+        # a message or SQL, not a comment nor a docstring: a code whose last raise went, but that a comment still
+        # names, is a code nothing raises
+        src = '"""The module (AZ101)."""\n# [AZ102] said here only\ndef f() -> None:\n    """[AZ103]"""\n    fail("[AZ104]")\n'
+        self.assertEqual(code_strings(src), ["[AZ104]"])
 
     def test_every_code_found_when_compiling_has_a_case(self) -> None:
         """Each code the compiler gives (found when a policy or its tests are compiled) has a case in
@@ -12882,27 +12932,19 @@ class ErrorCodes(unittest.TestCase):
         the message."""
         from authzlib.errors import CODES
 
-        for name in sorted(os.listdir(os.path.join(ROOT, "authzlib"))):
-            if not name.endswith(".py"):
-                continue
-            src = read(f"authzlib/{name}")
-            for m in re.finditer(r"RAISE EXCEPTION", src):
-                end = re.compile(r";(?=\n|\"|')").search(src, m.start())  # the statement's end, in SQL or a string
-                stmt = src[m.start() : end.end() if end else len(src)]
-                for code in re.findall(r"\[(AZ\d{3})\]", stmt):
-                    self.assertNotEqual(
-                        CODES[code].when,
-                        "runtime",
-                        f"authzlib/{name} line {src.count(chr(10), 0, m.start()) + 1}: {code} is one apps meet: "
-                        "its code goes in the HINT (rowstile help " + code + "), not at the end of the message",
-                    )
-                if re.search(r"\[AZ\d{3}\]|rowstile help AZ\d{3}|HINT = \{lit\(hint\)\}", stmt) or any(
-                    u in stmt for u in self.UNCODED
-                ):
-                    continue
-                self.fail(
-                    f"authzlib/{name} line {src.count(chr(10), 0, m.start()) + 1}: a RAISE without a code: {stmt[:120]}"
+        for path, line, stmt in raise_statements():
+            for code in re.findall(r"\[(AZ\d{3})\]", stmt):
+                self.assertNotEqual(
+                    CODES[code].when,
+                    "runtime",
+                    f"{path} line {line}: {code} is one apps meet: "
+                    "its code goes in the HINT (rowstile help " + code + "), not at the end of the message",
                 )
+            if re.search(r"\[AZ\d{3}\]|rowstile help AZ\d{3}|HINT = \{lit\(hint\)\}", stmt) or any(
+                u in stmt for u in self.UNCODED
+            ):
+                continue
+            self.fail(f"{path} line {line}: a RAISE without a code: {stmt[:120]}")
 
     def test_examples(self) -> None:
         """Each page's mistake gives its code; its fix compiles."""
@@ -12975,20 +13017,14 @@ class RuntimeAnswers(unittest.TestCase):
     def raised(self) -> dict[str, set[str]]:
         """Each runtime code, and the SQLSTATEs the generated SQL raises it with."""
         out: dict[str, set[str]] = {}
-        for name in sorted(os.listdir(os.path.join(ROOT, "authzlib"))):
-            if not name.endswith(".py"):
+        for path, line, stmt in raise_statements():
+            code = re.search(r"rowstile help (AZ7\d\d)", stmt)
+            if not code:
                 continue
-            src = read(f"authzlib/{name}")
-            for m in re.finditer(r"RAISE EXCEPTION", src):
-                end = re.compile(r";(?=\n|\"|')").search(src, m.start())  # the statement's end, in SQL or a string
-                stmt = src[m.start() : end.end() if end else len(src)]
-                code = re.search(r"rowstile help (AZ7\d\d)", stmt)
-                if not code:
-                    continue
-                state = re.search(r"ERRCODE = '(\w+)'", stmt)
-                where = f"authzlib/{name} line {src.count(chr(10), 0, m.start()) + 1}"
-                self.assertIn(state.group(1) if state else "", self.STATES, f"{where}: an ERRCODE this test can't name")
-                out.setdefault(code.group(1), set()).add(self.STATES[state.group(1) if state else ""])
+            state = re.search(r"ERRCODE = '(\w+)'", stmt)
+            where = f"{path} line {line}"
+            self.assertIn(state.group(1) if state else "", self.STATES, f"{where}: an ERRCODE this test can't name")
+            out.setdefault(code.group(1), set()).add(self.STATES[state.group(1) if state else ""])
         return out
 
     def page(self, code: str) -> tuple[str, str]:
@@ -13236,6 +13272,8 @@ class StackPages(unittest.TestCase):
         )
         out: dict[str, list[str]] = {}
         for f in files:
+            if f.endswith(".md") and f != path:  # a folder's READMEs and docs show code: they are no tested file
+                continue
             if f.endswith(
                 (
                     ".py",
