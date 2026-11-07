@@ -13,6 +13,9 @@ module.exports = grammar({
 
   extras: ($) => [/\s/, $.comment],
 
+  // read in src/scanner.c: a dollar quote ($$x$$, $tag$x$tag$) and a /* comment */, which nests
+  externals: ($) => [$._dollar_quote, $._block_comment, $._error_sentinel],
+
   word: ($) => $.identifier,
 
   inline: ($) => [$._relation_name],
@@ -37,20 +40,21 @@ module.exports = grammar({
     string: (_) => /"[^"\n]*"/,
 
     // {any SQL}: braces nest, and what parse.py's Scanner reads as quoted may hold braces and quotes: 'text',
-    // E'text' (with backslash escapes), "names", $$text$$ and /* comments */ (a -- comment is one of the extras).
-    // A name's letters and digits are read whole, a $ in it too (a$b), so an E or a $ after them opens nothing
+    // E'text' (with backslash escapes), "names", $$text$$ or $tag$text$tag$ and /* comments */, which nest (those
+    // two read in src/scanner.c; a -- comment is one of the extras). A name's letters and digits are read whole, any
+    // letter past ASCII and a $ in it too (a$b), so an E or a $ after them opens nothing
     sql: ($) => seq("{", optional($.sql_text), "}"),
     sql_text: ($) =>
       repeat1(
         choice(
-          /[A-Za-z0-9_\u0080-￿][A-Za-z0-9_$\u0080-￿]*/,
+          /([A-Za-z0-9_]|[^\x00-\x7f])([A-Za-z0-9_$]|[^\x00-\x7f])*/,
           /[!#%&()*+,.:;<=>?@\[\\\]^`|~]+/,
           /[-\/$]/,
           /'([^']|'')*'/,
           /[Ee]'([^'\\]|\\(.|\n)|'')*'/,
           /"([^"]|"")*"/,
-          /\$\$([^$]|\$[^$])*\$\$/,
-          /\/\*([^*]|\*+[^*\/])*\*+\//,
+          $._dollar_quote,
+          $._block_comment,
           $._sql_nested,
         ),
       ),
@@ -192,7 +196,11 @@ module.exports = grammar({
     never: ($) => seq("never", field("type", $.identifier), ":", field("expression", $._expression)),
 
     // ---- tests: `test` (checks), or `test "name"` (given, as, checks) ---------------------------
-    test: ($) => seq("test", optional(field("name", $.string)), repeat(choice($.check, $.given, $.as))),
+    test: ($) =>
+      seq("test", optional(field("name", alias($._test_name, $.string))), repeat(choice($.check, $.given, $.as))),
+    // as parse.py reads it: to the last quote on the line, which may hold quotes (Studio writes `test "... file a"b"`);
+    // a -- outside the quotes that pair up starts the line's comment
+    _test_name: (_) => /"[^"\n]*"(([^"\n-]|-[^"\n-])*-?("[^"\n]*"|"))*/,
     check: ($) =>
       seq(
         $._who,

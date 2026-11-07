@@ -336,23 +336,31 @@ def main() -> None:
     try:
         with open(gram, encoding="utf-8") as fh:
             g = json.load(fh)
-        pats: list[str] = []
+        pats: list[tuple[str, str]] = []
 
         def walk(x: object) -> None:
             if isinstance(x, dict):
                 for k, v in x.items():
-                    if k in ("match", "begin", "end") and isinstance(v, str):
-                        pats.append(v)
+                    if isinstance(k, str) and k in ("match", "begin", "end") and isinstance(v, str):
+                        pats.append((k, v))
                     walk(v)
             elif isinstance(x, list):
                 for v in x:
                     walk(v)
 
+        def python(key: str, p: str) -> str:
+            # Oniguruma's (VS Code's) forms Python's re writes otherwise: \x{80} is \U00000080, and an end's \1 is
+            # what its begin captured (TextMate), not a group of its own
+            p = re.sub(r"(?<!\\)((?:\\\\)*)\\x\{([0-9A-Fa-f]+)\}", lambda m: f"{m[1]}\\U{int(m[2], 16):08x}", p)
+            if key == "end":
+                p = re.sub(r"(?<!\\)((?:\\\\)*)\\[1-9]", r"\1(?:)", p)
+            return p.replace("(?<", "(?P<") if "(?<!" not in p and "(?<=" not in p else p
+
         walk(g)
         bad = []
-        for p in pats:
+        for key, p in pats:
             try:
-                re.compile(p.replace("(?<", "(?P<") if "(?<!" not in p and "(?<=" not in p else p)
+                re.compile(python(key, p))
             except re.error as e:
                 bad.append((p, str(e)))
         check(f"the grammar's patterns compile ({len(pats)})", len(pats) > 20 and not bad, bad or "too few found")

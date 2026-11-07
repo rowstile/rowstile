@@ -1,6 +1,8 @@
 -- An update rule: its last word before the colon, if it is before or after, says which row the rule is
--- checked on; the words before it are columns, which may be named before or after too.
-type user = app.users
+-- checked on; the words before it are columns, which may be named before or after too. (The user type signs in
+-- whether it says principal or not.)
+type user = app.users principal
+--                    ^^^^^^^^^ keyword.other.principal.authz
 type file = app.files
   owner : user = owner_id
   can edit = owner

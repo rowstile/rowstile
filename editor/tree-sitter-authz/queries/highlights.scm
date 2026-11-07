@@ -55,6 +55,7 @@
 (sync permission: (identifier) @function)
 (sync by: (identifier) @type)
 (scope name: (scope_name) @label)
+(limited scope: (scope_name) @label)
 (caveat name: (identifier) @label)
 (given name: (identifier) @variable.special)
 

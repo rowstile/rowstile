@@ -15905,6 +15905,23 @@ class ParseAgreement(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("/types/doc/perms/view[0]: the parser reads 'or', the grammar 'and'", problems[0])
 
+    def test_a_policy_the_grammar_cant_read_is_named(self) -> None:
+        # after the XML of a file it read with an error, `tree-sitter parse --xml` writes a line that says so: past
+        # </sources> when the file is the last; the comparison names the file
+        import parse_agreement
+
+        with tempfile.TemporaryDirectory() as d:
+            policy, xml = os.path.join(d, "p.authz"), os.path.join(d, "all.xml")
+            with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(self.POLICY)
+            with open(xml, "w", encoding="utf-8") as fh:
+                fh.write('<?xml version="1.0"?>\n')
+                fh.write(self.XML.format(path=policy, op="or").replace("<source_file>", "<source_file><ERROR></ERROR>"))
+                fh.write(f"\n{policy}\tParse:    0.07 ms\t  1764 bytes/ms\t(ERROR [4, 0] - [4, 3])\n")
+            self.assertEqual(
+                parse_agreement.compare(xml), (0, 0, [f"{policy}: the parser reads it, the grammar can't"])
+            )
+
     # a test's line, and what `tree-sitter parse --xml` writes for it: the id it asks of is where object says
     TEST_POLICY = "app role app_user\ntype user = app.users\ntest\n  user 3 with scope read can view user 11\n"
     TEST_XML = (
@@ -15941,14 +15958,14 @@ class ParseAgreement(unittest.TestCase):
         self.assertIn("/tests[0][1][0][7]: the parser reads '11', the grammar '3'", problems[0])
 
     def test_an_including_policys_own_lines_alone(self) -> None:
-        # what an included file says (its app role, scope, caveat, a rules block's view, tests) is its own: the
-        # including policy's reading has none of it, as the grammar, reading each file apart, has none
+        # what an included file says (its app role, scope, caveat, a rules block's view, tests, sync lines) is its
+        # own: the including policy's reading has none of it, as the grammar, reading each file apart, has none
         import parse_agreement
 
         included = (
             "app role app_user\nscope s = select\ncaveat c = {true}\ntype user = app.users\n"
             "rules app.users view app.users_seen\n  select : anyone\ntest\n  user 1 cannot view user 2\n"
-            'test "t"\n  user 1 cannot view user 2\n'
+            'test "t"\n  user 1 cannot view user 2\nsync role engine\nsync after commit\nsync app.users\n'
         )
         pol = parse_policy('include "more.authz"\n', "p.authz", files={"more.authz": included})
         self.assertEqual(
@@ -15956,10 +15973,21 @@ class ParseAgreement(unittest.TestCase):
             ("app_user", ["s"], ["c"], {"app.users": "app.users_seen"}),
         )
         self.assertEqual((len(pol.tests), len(pol.scenarios)), (1, 1))
+        self.assertEqual((pol.sync_role, list(pol.syncs)), ("engine", ["app.users"]))
+        self.assertIsNotNone(pol.sync_after_commit)
         reading = parse_agreement.reading_py(pol, role=False)
         self.assertEqual(
-            {k: reading[k] for k in ("role", "types", "rules", "views", "scopes", "caveats", "tests")},
-            {"role": None, "types": {}, "rules": [], "views": {}, "scopes": {}, "caveats": {}, "tests": []},
+            {k: reading[k] for k in ("role", "types", "rules", "views", "scopes", "caveats", "tests", "sync")},
+            {
+                "role": None,
+                "types": {},
+                "rules": [],
+                "views": {},
+                "scopes": {},
+                "caveats": {},
+                "tests": [],
+                "sync": {"role": None, "after commit": False, "tables": {}},
+            },
         )
 
     def test_small_policies_written_two_ways(self) -> None:
@@ -19294,6 +19322,21 @@ class Editors(unittest.TestCase):
             self.assertNotRegex(f"    {word}: user shared", outdent)
         pairs = {(p["open"], p["close"]) for p in config["autoClosingPairs"]}
         self.assertEqual(pairs, {(b["start"], b["end"]) for b in zed["brackets"] if b["close"]})
+
+    def test_zeds_pairs_name_scopes_the_overrides_capture(self) -> None:
+        # not_in: the scopes where Zed closes no quote typed, which its overrides.scm captures (a name it has not
+        # is no scope: the quote is closed everywhere)
+        import tomllib
+
+        with open(os.path.join(self.REPO, "editor", "zed", "languages", "authz", "config.toml"), "rb") as fb:
+            zed = tomllib.load(fb)
+        with open(
+            os.path.join(self.REPO, "editor", "zed", "languages", "authz", "overrides.scm"), encoding="utf-8"
+        ) as fh:
+            captured = {name.split(".")[0] for name in re.findall(r"@([\w.]+)", fh.read())}
+        named = {scope for b in zed["brackets"] for scope in b.get("not_in", [])}
+        self.assertTrue(named)
+        self.assertLessEqual(named, captured, "editor/zed/languages/authz/config.toml: not_in names a scope")
 
     def test_zed_builds_this_grammar(self) -> None:
         # extension.toml names the commit Zed fetches the grammar from: its grammar must be this one

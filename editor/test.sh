@@ -1,9 +1,10 @@
 #!/bin/bash
 # test.sh: the editors' side, each in a container:
-#   - the Tree-sitter grammar (tree-sitter-authz): src/ is what grammar.js generates, its corpus passes, and
-#     every .authz file in the repository parses without an error, the queries included; and it reads each of
-#     them, 200 random policies and core/tests/small.py's set up to size 4 (each written two ways), as
-#     core/authzlib/parse.py does (core/tests/parse_agreement.py); editor/test/*.authz are forms easy to misread
+#   - the Tree-sitter grammar (tree-sitter-authz): src/ is what grammar.js generates, its corpus passes and it
+#     highlights test/highlight/ as their comments say, every .authz file in the repository parses without an
+#     error, the queries included; and it reads each of them, 200 random policies and core/tests/small.py's set up
+#     to size 4 (each written two ways), as core/authzlib/parse.py does (core/tests/parse_agreement.py);
+#     editor/test/*.authz are forms easy to misread
 #   - the VS Code extension packages as the README says, with the licence and only full addresses on its
 #     Marketplace page, extension.js passes extension_test.js, and the TextMate grammar colours the policies in
 #     editor/test/ as their comments say (textmate_test.js)
@@ -46,19 +47,21 @@ fi
 echo "-- the grammar"
 docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz "$NODE" bash -c '
   npm ci --no-audit --no-fund >/dev/null 2>&1 || { echo "FAIL  npm ci"; exit 1; }
-  # (generated in a copy: the check leaves the checkout as it was)
-  rm -rf /tmp/gen-src && mkdir /tmp/gen-src && cp grammar.js package.json tree-sitter.json /tmp/gen-src &&
+  # (generated in a copy: the check leaves the checkout as it was; src/scanner.c is written by hand)
+  rm -rf /tmp/gen-src && mkdir -p /tmp/gen-src/src && cp grammar.js package.json tree-sitter.json /tmp/gen-src &&
+    cp src/scanner.c /tmp/gen-src/src &&
     (cd /tmp/gen-src && /repo/editor/tree-sitter-authz/node_modules/.bin/tree-sitter generate >/dev/null 2>&1) &&
     diff -r /tmp/gen-src/src src >/dev/null && echo "ok    src/ is what grammar.js generates" ||
     { echo "FAIL  src/ is not what grammar.js generates: run npx tree-sitter generate in editor/tree-sitter-authz, and commit src/"; exit 1; }
-  npx tree-sitter test >/tmp/corpus.log 2>&1 && echo "ok    the corpus" || { cat /tmp/corpus.log; exit 1; }
+  npx tree-sitter test >/tmp/corpus.log 2>&1 && echo "ok    the corpus and the highlight tests" || { cat /tmp/corpus.log; exit 1; }
   files=$(find /repo -name "*.authz" -not -path "*/node_modules/*" -not -path "*/.venv/*" | sort)
   npx tree-sitter parse -q $files 2>/dev/null && echo "ok    every policy in the repository parses ($(echo "$files" | wc -l) files)" ||
     { npx tree-sitter parse -q $files; echo "FAIL  a policy has a parse error"; exit 1; }
   # the grammar was written apart from core/authzlib/parse.py, which the compiler and the reference evaluator
-  # share: each policy, 200 random ones and the small ones up to size 4, read alike by both (core/tests/parse_agreement.py)
+  # share: each policy, 200 random ones and the small ones up to size 4, read alike by both (core/tests/parse_agreement.py;
+  # tree-sitter exits 1 if it reads a file with an error, and the comparison says which, or that the parser refuses it too)
   python3 /repo/core/tests/parse_agreement.py --write /tmp/gen 200 --small 4 &&
-    { echo "$files"; ls /tmp/gen/*.authz; } > /tmp/paths && npx tree-sitter parse --xml --paths /tmp/paths > /tmp/all.xml 2>/dev/null &&
+    { echo "$files"; ls /tmp/gen/*.authz; } > /tmp/paths && { npx tree-sitter parse --xml --paths /tmp/paths > /tmp/all.xml 2>/dev/null; [ -s /tmp/all.xml ]; } &&
     python3 /repo/core/tests/parse_agreement.py /tmp/all.xml > /tmp/agree.log 2>&1 &&
     echo "ok    $(tail -n 1 /tmp/agree.log)" || { cat /tmp/agree.log; echo "FAIL  the grammar and the parser read a policy differently"; exit 1; }
   for q in queries/*.scm; do
@@ -140,13 +143,22 @@ EOF
     *"filetype=authz highlighted=true"*function*keyword*type*) echo "ok    Neovim 0.11 highlights a policy as the README sets it up" ;;
     *) echo "FAIL  Neovim does not highlight a policy as the README sets it up: $out"; exit 1 ;;
   esac
+  # the language server starts in the folder rowstile.toml is in, which it reads from where it starts, though
+  # Neovim started elsewhere (a stand-in rowstile says where it was started)
+  mkdir -p /tmp/bin /tmp/project/db && printf "#!/bin/sh\npwd > /tmp/lsp-cwd\n" > /tmp/bin/rowstile && chmod +x /tmp/bin/rowstile &&
+    touch /tmp/project/rowstile.toml && cp /repo/core/example/docs.authz /tmp/project/db/ || exit 1
+  (cd / && PATH="/tmp/bin:$PATH" nvim --headless /tmp/project/db/docs.authz \
+    -c "lua vim.wait(5000, function() return vim.uv.fs_stat(\"/tmp/lsp-cwd\") ~= nil end)" -c "qa!" >/dev/null 2>&1)
+  [ "$(cat /tmp/lsp-cwd 2>/dev/null)" = /tmp/project ] && echo "ok    Neovim starts the language server where rowstile.toml is" ||
+    { echo "FAIL  Neovim starts the language server in $(cat /tmp/lsp-cwd 2>/dev/null || echo "no folder"), not where rowstile.toml is"; exit 1; }
 ' || rc=1
 
 echo "-- the Zed extension"
-docker run --rm "${as_me[@]}" -e CARGO_HOME=/tmp/cargo -v "$REPO:/repo" -w /repo/editor/zed "$RUST" bash -c '
+# (with the committed Cargo.lock, which Zed's build uses too: --locked refuses to change it)
+docker run --rm "${as_me[@]}" -e CARGO_HOME=/tmp/cargo -v "$REPO:/repo:ro" -w /repo/editor/zed "$RUST" bash -c '
   cp -r /usr/local/cargo /tmp/cargo 2>/dev/null
   rustup target add wasm32-wasip2 >/dev/null 2>&1 &&
-    cargo build -q --release --target wasm32-wasip2 --target-dir /tmp/target 2>&1 &&
+    cargo build --locked -q --release --target wasm32-wasip2 --target-dir /tmp/target 2>&1 &&
     ls /tmp/target/wasm32-wasip2/release/rowstile_zed.wasm >/dev/null' \
   && ok "it builds for wasm32-wasip2" || bad "the Zed extension doesn't build"
 

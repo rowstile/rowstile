@@ -21,7 +21,8 @@ Alike: the app role; the types (table, key, whether they sign in, where); each r
 their subjects; the permissions, as expressions (or, and, not, grouped as parentheses say, a run of ors or of ands
 flat); rules and masks, and the view of a table's rules; `cascade from` lines; invariants; scopes; caveats; the
 tests and each of their lines' parts (who, with which scopes; the permission, the type and the id asked of; the SQL;
-allowed, refused or how many rows it sees). Of a policy that includes files, its own lines alone: each file is
+allowed, refused or how many rows it sees); the sync role, `sync after commit`, and each table synced with its
+permission, `by` type and whether it is mirrored. Of a policy that includes files, its own lines alone: each file is
 compared as a policy of its own.
 The grammar reads more than the parser takes, as an editor must (`a or b and c`, which the parser refuses): a
 policy the parser refuses is not compared. Both read a condition's text without its -- comments.
@@ -137,7 +138,7 @@ def reading_py(pol: Policy, role: bool = True) -> Shape:
         types[t.name] = {
             "table": t.table,
             "key": [(c, k) for c, k in t.key],
-            "principal": t.principal and t.name != "user",
+            "principal": t.principal,
             "where": condition(t.where) if t.where else None,
             "relations": {
                 r.name: [source_py(s) for s in r.sources if s.kind != "roles"]
@@ -163,6 +164,11 @@ def reading_py(pol: Policy, role: bool = True) -> Shape:
             s.name: [".".join(x for x in item[1:] if x) for item in s.items] for s in pol.scopes.values() if own(s.loc)
         },
         "caveats": {c.name: condition(c.sql) for c in pol.caveats.values() if own(c.loc)},
+        "sync": {
+            "role": pol.sync_role if own(pol.sync_role_loc) else None,
+            "after commit": pol.sync_after_commit is not None and own(pol.sync_after_commit),
+            "tables": {s.table: (s.perm, s.by, s.mirrored) for s in pol.syncs.values() if own(s.loc)},
+        },
         "tests": tests,
     }
 
@@ -318,6 +324,7 @@ def step_ts(tree: Tree, e: ET.Element) -> Shape:
 
 
 def reading_ts(tree: Tree) -> Shape:
+    sync: dict[str, Shape] = {"role": None, "after commit": False, "tables": {}}
     out: Shape = {
         "role": None,
         "types": {},
@@ -327,6 +334,7 @@ def reading_ts(tree: Tree) -> Shape:
         "invariants": [],
         "scopes": {},
         "caveats": {},
+        "sync": sync,
     }
     tests: list[Shape] = []
     unnamed: list[Shape] = []
@@ -352,7 +360,8 @@ def reading_ts(tree: Tree) -> Shape:
                     "key": [(name_of(field(c, "name")) or "", name_of(field(c, "type")) or "bigint") for c in kids(key)]
                     if key is not None
                     else [("id", "bigint")],
-                    "principal": any(k.tag == "principal" for k in kids(top)),
+                    # (the user type signs in, whether it says principal or not)
+                    "principal": name_of(field(top, "name")) == "user" or any(k.tag == "principal" for k in kids(top)),
                     "where": sql_of(tree, where) if where is not None else None,
                     "relations": relations,
                     "perms": perms,
@@ -385,13 +394,21 @@ def reading_ts(tree: Tree) -> Shape:
                 ]
             case "caveat":
                 out["caveats"][name_of(field(top, "name")) or ""] = sql_of(tree, kids(top)[-1])
+            case "sync_role":
+                sync["role"] = name_of(field(top, "name"))
+            case "sync_after_commit":
+                sync["after commit"] = True
+            case "sync":
+                table = name_of(field(top, "table")) or ""
+                line = (name_of(field(top, "permission")), name_of(field(top, "by")), "mirrored" in tokens(top))
+                sync["tables"][table] = line
             case "test":
                 steps = [step_ts(tree, s) for s in kids(top) if s.tag in ("check", "given", "as")]
                 name = field(top, "name")
                 if name is None:
                     unnamed += steps
                 else:
-                    tests.append((tree.text(name).strip().strip('"'), steps))
+                    tests.append((tree.text(name).strip()[1:-1], steps))  # (one quote each side: it may hold more)
     out["tests"] = ([(None, unnamed)] if unnamed else []) + tests
     return out
 
@@ -435,7 +452,12 @@ def includes(path: str, text: str) -> dict[str, str]:
 def compare(xml_path: str) -> tuple[int, int, list[str]]:
     """(policies compared, policies parse.py refuses, the disagreements)."""
     compared, refused, problems = 0, 0, []
-    for src in ET.parse(xml_path).getroot().iter("source"):
+    with open(xml_path, encoding="utf-8") as fh:
+        written = fh.read()
+    # (after the XML of a file it read with an error, tree-sitter writes a line that says so: past </sources> for the
+    # last file, where it is no XML)
+    end = written.rfind("</sources>")
+    for src in ET.fromstring(written[: end + len("</sources>")] if end >= 0 else written).iter("source"):
         path = src.get("name") or ""
         with open(path, "rb") as fh:
             data = fh.read()

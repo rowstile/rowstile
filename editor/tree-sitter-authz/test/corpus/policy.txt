@@ -826,3 +826,81 @@ type t = app.t
         type: (identifier))
       (column
         (identifier)))))
+
+================================================================================
+Test names that hold quotes: the name runs to the last quote on the line, a comment after it aside
+================================================================================
+
+test "say "hi""
+  user 1 can view file 1
+
+test "user 1 can view file a"b"    -- as Studio writes it
+  user 1 can view file 1
+
+test "a -- b" -- say "x"
+  user 1 can view file 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (test
+    name: (string)
+    (check
+      principal: (identifier)
+      who: (value)
+      permission: (identifier)
+      type: (identifier)
+      object: (value)))
+  (test
+    name: (string)
+    (comment)
+    (check
+      principal: (identifier)
+      who: (value)
+      permission: (identifier)
+      type: (identifier)
+      object: (value)))
+  (test
+    name: (string)
+    (comment)
+    (check
+      principal: (identifier)
+      who: (value)
+      permission: (identifier)
+      type: (identifier)
+      object: (value))))
+
+================================================================================
+Conditions as Postgres reads them: comments nest, a dollar quote's tag may be any name, a name may hold any letter
+================================================================================
+
+type file = app.files
+  can a = {not archived /* a /* } */ } */}
+  can b = {name <> $é$}$é$ and name <> $q$ $é$ } $q$}
+  can c = {😀x = 1 and x <> $1 and a$q$}
+  can d = {name <> $$a $é$ }$$}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type
+    name: (identifier)
+    table: (table_name
+      schema: (identifier)
+      name: (identifier))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))))

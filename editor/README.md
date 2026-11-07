@@ -64,9 +64,10 @@ PATH: name it, with its full path:
 
 ## Other editors
 
-`tree-sitter-authz/` is a Tree-sitter grammar for `.authz` files (`src/parser.c`, generated from `grammar.js`),
-with its queries in `queries/`: highlights (SQL injected inside `{ }`), outline and brackets. Helix and Neovim
-highlight with it. Any editor with a language client can start `rowstile lsp` for `.authz` files.
+`tree-sitter-authz/` is a Tree-sitter grammar for `.authz` files (`src/parser.c`, generated from `grammar.js`, and
+`src/scanner.c`, written by hand for dollar quotes and nested comments), with its queries in `queries/`:
+highlights (SQL injected inside `{ }`), outline and brackets. Helix and Neovim highlight with it. Any editor with a
+language client can start `rowstile lsp` for `.authz` files.
 
 Neovim 0.11 or newer (0.10 loads only grammars an older Tree-sitter made): build the grammar with a C compiler,
 from `editor/tree-sitter-authz` in this repository, and put it and its queries in Neovim's config folder
@@ -76,13 +77,15 @@ from `editor/tree-sitter-authz` in this repository, and put it and its queries i
     mkdir -p ~/.config/nvim/parser ~/.config/nvim/queries/authz
     cp authz.so ~/.config/nvim/parser/ && cp queries/*.scm ~/.config/nvim/queries/authz/
 
-Then, in its `init.lua`, the file type, highlighting and the language server:
+Then, in its `init.lua`, the file type, highlighting and the language server, started in the folder `rowstile.toml`
+is in (it reads it from where it starts, and Neovim would start it where Neovim was started):
 
 ```lua
 vim.filetype.add({ extension = { authz = "authz" } })
 vim.api.nvim_create_autocmd("FileType", { pattern = "authz", callback = function(args)
   vim.treesitter.start(args.buf)
-  vim.lsp.start({ name = "rowstile", cmd = { "rowstile", "lsp" }, root_dir = vim.fs.root(args.buf, { "rowstile.toml", ".git" }) })
+  local root = vim.fs.root(args.buf, { "rowstile.toml", ".git" })
+  vim.lsp.start({ name = "rowstile", cmd = { "rowstile", "lsp" }, root_dir = root, cmd_cwd = root })
 end })
 ```
 

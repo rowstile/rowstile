@@ -58,7 +58,32 @@
       "contentName": "meta.embedded.sql.authz",
       "patterns": [
         {
+          "include": "#sql-quotes"
+        },
+        {
           "include": "source.sql"
+        }
+      ]
+    },
+    "sql-quotes": {
+      "comment": "Postgres quotes that VS Code's SQL grammar doesn't know, whose braces open or close nothing: $$...$$ and $tag$...$tag$ (a $ right after a name's letter is the name's), and E'...' with its backslashes",
+      "patterns": [
+        {
+          "begin": "(?<![A-Za-z0-9_$\\x{80}-\\x{10FFFF}])\\$([A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}]*)?\\$",
+          "end": "\\$\\1\\$",
+          "name": "string.quoted.dollar.authz"
+        },
+        {
+          "begin": "(?<![A-Za-z0-9_$\\x{80}-\\x{10FFFF}])[Ee]'",
+          "end": "'",
+          "applyEndPatternLast": 1,
+          "name": "string.quoted.single.authz",
+          "patterns": [
+            {
+              "match": "\\\\.|''",
+              "name": "constant.character.escape.authz"
+            }
+          ]
         }
       ]
     },
@@ -347,6 +372,20 @@
             },
             "2": {
               "name": "punctuation.separator.authz"
+            }
+          }
+        },
+        {
+          "match": "\\b(shared)\\s+(by)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.authz"
+            },
+            "2": {
+              "name": "keyword.other.authz"
+            },
+            "3": {
+              "name": "entity.name.function.permission.authz"
             }
           }
         },

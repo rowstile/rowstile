@@ -1088,6 +1088,8 @@ FEATURES: list[Feature] = [
         grammar=(
             "Words for conditions, custom roles where they give, this in conditions",
             "Conditions whose SQL hides braces and quotes: 'x', E'x', \"names\", $$x$$, comments",
+            "Conditions as Postgres reads them: comments nest, a dollar quote's tag may be any name, a name may hold any "
+            "letter",
         ),
     ),
     Feature(
@@ -1264,6 +1266,7 @@ FEATURES: list[Feature] = [
         grammar=(
             "Tests: checks, and named tests with their own data",
             "Test ids: a $ inside a value, a variable (all up to a space), a quoted literal",
+            "Test names that hold quotes: the name runs to the last quote on the line, a comment after it aside",
         ),
     ),
     # --- the SDKs: each judged by its conformance suite (integrations/README.md's checks) ---------------

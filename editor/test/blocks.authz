@@ -16,6 +16,12 @@ type file = app.files
 --                 ^^^^^^^ support.type.subject.authz
 --                        ^^ keyword.operator.wildcard.authz
 --                           ^^^^^^ keyword.other.authz
+  guest : user shared by view if {expires_at > now()}
+--^^^^^ variable.other.relation.authz
+--             ^^^^^^ keyword.other.authz
+--                    ^^ keyword.other.authz
+--                       ^^^^ entity.name.function.permission.authz
+--                            ^^ keyword.other.authz
   editor : user = app.file_editors(object: file_id, subject: user_id)
 --^^^^^^ variable.other.relation.authz
 --                ^^^^^^^^^^^^^^^^ entity.name.tag.table.authz
@@ -46,6 +52,17 @@ test "an owner sees the file"    -- with its own data
   user a$b cannot view file 1
 --^^^^^^^^ variable.other.authz
 --         ^^^^^^ keyword.control.authz
+  user 3 with scope read, files:write cannot view file 1
+--       ^^^^^^^^^^ keyword.control.authz
+--                  ^^^^^^^^^^^^^^^^^ entity.name.tag.scope.authz
+  as user 3 with scope read-only refused {SELECT 1}
+--          ^^^^^^^^^^ keyword.control.authz
+--                     ^^^^^^^^^ entity.name.tag.scope.authz
+--                               ^^^^^^^ keyword.control.authz
+
+test "user 1 can view file "a"b""   -- the name runs to the last quote (Studio writes such names)
+--   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ string.quoted.authz
+  user 1 can view file 1
 
 test   -- on the data already there
 -- <---- keyword.declaration.section.authz
