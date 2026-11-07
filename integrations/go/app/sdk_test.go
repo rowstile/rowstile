@@ -339,6 +339,29 @@ func TestExpect(t *testing.T) {
 	}
 }
 
+// a restrictive policy of the app's own (authz.lint() reports it): its refusal is a refusal too, a 403, in Postgres's
+// words, which name the policy and no rule of rowstile's
+func TestARestrictivePolicyOfTheAppsOwnRefuses(t *testing.T) {
+	check(t, "a restrictive policy of the app's own refuses: Refused, in Postgres's words")
+	ctx := context.Background()
+	if err := asOwner(ctx, "CREATE POLICY short_notes ON app.notes AS RESTRICTIVE FOR UPDATE TO conf_app USING (true) "+
+		"WITH CHECK (length(body) < 10)"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = asOwner(ctx, "DROP POLICY IF EXISTS short_notes ON app.notes") })
+	long := rowstiletest.Refused(t, rowstile.TxAs(ctx, pool, rowstile.User("3"), func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, "UPDATE app.notes SET body = 'a long body' WHERE id = 4")
+		return err
+	}), "")
+	p, _ := rowstile.ProblemOf(long)
+	body, _ := p.MarshalJSON()
+	if long.Table != "notes" || long.Command != "" || len(long.Why) != 0 ||
+		long.Message != `new row violates row-level security policy "short_notes" for table "notes"` ||
+		!strings.Contains(string(body), `"status":403`) || !strings.Contains(string(body), `"command":null`) {
+		t.Errorf("%+v %s", long, body)
+	}
+}
+
 func TestPostgresOwnRefusalsNameTheRule(t *testing.T) {
 	check(t, "Postgres's own refusals (an update out of sight, an upsert, MERGE) name the rule")
 	ctx := context.Background()
@@ -422,6 +445,17 @@ func TestErrorsThatArentRowstiles(t *testing.T) {
 	}
 	if _, ok := rowstile.ProblemOf(&pgconn.PgError{Code: "42501", Message: "keine Berechtigung", Routine: "aclcheck_error"}); ok {
 		t.Error("a grant missing is no refusal")
+	}
+	// a restrictive policy of the app's own, named with a quote in it: an upsert's is the update's, a MERGE's no command
+	for _, c := range [][2]string{
+		{`new row violates row-level security policy "a" b" (USING expression) for table "notes"`, "update"},
+		{`target row violates row-level security policy "only_mine" (USING expression) for table "notes"`, ""},
+	} {
+		p, ok := rowstile.ProblemOf(&pgconn.PgError{Code: "42501", Message: c[0]})
+		if !ok || p.Detail != c[0] || p.Table == nil || *p.Table != "notes" || (p.Command == nil) != (c[1] == "") ||
+			(p.Command != nil && *p.Command != c[1]) {
+			t.Errorf("%s: %+v", c[0], p)
+		}
 	}
 	// a body the handler can't read: its error, a 500
 	errs := logged(func() {
@@ -598,9 +632,11 @@ func TestTheTestHelpersSayWhatWasExpected(t *testing.T) {
 		t.Error("the refusal itself")
 	}
 	rowstiletest.Refused(f, refused, "delete")
+	rowstiletest.Refused(f, refused, "up") // the rule's whole word, not how it begins
 	rowstiletest.Refused(f, errors.New("other"), "")
 	rowstiletest.NotFound(f, refused)
-	want := "expected the %s rule to refuse it, but: %s: %s|expected a refusal, got %v|expected NotFound, got %v"
+	want := "expected the %s rule to refuse it, but: %s: %s|expected the %s rule to refuse it, but: %s: %s|" +
+		"expected a refusal, got %v|expected NotFound, got %v"
 	if strings.Join(f.said, "|") != want {
 		t.Errorf("%v", f.said)
 	}

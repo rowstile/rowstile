@@ -189,7 +189,9 @@ response acts for whoever its `ActsFor` names (below).
 
 PHP starts each request on its own, so there is no moment when the app starts to refuse a connection in. Run
 `php artisan rowstile:check` before the app is served (a container's entrypoint, a deploy step): it exits 1 on a
-connection that skips row-level security (the owner's, a superuser's).
+connection that skips row-level security (the owner's, a superuser's). It says too, and exits 0, when the server
+writes its messages in another language (`lc_messages`): PHP then can't tell Postgres's own row-level security
+refusal from another error (see [what every SDK reads of an error](../reference/app-code.md)).
 
 ```sh
 php artisan rowstile:check && exec php-fpm

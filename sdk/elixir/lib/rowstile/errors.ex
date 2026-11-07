@@ -88,8 +88,9 @@ defmodule Rowstile.Errors do
   @call_status %{"AZ703" => 401, "AZ708" => 404, "AZ710" => 400, "AZ713" => 409, "AZ714" => 401}
 
   # Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
-  # without its schema
-  @generic ~r/^(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/
+  # without its schema; it names the policy too when it is a restrictive one (the app's own: rowstile makes none),
+  # quoting the name as it is
+  @generic ~r/^(new|target) row violates row-level security policy (".*?" )?(\(USING expression\) )?for table "([^"]+)"/
 
   # the function in Postgres that raises those refusals (the error's routine): what tells one in another language
   @row_check "ExecWithCheckOptions"
@@ -135,8 +136,8 @@ defmodule Rowstile.Errors do
     routine = pg[:routine]
 
     case Regex.run(@generic, pg.message) do
-      [_, row, using, table] ->
-        generic(pg.message, row, using, table)
+      [_, row, policy, using, table] ->
+        generic(pg.message, row, policy, using, table)
 
       # Postgres's own refusal in another language (the server's lc_messages): which table and rule, its words alone
       # say
@@ -157,8 +158,19 @@ defmodule Rowstile.Errors do
     end
   end
 
-  # Postgres's own words: which row (new, or the target of a MERGE), and whether it was the USING expression
-  defp generic(message, "target", _, table) do
+  # Postgres's own words: which row (new, or the target of a MERGE), the policy it names if any, and whether it was
+  # the USING expression.
+  # A restrictive policy of the app's own (authz.lint() reports it): its words name it, and say no more. An upsert's
+  # is about the update of the row there already
+  defp generic(message, row, policy, using, table) when policy != "" do
+    %Refused{
+      message: message,
+      table: table,
+      command: if(row == "new" and using != "", do: "update")
+    }
+  end
+
+  defp generic(message, "target", "", _, table) do
     # MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
     %Refused{
       message:
@@ -167,13 +179,13 @@ defmodule Rowstile.Errors do
     }
   end
 
-  defp generic(message, "new", "", table) do
+  defp generic(message, "new", "", "", table) do
     # the select rule, on the row as written: an insert that reads it back, an upsert, or an update after which the
     # row would be out of this user's sight
     %Refused{message: message <> ": " <> @unseen, table: table, command: "select"}
   end
 
-  defp generic(message, "new", _using, table) do
+  defp generic(message, "new", "", _using, table) do
     # an upsert whose existing row this user may not update, or not see
     %Refused{
       message:
