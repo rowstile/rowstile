@@ -514,6 +514,17 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The TypeScript SDK reads a refusal by a restrictive policy of the app's own, which Postgres names in its message
   (`new row violates row-level security policy "p" for table "t"`), as `Refused`, a 403; before, it was no refusal, a
   500.
+- Every other SDK does too (Python, Go, Java and Kotlin, .NET, Ruby, Rust, Elixir, PHP): a refusal by a restrictive
+  policy of the app's own, which Postgres names, is `Refused`, a 403, in Postgres's words, with no command but an
+  upsert's `update`, and the table it names. Before, it was a refusal that named no table, or in PHP, whose driver
+  doesn't say which function raised it, no refusal (a 500).
+- Go's `rowstiletest.Refused(t, err, command)` asks for the rule's whole command: before, any start of it passed
+  (`"up"`, for an update's refusal).
+- PHP: a refusal's DETAIL that quotes a line beginning `LINE 2: ` keeps it; before, the DETAIL went into the message.
+  A LINE is libpq's only with the caret it writes under the statement's line.
+- PHP: `php artisan rowstile:check` says when the server writes its messages in another language (`lc_messages`), in
+  which PHP can't tell Postgres's own row-level security refusal from another error, and still exits 0;
+  `Rowstile::check()` returns that warning.
 - `@rowstile/prisma` reads a nested write whose target isn't there, or is hidden from the user (a `connect`), as
   `NotFound` naming that target's table. Before, an update named the row it updated, and a create stayed Prisma's
   error.

@@ -67,12 +67,16 @@ tests hold each rule:
 - The not-signed-in error is a 28000 with code AZ701. A 28000 without a code is Postgres's own: a login turned down
   when connecting, a role that isn't there, a line missing from `pg_hba.conf`. It stays a database error, a 500.
 - Postgres's own row-level security refusal (`new row violates row-level security policy for table "notes"`: an
-  insert read back without the select rule, an upsert, a MERGE) is a refusal, a 403, in any language. The SDKs
-  tell it by the function in Postgres that raised it (`ExecWithCheckOptions`, the error's routine field), not by
-  its words. Those words name the table without its schema, and so does the refusal: `notes`, where a rule's
-  refusal says `app.notes`. Through Prisma, the TypeScript SDK adds the schema back from the models. On a server whose `lc_messages` isn't English, the table and the rule it names are in words the
-  SDKs don't read, so the refusal names neither. PHP's driver gives the server's text and not that field: in
-  PHP, the refusal in another language stays a database error. Set the app role's messages to English there
+  insert read back without the select rule, an upsert, a MERGE) is a refusal, a 403, in any language. So is one by
+  a restrictive policy of the app's own, which Postgres names (`new row violates row-level security policy
+  "short_notes" for table "notes"`; `authz.lint()` reports such a policy): its refusal is Postgres's words and no
+  rule's, with no command but an upsert's `update`. The SDKs tell these by the function in Postgres that raised
+  them (`ExecWithCheckOptions`, the error's routine field), not by their words. Those words name the table without
+  its schema, and so does the refusal: `notes`, where a rule's refusal says `app.notes`. Through Prisma, the
+  TypeScript SDK adds the schema back from the models. On a server whose `lc_messages` isn't English, the table and
+  the rule it names are in words the SDKs don't read, so the refusal names neither. Two drivers give the server's
+  text and not that field: PHP's, and Prisma's adapters. There, the refusal in another language stays a database
+  error, a 500, and PHP's `php artisan rowstile:check` says so (and exits 0). Set the app role's messages to English
   (`ALTER ROLE app_user SET lc_messages = 'C'`, by a superuser).
 - Nobody has one spelling: a principal without an id (none, or empty), whatever its type, is the SDK's nobody,
   as `authz.act_as` signs it in. So work for nobody runs inside a transaction begun for any spelling of it.

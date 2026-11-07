@@ -21,9 +21,10 @@ public final class Errors {
 
     private static final Pattern CODE = Pattern.compile("rowstile help (AZ\\d{3})");
     // Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
-    // without its schema, and sets no field for it
-    private static final Pattern GENERIC = Pattern.compile(
-            "(new|target) row violates row-level security policy (\\(USING expression\\) )?for table \"([^\"]+)\"");
+    // without its schema, and sets no field for it; it names the policy too when it is a restrictive one (the app's
+    // own: rowstile makes none), quoting the name as it is
+    private static final Pattern GENERIC = Pattern.compile("(new|target) row violates row-level security policy"
+            + " (\".*?\" )?(\\(USING expression\\) )?for table \"([^\"]+)\"");
     // the function in Postgres that raises those refusals (the error's routine): what tells one in another language
     private static final String ROW_CHECK = "ExecWithCheckOptions";
     private static final String UNSEEN = "this user may not see the row as written (the select rule). An insert that"
@@ -110,14 +111,20 @@ public final class Errors {
             return Optional.empty(); // sign in first (AZ714) is a 42501 too, but no refusal: a 401
         }
         if (postgresOwn) {
-            String table = generic.group(3);
+            String table = generic.group(4);
+            if (generic.group(2) != null) {
+                // a restrictive policy of the app's own (authz.lint() reports it): its words name it, and say no more.
+                // An upsert's is about the update of the row there already
+                String command = generic.group(1).equals("new") && generic.group(3) != null ? "update" : null;
+                return Optional.of(new Refused(message, table, command, List.of(), null, cause));
+            }
             if (generic.group(1).equals("target")) {
                 // MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
                 return Optional.of(new Refused(message
                         + ": MERGE matched a row the update or delete rule doesn't let this user change",
                         table, null, List.of(), null, cause));
             }
-            if (generic.group(2) != null) {
+            if (generic.group(3) != null) {
                 // an upsert (INSERT ... ON CONFLICT DO UPDATE) whose existing row this user may not update, or see
                 return Optional.of(new Refused(message + ": the row is there already, and the update rule (or the"
                         + " select rule) doesn't let this user change it (ON CONFLICT DO UPDATE)",

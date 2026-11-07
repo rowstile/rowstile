@@ -126,6 +126,18 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         Assert.Equal((words, (string?)null, (string?)null, "AZ709"), (translated.Message, translated.Table, translated.Command, translated.Code));
         Assert.Null(Errors.Refusal(Raised("42501", "keine Berechtigung für Tabelle x", routine: "aclcheck_error")));
         Assert.Null(Errors.Refusal(Raised("42501", "sign in first", hint: "rowstile help AZ714"))); // a 401, no refusal
+        // a restrictive policy of the app's own: Postgres names it (with a quote in its name here), and says no more;
+        // an upsert's is about the update of the row there already
+        foreach (var (named, command) in new[]
+        {
+            ("new row violates row-level security policy \"short_notes\" for table \"notes\"", (string?)null),
+            ("new row violates row-level security policy \"a\" b\" (USING expression) for table \"notes\"", "update"),
+            ("target row violates row-level security policy \"only_mine\" (USING expression) for table \"notes\"", null),
+        })
+        {
+            var policy = Errors.Refusal(Raised("42501", named, routine: "ExecWithCheckOptions"))!;
+            Assert.Equal((named, "notes", command, 0), (policy.Message, policy.Table, policy.Command, policy.Why.Count));
+        }
         var share = Errors.Refusal(Raised("42501", "you cannot share project 1", hint: "rowstile help AZ705"))!;
         Assert.Equal(("AZ705", (string?)null, (string?)null, 0), (share.Code, share.Table, share.Command, share.Why.Count));
         // a table without its schema, or a schema without a table: the table as it is said

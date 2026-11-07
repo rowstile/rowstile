@@ -46,7 +46,8 @@ final class Said
      * LINE, DETAIL, HINT, QUERY, CONTEXT), and a part's text may hold what the app sent, a line that looks like a
      * label among it. So a label out of that order ends the parts it would come after, which were text of the part
      * before them: the server's HINT, written after the message and the DETAIL, is the last. After a QUERY or a CONTEXT
-     * (the statement a function ran, its literals the app's) only a later part begins.
+     * (the statement a function ran, its literals the app's) only a later part begins. A LINE is one only with the
+     * caret libpq writes under it: a DETAIL that quotes "LINE 2: " keeps it.
      */
     private static function read(string $sqlstate, string $text): self
     {
@@ -59,6 +60,9 @@ final class Said
                 continue;
             }
             $name = $m[1] ?? 'LINE';
+            if ($name === 'LINE' && preg_match('/^ *\^$/', $lines[$i + 1] ?? '') !== 1) {
+                continue; // libpq writes a caret under the statement's line: without it, text of the part it is in
+            }
             $place = self::ORDER[$name];
             $last = $parts === [] ? 0 : end($parts)[1];
             if ($place <= $last && $last >= self::ORDER['QUERY']) {
