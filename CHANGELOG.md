@@ -83,6 +83,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Rust SDK's `SignIn::principal` is async and takes the request's parts mutably, so it can look a session up
   in a database, fetch a key set, or run another extractor on the request: an app's impl writes
   `async fn principal(&self, request: &mut Parts) -> Result<Principal, Error>`.
+- The Elixir SDK's `Rowstile.Testing.assert_refused(result, command)` takes the rule's whole name (`insert`,
+  `update`, `delete`, `select`): a part of it, such as `"up"`, or `""`, fails the test. Before, any start of the
+  name passed.
 
 ### Removed
 

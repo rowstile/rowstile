@@ -122,9 +122,13 @@ for _ in $(seq 60); do curl -sf "http://localhost:$WEB/projects" >"$LOG/projects
 [ "$(cat "$LOG/projects.json" 2>/dev/null)" = "[]" ] &&
   echo "ok    13: ... and starts on the app role's" || { cat "$LOG/server.log"; echo "FAIL  13: the app didn't start on the app role's connection"; rc=1; }
 kill "$server" 2>/dev/null; wait "$server" 2>/dev/null; server=
-# the checks: two partitions side by side (mix test --partitions 2), each on its own copy of the test database
+# the checks: two partitions side by side (mix test --partitions 2), each on its own copy of the test database. The
+# app is compiled, and its protocols consolidated, once before (--no-compile after): the two share the build, and
+# Mix's lock on it is in each container's own /tmp, so two compiling at once write the same files
+MIX_ENV=test elixir_run "$HERE" mix compile >"$LOG/compile-tests.log" 2>&1 ||
+  { cat "$LOG/compile-tests.log"; echo "FAIL  mix compile, before the partitions"; exit 1; }
 for p in 1 2; do
-  RUN_NAME=$NAME-test-$p MIX_ENV=test MIX_TEST_PARTITION=$p elixir_run "$HERE" mix test --partitions 2 --cover "$@" >"$LOG/test-$p.log" 2>&1 &
+  RUN_NAME=$NAME-test-$p MIX_ENV=test MIX_TEST_PARTITION=$p elixir_run "$HERE" mix test --no-compile --partitions 2 --cover "$@" >"$LOG/test-$p.log" 2>&1 &
   eval "tests_$p=\$!"
 done
 tested=0

@@ -130,7 +130,7 @@ defmodule Rowstile.Testing do
 
   @doc """
   The refusal `result` must be (the test fails at once otherwise): `{:error, %Rowstile.Refused{}}`, by `command`'s
-  rule unless it is `nil`. Gives the refusal.
+  rule unless it is `nil` (the whole word: `insert`, `update`, `delete` or `select`). Gives the refusal.
 
       assert_refused(Rowstile.transact(Repo, fn -> {:ok, Repo.insert!(note)} end), "insert")
   """
@@ -138,7 +138,7 @@ defmodule Rowstile.Testing do
   def assert_refused(result, command \\ nil) do
     case result do
       {:error, %Rowstile.Refused{} = refused} ->
-        if command && !String.starts_with?(refused.command || "", command) do
+        if command && refused.command != command do
           flunk(
             "expected the #{command} rule to refuse it, but: #{refused.command}: #{refused.message}"
           )

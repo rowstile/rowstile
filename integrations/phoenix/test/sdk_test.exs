@@ -469,6 +469,12 @@ defmodule Conformance.SdkTest do
     refused = call("GET", "/notes", nil, nil, [{"authorization", "Bearer bad"}])
     assert {refused.status, json(refused)["detail"], refused.halted} == {401, "bad token", true}
 
+    # the principal lasts the process: in Phoenix.ConnTest, the test's, which acts for it after the request
+    assert Rowstile.current() == nil
+    assert call("GET", "/notes", "2").status == 200
+    assert Rowstile.current() == Rowstile.user(2)
+    assert Rowstile.transact(Repo, fn -> {:ok, ids()} end) == {:ok, expected()["2"]}
+
     answered = fn reason ->
       Rowstile.Plug.call(conn(:get, "/"), Rowstile.Plug.init(user: fn _ -> {:error, reason} end))
     end
@@ -503,6 +509,12 @@ defmodule Conformance.SdkTest do
 
     wrong = assert_raise ExUnit.AssertionError, fn -> assert_refused(refused, "delete") end
     assert wrong.message =~ "expected the delete rule to refuse it, but: insert"
+    # the rule's whole name: a part of it, or none, is no rule's
+    for part <- ["ins", ""] do
+      cut = assert_raise ExUnit.AssertionError, fn -> assert_refused(refused, part) end
+      assert cut.message =~ "expected the #{part} rule to refuse it, but: insert"
+    end
+
     none = assert_raise ExUnit.AssertionError, fn -> assert_refused({:ok, 1}) end
     assert none.message =~ "expected a refusal"
 
