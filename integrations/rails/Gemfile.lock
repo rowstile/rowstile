@@ -1,7 +1,7 @@
 PATH
   remote: ../../sdk/ruby
   specs:
-    rowstile (0.1.0.pre.beta.4)
+    rowstile (0.1.0.pre.dev)
       activerecord (~> 8.1)
       pg (>= 1.5)
 
@@ -293,7 +293,7 @@ CHECKSUMS
   rbs (4.2.0) sha256=51f7b886dcc05bc09e10b901daa6a81829f6adc03101d6ca9ea4aac6103e0674
   rdoc (8.1.0) sha256=befc37880a5cfd36dcb176c748b5fd5ee39dd3536a75e81824e4972ce230f60a
   reline (0.7.0) sha256=5b012d8e55dbf9d450f12bde2cf7d15ff546ae80b3f8f3b30e570d431815583d
-  rowstile (0.1.0.pre.beta.4)
+  rowstile (0.1.0.pre.dev)
   securerandom (0.4.1) sha256=cc5193d414a4341b6e225f0cb4446aceca8e50d5e1888743fac16987638ea0b1
   simplecov (1.3.2) sha256=2a22ec1759f1b8db60881a2e038758956fc69ef93ed669be0bde0678de6d0e85
   steep (2.1.0) sha256=1daf53573283b0e6d404a7273cca41fe5c15b14ece05167934f5ffc179e171d9

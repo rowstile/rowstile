@@ -14,7 +14,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>21</maven.compiler.release>
     <!-- the SDK, as sdk/java builds and installs it (test.sh) -->
-    <rowstile.version>0.1.0-beta.4</rowstile.version>
+    <rowstile.version>0.1.0-dev</rowstile.version>
     <kotlin.version>2.4.21</kotlin.version>
     <!-- the compiler in Maven's own process: no daemon left behind, none to connect to -->
     <kotlin.compiler.daemon>false</kotlin.compiler.daemon>
