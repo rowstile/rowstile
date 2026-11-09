@@ -11,6 +11,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Added
 
+- The Go module has versions: each release tags its commit `sdk/go/vX.Y.Z`, so `go get
+  github.com/rowstile/rowstile/sdk/go` takes the newest release's, and `@vX.Y.Z` names one ([Go](docs/stacks/go.md)).
 - `rowstile client ts-sdk`: the policy's names alone, registered with the TypeScript SDK, asked for by name. It is
   what `[clients] ts` writes in an app on the SDK; `rowstile client ts` is the client for `pg` without it.
 - `authz.sign_out()`: nobody is signed in in the transaction afterwards, and it may sign in again, as anyone. It

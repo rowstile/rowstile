@@ -19233,6 +19233,17 @@ class Delivery(unittest.TestCase):
             # by hand, a dry run anywhere
             self.assertEqual(self.tag_check(d, "0.3.0-dev", other, "workflow_dispatch")[::2], (0, "none"))
 
+    def test_the_go_module_gets_the_release_s_version(self) -> None:
+        # RELEASING.md, sdk/go/README.md: a release tags its own commit sdk/go/vX.Y.Z, once its GitHub release is made,
+        # and a dry run tags nothing
+        job = self.release_jobs()["go-tag"]
+        self.assertIn("    needs: [check, github-release]\n    if: needs.check.outputs.publish == 'public'\n", job)
+        self.assertIn("    permissions: {contents: write}\n", job)
+        self.assertIn('tag="sdk/go/v$VERSION"', job)
+        self.assertIn('-f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA"', job)
+        with open(os.path.join(self.REPO, "sdk", "go", "go.mod"), encoding="utf-8") as fh:
+            self.assertEqual(fh.readline(), "module github.com/rowstile/rowstile/sdk/go\n")
+
     def test_a_tag_is_published_once_every_suite_passed_on_it(self) -> None:
         # RELEASING.md: a release's commit, rebased onto main with main's next version after it, has no CI run of its
         # own; the next one's, green, holds it when the two differ only by the version (the files version.py sets)
