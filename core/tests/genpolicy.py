@@ -32,7 +32,11 @@ differ in type in one policy (multi.authz, composite.authz: one Spelling, one ke
 a composite key with a text column (composite.authz), permissions on the user type and arrows to them (docs.authz,
 alt.authz, hand answers), several masked columns (masks.sh), a rules block with no select rule (cross.authz), scope
 names with `-` or `:` (policy_errors.py), a link table's `where` with `this.` (alt.authz), `cascade from` (apply.sh,
-the example apps), named tests (the suites' own, the hand answers).
+the example apps), named tests (the suites' own, the hand answers), an insert rule that reads the new row's own
+relations or permissions (docs.authz's `parent.edit and owner`, cross.authz's `insert : write`: checked as their
+WITH CHECK on rows there are, never by an insert), a group's members nested through the group's own table
+(`member : team#member = ...`, docs.authz: here and in small.py groups nest through shares only), and a condition in
+a permission on the request context or the clock (`authz.ctx()`, `now()`: here only caveats read the context).
 Then the tables it reads and their data. A third of the seeds name those tables and columns as an app's own may be
 (AWKWARD: capitals, words SQL reserves, a double quote, a letter outside ASCII, 63 bytes), the policy otherwise the
 same; nearly half give every key another type than bigint (KEYS: int, text or uuid), said on each type line, and half
@@ -92,6 +96,9 @@ SCHEMA = "gp"
 USERS = 5  # users 1..5
 GONE = str(USERS + 1)  # an id the user table doesn't have: links may name it, and it signs in, as nobody
 ROWS = 7  # rows of each object type at the start
+# in the compiled policy: lint's warning that a permission or a rule is slow to plan (the suites that run these
+# policies set such a one aside)
+SLOW_TO_PLAN = "view definitions to plan"
 
 # The database's names as a third of the policies spell them, as an app's own may be named: capitals, words SQL
 # reserves, a double quote, a letter outside ASCII, a name as long as Postgres allows (63 bytes). The policy writes a
@@ -132,9 +139,9 @@ ORGS = 2  # where object types are keyed by (org_id, id): the orgs their rows ar
 # the dotted capital I's 'İz' (user 2) in Turkish and in English, as of user 5's own 'iz', and the dotless i's of 'Iz'
 # in Turkish. A key folded, compared in another collation, or written into SQL unquoted, is then met by the checks.
 WORDS = ("ab", "\u0130z", "ab c", "O'Neil", "iz", 'say "hi"', "Émile", "\u0131z", "B", "Iz")  # (a dotted, a dotless i)
-# ... as a LATIN1 database can hold them (around.py's): an accented i for the dotted and the dotless ones
 # the letters after every word, in a UTF-8 database and in a LATIN1 one (around.py's top_word())
 RAISED = ("\u9999", "\u00ff")
+# ... the words as a LATIN1 database can hold them (around.py's): an accented i for the dotted and the dotless ones
 WORDS_LATIN1 = ("ab", "Íz", "ab c", "O'Neil", "iz", 'say "hi"', "Émile", "ìz", "B", "Iz")
 
 
@@ -1345,6 +1352,10 @@ def invariant_problems(checker: Checker) -> tuple[list[str], set[int]]:
     gen = checker.gen
     assert isinstance(gen, GenPolicyGen)
     gone = gen.spec.spelling.ident(GONE)
+    # (it asks as each row of a principal type and as nobody: no one else, and not an id no row has)
+    others = sorted({u for _, u in got} - (set(checker.users) - {gone}))
+    if others:
+        problems.append(f"check_invariants() gives rows for {others}, who are neither a principal's row nor nobody")
     for u in checker.users:
         if u == gone:  # asked as each row of a principal type, and as nobody
             continue
@@ -1375,7 +1386,26 @@ def run(
     """The problems found with this policy (none: it passed); Refused if the compiler refuses it, Slow if lint
     warns that its reads are slow to plan (unless slow: then it is checked, slowly) or the checks take more than
     `seconds`. With report: the parts of the policy (named name) that never decided an answer go there
-    (tests/decisions.py)."""
+    (tests/decisions.py). SQL Postgres refuses (the schema, the data, the compiled policy: psql's error) or a rule
+    whose row-level security policy or trigger is missing (Checker) is a problem of the policy too: the run goes
+    on to the next seed."""
+    try:
+        return checks(spec, db, steps, workdir, seconds, report, name, slow)
+    except (RuntimeError, SystemExit) as e:
+        return ["the checks could not go on:", *str(e).strip().splitlines()[:12]]
+
+
+def checks(
+    spec: Spec,
+    db: DB,
+    steps: int,
+    workdir: str,
+    seconds: float,
+    report: list[str] | None,
+    name: str,
+    slow: bool,
+) -> list[str]:
+    """run(), but what stops the checks raises."""
     policy_path, schema_path = os.path.join(workdir, "gen.authz"), os.path.join(workdir, "gen_schema.sql")
     write_policy(policy_path, policy_text(spec), spec.include)
     # the sync index (a preview): each type the index takes synced, one permission or the select rule each, which
@@ -1392,7 +1422,7 @@ def run(
         if why is None:
             return ["the compiler failed, refusing nothing:", *compiled.stderr.strip().splitlines()[-12:]]
         raise Refused(why)
-    if "view definitions to plan" in compiled.stdout and not slow:
+    if SLOW_TO_PLAN in compiled.stdout and not slow:
         raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
     gen = gen_class(spec, policy_path, schema_path)(random.Random(spec.seed))
@@ -1406,6 +1436,7 @@ def run(
     db.run(gen.grants())
     checker = Checker(db, policy_path, gen, decisions=report is not None)
     broken: set[int] = set()  # invariants the data broke at some step
+    refused = 0
     for step in range(steps + 1):
         if time.monotonic() - started > seconds:
             raise Slow(f"over {seconds:.0f} s at step {step} of {steps}")
@@ -1422,9 +1453,21 @@ def run(
             for t in checker.types.values()
         }
         sql = gen.change(ids)
-        code, _, err = db.run(f"{difftest.CHANGE}SELECT setseed({sqlseed.random():.6f});\n{sql}", check=False)
+        seeded = f"SELECT setseed({sqlseed.random():.6f});"
+        code, _, err = db.run(f"{difftest.CHANGE}{seeded}\n{sql}", check=False)
         if code != 0 and not gen.refused(err):
             return [f"step {step + 1}: unexpected error", f"  {sql}", f"  {err.strip()}"]
+        if code != 0:
+            refused += 1
+            wrong = checker.wrong_refusal(seeded, sql, err)
+            if wrong:
+                return [f"step {step + 1}: {wrong}"]
+    few = difftest.too_many_refused(refused, steps)
+    if few:
+        return [few]
+    quiet = checker.quiet()
+    if quiet:
+        return quiet
     if report is not None and checker.decisions is not None:
         report += checker.decisions.report(name or f"seed {spec.seed}", only_decisive=True)
     if broken:
@@ -1626,7 +1669,7 @@ def covering(pool: int) -> tuple[list[int], set[tuple[str, str]], set[tuple[str,
             sql = Compiler(parse_policy(policy_text(make(best)), "gen.authz")).compile("gen.authz")
         except PolicyError:
             continue
-        if "view definitions to plan" in sql:  # (lint says it is slow to plan: run() would set it aside)
+        if SLOW_TO_PLAN in sql:  # (lint says it is slow to plan: run() would set it aside)
             continue
         chosen.append(best)
         covered |= met[best]
@@ -1723,7 +1766,7 @@ def main() -> None:
                     except (Refused, Slow) as e:  # (it failed in the shrinking: run again, it may take too long)
                         print(f"    not checked again: {e}")
     print(
-        f"genpolicy seeds {seeds[0]}..{seeds[-1]}: {passed} passed, {failed} failed, "
+        f"genpolicy {f'seeds {seeds[0]}..{seeds[-1]}' if seeds else 'with no seed'}: {passed} passed, {failed} failed, "
         f"{sum(refused.values())} refused by the compiler"
         + (f" ({refused})" if refused else "")
         + (f", {len(slow)} too slow to check ({', '.join(slow)})" if slow else "")
@@ -1739,6 +1782,7 @@ def main() -> None:
                 + "; ".join(f"{a} + {b}" for a, b in sorted(missed))
             )
     few = too_few(passed + failed, passed + failed + sum(refused.values()) + len(slow))
+    few = few or (None if seeds else "FAIL no seed to run: nothing checked")
     if few:
         print(few)
     sys.exit(1 if failed or few else 0)

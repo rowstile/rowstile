@@ -2,7 +2,9 @@
 // made-up posts (well-formed XML, the fields a reader needs, newest first); and the comparison pages, listed
 // from their folder.   node site/blog_test.mjs
 import { feed, forFeed, postBody } from "./blog.mjs";
-import { DESCRIPTIONS, PAGES, compareSidebar, describe, readPost } from "./pages.mjs";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { DESCRIPTIONS, PAGES, REPO, compareSidebar, describe, readPost, readPosts } from "./pages.mjs";
 
 let failed = 0;
 /** @param {string} label @param {unknown} ok @param {unknown} [detail] */
@@ -58,6 +60,16 @@ for (const [label, file, body, said] of [
   const got = refused(() => readPost(file, body));
   check(`refused: ${label}`, got.includes(said), got || "it was read");
 }
+
+// the posts: two with one slug, or one the index doesn't list, fail the build; with none, the index isn't read
+const other = text.replace("# What a closure table costs", "# Another");
+check("posts, newest first, each listed in the index", JSON.stringify(readPosts({ "2026-10-09-a.md": other.replaceAll("2026-10-23", "2026-10-09"),
+  [post.file]: text }, () => `- [x](${post.file})\n- [y](2026-10-09-a.md)\n`).map((p) => p.slug)) === JSON.stringify([post.slug, "a"]));
+check("refused: two posts with one slug", refused(() => readPosts({ [post.file]: text, "2026-10-24-what-a-closure-table-costs.md":
+  text.replaceAll("2026-10-23", "2026-10-24") }, () => "")) === "docs/blog: two posts are named what-a-closure-table-costs");
+check("refused: a post the index doesn't list", refused(() => readPosts({ [post.file]: text }, () => "- [x](2026-10-23-other.md)\n")) ===
+  `docs/blog/README.md doesn't list ${post.file}`);
+check("no post: no blog, its index unread", readPosts({}, () => { throw new Error("read"); }).length === 0);
 
 check("the body a feed carries has no title and no byline", postBody(text).startsWith("Folders inside folders") && postBody(text).includes("## The table"), postBody(text));
 const page = '<h2 id="t" tabindex="-1">The table <a class="header-anchor" href="#t" aria-label="Permalink">&ZeroWidthSpace;</a></h2>' +
@@ -123,9 +135,13 @@ check("... named for what it is compared with", beside.every((b) => b.text && !b
 for (const f of compared.slice(0, 1)) {
   const said = DESCRIPTIONS[PAGES[f]];
   delete DESCRIPTIONS[PAGES[f]];
-  const made = refused(() => describe(PAGES[f], "")) || describe(PAGES[f], "");
-  check("... one without a sentence of its own is described by its first paragraph",
-    made.length > 40 && made.length <= 200 && !/[`*\[\]]/.test(made) && made !== said, made);
+  const why = refused(() => describe(PAGES[f], ""));
+  const made = why ? "" : describe(PAGES[f], "");
+  // the page's first paragraph, as plain text: what describe() keeps of it is its first sentences, or its start
+  const first = readFileSync(join(REPO, f), "utf8").split(/\n{2,}/)[1].replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[`*_]/g, "").replace(/\s+/g, " ").trim();
+  check("... one without a sentence of its own is described by its first paragraph", !why && made.length > 40 &&
+    made.length <= 200 && !/[`*\[\]]/.test(made) && made !== said && first.startsWith(made.replace(/\.\.\.$/, "")), why || made);
   if (said) DESCRIPTIONS[PAGES[f]] = said;
 }
 

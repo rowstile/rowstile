@@ -11,6 +11,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Added
 
+- The Go module has versions: each release tags its commit `sdk/go/vX.Y.Z`, so `go get
+  github.com/rowstile/rowstile/sdk/go` takes the newest release's, and `@vX.Y.Z` names one ([Go](docs/stacks/go.md)).
 - `rowstile client ts-sdk`: the policy's names alone, registered with the TypeScript SDK, asked for by name. It is
   what `[clients] ts` writes in an app on the SDK; `rowstile client ts` is the client for `pg` without it.
 - `authz.sign_out()`: nobody is signed in in the transaction afterwards, and it may sign in again, as anyone. It
@@ -106,6 +108,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The playground serves Pyodide and PGlite from its own site, at the versions its `package.json` pins, instead of
   loading them from jsDelivr. Mermaid still comes from jsDelivr, checked against its hash as Studio checks it, and
   the page's Content-Security-Policy lets scripts run from the site and that file alone.
+- The npm package's launcher exits 2 when it can't run the command (no Python to run on, a `ROWSTILE_PYTHON` that
+  isn't one, a path too long for Windows), as the command's own exit codes say of what it couldn't do; it exited 1.
 
 ### Removed
 
@@ -512,6 +516,17 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The TypeScript SDK reads a refusal by a restrictive policy of the app's own, which Postgres names in its message
   (`new row violates row-level security policy "p" for table "t"`), as `Refused`, a 403; before, it was no refusal, a
   500.
+- Every other SDK does too (Python, Go, Java and Kotlin, .NET, Ruby, Rust, Elixir, PHP): a refusal by a restrictive
+  policy of the app's own, which Postgres names, is `Refused`, a 403, in Postgres's words, with no command but an
+  upsert's `update`, and the table it names. Before, it was a refusal that named no table, or in PHP, whose driver
+  doesn't say which function raised it, no refusal (a 500).
+- Go's `rowstiletest.Refused(t, err, command)` asks for the rule's whole command: before, any start of it passed
+  (`"up"`, for an update's refusal).
+- PHP: a refusal's DETAIL that quotes a line beginning `LINE 2: ` keeps it; before, the DETAIL went into the message.
+  A LINE is libpq's only with the caret it writes under the statement's line.
+- PHP: `php artisan rowstile:check` says when the server writes its messages in another language (`lc_messages`), in
+  which PHP can't tell Postgres's own row-level security refusal from another error, and still exits 0;
+  `Rowstile::check()` returns that warning.
 - `@rowstile/prisma` reads a nested write whose target isn't there, or is hidden from the user (a `connect`), as
   `NotFound` naming that target's table. Before, an update named the row it updated, and a create stayed Prisma's
   error.
@@ -667,6 +682,22 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The review for CI on GitHub: when GitHub can't be reached, or doesn't answer within 30 seconds, the comment step
   fails with an error that says so and that the review is in the run's summary. Before, it ended with a traceback,
   or waited for the job's timeout.
+- A mistake on a line that goes on over several (a quote left open in braces, AZ106 and AZ114), or about a quote left
+  open to the end of its line (in a condition or a test's statement), is underlined in the editor and the review up
+  to the last character of its words. Before, the range ended one character past the end of that line.
+- The npm package's launcher passes Ctrl-C and a hang-up on to the command only when none of its streams is a
+  terminal: `npx rowstile ... < file` in a terminal no longer gives the command each one twice.
+- The command's image and the Python package are built with the build's own packages (hatchling and what it needs)
+  pinned by hash, as everything else they fetch is.
+- `rowstile review` and `rowstile prove` read a condition on a type's key column (`{id = 2}`) as the row's own
+  id, as the database does. Before, their small worlds gave that column a value of its own, beside the id, so a
+  refactor could be said to change what it doesn't, or a counterexample be one no database can hold.
+- `rowstile migrate` writes a migration when a policy's lines only moved (a comment added above a rule): it writes
+  where each line is now, and nothing else, and `rowstile migrate --check` asks for it. Before, there was none, and
+  a migrated database's messages named a rule's old line until the next migration.
+- The language server, when a file a policy includes is closed while the policy is open, marks it with what the
+  policy's check finds there. Before, with no policy named in rowstile.toml, it kept the mistakes the file had
+  when read as a policy alone (no app role, say).
 
 ### Upgrading
 

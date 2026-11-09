@@ -1,5 +1,8 @@
 # Everything is LF: scripts, SQL and Makefiles run inside Linux containers, even when checked out on Windows
 * text=auto eol=lf
+# ... but Windows' batch files (the Maven wrapper's mvnw.cmd), which cmd.exe reads with CRLF: kept LF in the index, CRLF
+# when checked out
+*.cmd text eol=crlf
 
 # written by core/tests/unit_test.py --update: reviews show them collapsed
 docs/errors/*.md linguist-generated

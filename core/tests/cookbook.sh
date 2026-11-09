@@ -3,7 +3,8 @@
 # docs/cookbook/<name>/: schema.sql (its tables), rows.sql (a few rows, for the playground), policy.authz,
 # tests.authz and rowstile.toml (naming those two). For each: the tables and the rows load, the policy applies
 # without a warning, its tests pass (with the rows there, as in the playground), and every line of policy and
-# tests the page shows is in those files, so the page can't drift. The SQL the page shows runs, and the commands
+# tests the page shows is in those files, under the type, rules or test it is shown under (its order within the
+# block is not checked). The SQL the page shows runs, and the commands
 # it shows print what it shows. Its invariants, if it states any, are proved, and ask.sql, if it has one (what
 # the playground asks first), runs as the app role. Then the steps docs/cookbook.md gives, run as written: in a
 # copy of the folder, on a database with only the tables and the rows, `rowstile dev` applies it and passes its
@@ -13,6 +14,15 @@ set -u
 cd "$(dirname "$0")/.."
 BOOK=../docs/cookbook
 fails=0
+# what the run made, dropped however it ends (KEEP=1 keeps the recipes' databases): each recipe's databases, as it
+# makes them, and a folder of the run's own for the copies
+MADE=()
+WORK=$(mktemp -d /tmp/authz_cookbook_run.XXXXXX)
+cleanup() {
+  [ -z "${KEEP:-}" ] && for d in "${MADE[@]}"; do dropdb --if-exists "$d" 2>/dev/null; done
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
 # the steps docs/cookbook.md gives for trying a recipe: its sh block, run as written for each recipe (below), with
@@ -37,6 +47,7 @@ recipe() {
   CLI() { python3 cli/rowstile_cli.py --db "dbname=$db" "$@"; }
   dropdb --if-exists "$db" 2>/dev/null
   createdb "$db" || { bad "$name: createdb"; return; }
+  MADE+=("$db" "${db}_dev")
   if ! PGOPTIONS="-c client_min_messages=warning" psql -X -q -v ON_ERROR_STOP=1 -d "$db" -f "$dir/schema.sql" -f "$dir/rows.sql" >/dev/null; then
     bad "$name: its tables and rows"; dropdb "$db"; return
   fi
@@ -48,25 +59,45 @@ recipe() {
 import re, sys
 page = open(sys.argv[1], encoding="utf-8").read()
 norm = lambda s: " ".join(s.split("--")[0].split())
-have = set()
+# each line under the block it is in (the last line before it that starts a block: a type, rules, a test, ...): a
+# line the page shows under another type than the file's is no line of the file
+have, under = set(), set()
 for f in sys.argv[2:]:
-    have |= {norm(line) for line in open(f, encoding="utf-8")}
+    head = None
+    for raw in open(f, encoding="utf-8"):
+        line = norm(raw)
+        if not line:
+            continue
+        if not raw[:1].isspace():
+            head = line
+        have.add(line)
+        under.add((head, line))
 blocks = re.findall(r"```authz\n(.*?)```", page, re.S)
 if not blocks:
     print("(the page shows no policy)")
 for block in blocks:
-    for line in block.splitlines():
-        if norm(line) and norm(line) not in have:
-            print(line.strip())
+    head = None  # (a block that starts inside one: its lines are looked for anywhere)
+    for raw in block.splitlines():
+        line = norm(raw)
+        if not line:
+            continue
+        if not raw[:1].isspace():
+            head = line
+        if (head is None and line not in have) or (head is not None and (head, line) not in under):
+            print(raw.strip() + ("" if head is None or head == line else f"  (under {head})"))
 PY
 )
   [ -z "$missing" ] && ok "$name: every line of policy and tests its page shows is in its files" || bad "$name: lines not in the policy or tests" "$missing"
   # the SQL the page shows runs as the app role, signed in as the first user of rows.sql, and each command it
-  # shows (an indented `$ rowstile ...` and what it prints) prints that, run in the recipe's folder; a block
+  # shows (an indented `$ rowstile ...` and what it prints) prints that, run in a copy of the recipe's folder; a block
   # with <!-- not run: why --> right before it is left out
-  out=$(python3 - "$page" "$db" "$dir" <<'PY'
-import os, re, subprocess, sys
+  out=$(TMPDIR=$WORK python3 - "$page" "$db" "$dir" <<'PY'
+import os, re, shutil, subprocess, sys, tempfile
 page, db, folder = sys.argv[1], sys.argv[2], sys.argv[3]
+# the commands run in a copy of the recipe's folder: one that writes (fmt, migrate, client) writes there, not in
+# the checkout
+copy = tempfile.mkdtemp(prefix="authz_cookbook_run_")
+folder = shutil.copytree(folder, os.path.join(copy, os.path.basename(folder)))
 lines = open(page, encoding="utf-8").read().splitlines()
 cli = os.path.abspath("cli/rowstile_cli.py")
 sql, shown, problems = 0, 0, []
@@ -102,6 +133,7 @@ while i < len(lines):
             problems.append(f"rowstile {' '.join(args)} (line {start + 1}) printed:\n{got}")
     else:
         i += 1
+shutil.rmtree(copy)
 print(f"{sql} {shown}")
 print("\n".join(problems))
 PY
@@ -126,7 +158,7 @@ PY
   # the steps docs/cookbook.md gives for trying a recipe on a database of your own: its tables and rows, then
   # `rowstile dev` in a copy of the folder, which its rowstile.toml points at the policy and the tests
   local copy here=$PWD
-  copy=$(mktemp -d "/tmp/authz_cookbook_${name//-/_}.XXXXXX")
+  copy=$(mktemp -d "$WORK/${name//-/_}.XXXXXX")
   cp -r "$dir/." "$copy/"
   dropdb --if-exists "${db}_dev" 2>/dev/null
   local steps=${STEPS//owner_only/${db}_dev}

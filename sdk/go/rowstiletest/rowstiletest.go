@@ -121,13 +121,14 @@ func PerPackage(ctx context.Context, testsURL, appURL string, fresh bool) (Datab
 	return db, nil
 }
 
-// Refused is err as the refusal it must be (t fails at once otherwise): by command's rule, unless command is "".
+// Refused is err as the refusal it must be (t fails at once otherwise): by command's rule, the whole word ("update", not
+// "up"), unless command is "".
 func Refused(t testing.TB, err error, command string) *rowstile.Refused {
 	t.Helper()
 	var r *rowstile.Refused
 	if !errors.As(err, &r) {
 		t.Fatalf("expected a refusal, got %v", err)
-	} else if command != "" && !strings.HasPrefix(r.Command, command) {
+	} else if command != "" && r.Command != command {
 		t.Fatalf("expected the %s rule to refuse it, but: %s: %s", command, r.Command, r.Message)
 	}
 	return r

@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url";
 import { build, createMarkdownRenderer } from "vitepress";
 import { FEED, LANGUAGES, feed, forFeed, postBody } from "./blog.mjs";
 import { KEY, KEY_FILE } from "./indexnow.mjs";
-import { NOTE, ORIGIN, PAGES, POSTS, REPO, deadAnchors, inSitemap, rewriteLinks, siteLink, url, withoutNotes } from "./pages.mjs";
+import { DEPLOYED, deployed } from "./source.mjs";
+import { ORIGIN, PAGES, POSTS, REPO, checkCopy, checkSitemap, deadAnchors, rewriteLinks, siteLink, url, withoutNotes } from "./pages.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = join(HERE, "dist");
@@ -22,11 +23,11 @@ function run(cmd, ...args) {
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed`);
 }
 
-/** A file's Markdown links, for readers of the Markdown itself: a page's .md copy, or GitHub.
+/** A file's Markdown links, for readers of the Markdown itself: a page's .md copy, or GitHub (an image: the file).
  *  @param {string} source @param {string} text */
 function markdownLinks(source, text) {
-  return rewriteLinks(parse(source), source, text, (href) => {
-    const link = siteLink(source, href);
+  return rewriteLinks(parse(source), source, text, (href, image) => {
+    const link = siteLink(source, href, image);
     const cut = link.indexOf("#");
     const path = cut < 0 ? link : link.slice(0, cut);
     if (!path.startsWith("/")) return link;
@@ -60,26 +61,22 @@ const parse = (source) => (text) => md.parse(text, { path: join(REPO, source), r
 // for search engines: the sitemap VitePress wrote must hold every page but those inSitemap leaves out, and
 // robots.txt names it (the site's source folder is the repository's root, so there is no public/ folder to put the
 // file in)
-const sitemap = await written(join(DIST, "sitemap.xml"), "</urlset>");
-const paths = Object.values(PAGES).map(url);
-const unlisted = paths.filter(inSitemap).filter((p) => !sitemap.includes(`<loc>${ORIGIN}${p}</loc>`));
-if (unlisted.length) throw new Error(`sitemap.xml doesn't list ${unlisted.join(", ")}`);
-const listed = paths.filter((p) => !inSitemap(p)).filter((p) => sitemap.includes(`<loc>${ORIGIN}${p}</loc>`));
-if (listed.length) throw new Error(`sitemap.xml lists what it leaves out: ${listed.join(", ")}`);
-if (paths.filter(inSitemap).length === paths.length) throw new Error("inSitemap leaves out no page: the error codes' are");
+checkSitemap(await written(join(DIST, "sitemap.xml"), "</urlset>"));
 // the mark and the card for shared links, at the site's root (no public/ folder: see above)
 for (const f of ["mark.svg", "card.png"]) cpSync(join(HERE, "assets", f), join(DIST, f));
 writeFileSync(join(DIST, "robots.txt"), `User-agent: *\nAllow: /\n\nSitemap: ${ORIGIN}/sitemap.xml\n`);
 // IndexNow's key, at the root: what says the site's own deploy sent the addresses (indexnow.mjs, site.yml)
 writeFileSync(join(DIST, KEY_FILE), KEY);
+// what this site shows, which the next run of site.yml reads (source.mjs): its tags, and whether it was put back by hand
+writeFileSync(join(DIST, DEPLOYED), deployed(process.env));
 
 // the blog's feed: each post whole, as HTML, its links to the site's pages by their full address
 if (POSTS.length) {
   /** @type {Map<string, string>} */
   const html = new Map();
   for (const post of POSTS) {
-    const body = rewriteLinks(parse(post.source), post.source, postBody(readFileSync(join(REPO, post.source), "utf8")), (href) => {
-      const link = siteLink(post.source, href);
+    const body = rewriteLinks(parse(post.source), post.source, postBody(readFileSync(join(REPO, post.source), "utf8")), (href, image) => {
+      const link = siteLink(post.source, href, image);
       return link.startsWith("/") ? ORIGIN + link : link;
     });
     // the renderer is the build's own, with the config's rules: they ask which file the text is from
@@ -96,8 +93,7 @@ cpSync(join(REPO, "playground", "dist"), join(DIST, "playground"), { recursive: 
 for (const [source, address] of Object.entries(PAGES)) {
   mkdirSync(dirname(join(DIST, address)), { recursive: true });
   const copy = markdownLinks(source, withoutNotes(readFileSync(join(REPO, source), "utf8")));
-  const kept = copy.split("\n").find((line) => NOTE.test(line));
-  if (kept !== undefined) throw new Error(`${source}: its Markdown copy keeps a note: ${kept}`);
+  checkCopy(source, copy);
   writeFileSync(join(DIST, address), copy);
 }
 const llms = markdownLinks("llms.txt", readFileSync(join(REPO, "llms.txt"), "utf8"));

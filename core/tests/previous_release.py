@@ -38,7 +38,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from authzlib import __version__
-from authzlib.versions import PYPI, STAGES, VERSION, stage
+from authzlib.versions import order
 from authzlib.versions import spelled as ours
 
 # the first release anything upgrades from: the beta started afresh (a database the alphas before it made is
@@ -48,7 +48,6 @@ FIRST = "0.1.0-beta.1"
 INDEX = "https://pypi.org/simple/rowstile/"
 INDEX_JSON = "application/vnd.pypi.simple.v1+json"
 # where in a version's life: its stages (alphas, betas, candidates), a build of main on its way to it, the version
-DEV, RELEASED = len(STAGES), len(STAGES) + 1
 Answer = Any  # the index's JSON
 Key = tuple[int, int, int, int, int]
 
@@ -63,16 +62,9 @@ class Wrong(Exception):
 
 
 def key(version: str) -> Key | None:
-    """Where a version comes, written either way; None for one that is neither (a post-release, a dev build)."""
-    m = VERSION.fullmatch(version)
-    if m:
-        at = DEV if m.group(6) else stage(m.group(4)) if m.group(4) else RELEASED
-    else:
-        m = PYPI.fullmatch(version)
-        if not m:
-            return None
-        at = stage(m.group(4)) if m.group(4) else RELEASED
-    return int(m.group(1)), int(m.group(2)), int(m.group(3)), at, int(m.group(5) or 0)
+    """Where a version comes, written either way (versions.order); None for one that is neither (a post-release,
+    a dev build as PyPI writes it)."""
+    return order(version)
 
 
 def spelled(version: str) -> str:
@@ -83,11 +75,7 @@ def spelled(version: str) -> str:
 
 def before(mine: str, released: Iterable[str]) -> str | None:
     """The newest of the released versions that is older than mine; None if none is."""
-    here = key(mine)
-    if here is None:
-        raise ValueError(f"{mine} is not a version rowstile has")
-    older = [(k, v) for v in released if (k := key(v)) is not None and k < here]
-    return max(older)[1] if older else None
+    return (older(mine, released) or [None])[-1]
 
 
 def fetch(url: str, accept: str | None = None) -> bytes:

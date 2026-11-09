@@ -305,11 +305,13 @@ def check(path: str, wanted: set[str]) -> list[str]:
         module, sure = todo.pop()
         if module in seen or module.split(".")[0] in skip:
             continue
-        seen.add(module)
         where = find(module)
+        if where is None and not sure:
+            # `from package import name`: a name of the package, not a module. Not marked seen: the same name may
+            # yet come as a sure import (`import package.name`), which must be found
+            continue
+        seen.add(module)
         if where is None:
-            if not sure:
-                continue  # `from package import name`: a name of the package, not a module
             parent = find(module.rpartition(".")[0]) if "." in module else None
             # os.path: an attribute of a module that isn't a package; collections.abc: a name its package puts
             # in sys.modules

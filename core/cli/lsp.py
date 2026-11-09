@@ -401,7 +401,8 @@ class Server:
 
     def close(self, uri: str) -> None:
         """A file closed: what its checks marked, and no other open file's did, is cleared (an editor keeps the
-        last diagnostics it was sent); the open files are checked again if the policy was read from it."""
+        last diagnostics it was sent); the open files are checked again if the policy was read from it, else those
+        whose checks mark what it marked (what they find there is sent again, in place of what it found)."""
         self.docs.pop(uri, None)
         key = same_file(uri_path(uri))
         if self.open.get(key) == uri:  # (a view of the file under another scheme never was the file)
@@ -410,9 +411,9 @@ class Server:
         marked = self.sent.pop(uri, set()) | {uri}
         for target in marked - set().union(*self.sent.values()):
             self.notify("textDocument/publishDiagnostics", {"uri": target, "diagnostics": []})
-        if self.feeds_tests(uri):
-            for other in list(self.docs):
-                self.check(other)
+        again = list(self.docs) if self.feeds_tests(uri) else [o for o, ts in self.sent.items() if ts & marked]
+        for other in again:
+            self.check(other)
 
     # --- understanding a position -----------------------------------------------------------------
     @staticmethod

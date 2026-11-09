@@ -5,7 +5,7 @@ listed in survivors.txt with which, and a new one fails the run. .github/workflo
 runners: `prepare`, then `run` on many runners side by side (one shard each), then `collect`.
 
     python3 core/mutants/sweep.py list [--since C]                       # every mutant, by operator and file
-    python3 core/mutants/sweep.py calls DIR... --source TEXT --out F     # the call data, from CI's coverage artifacts
+    python3 core/mutants/sweep.py calls DIR... --source TEXT --commit C --out F   # the call data, from CI's coverage
     python3 core/mutants/sweep.py prepare --out P [--since C | --only ID,... | --limit N] [--shards N]
                                           [--carried DIR] [--calls F] [--stats F]   # the cheap phase, the queues
     python3 core/mutants/sweep.py run --prepared P --shard 1/8 --out R   # one shard: a Postgres container of its own
@@ -19,8 +19,9 @@ code. A shard stops taking mutants after --budget minutes; those left are `not r
 
 Results: one JSON object a mutant (results.jsonl): its id, where it is, its kind (plan.py), what caught it (a
 suite, `compiler fails` or `compiler hangs`), `MISSED`, or why it didn't run (`same`, `unreached`, `not run`,
-`error`), its seconds and the suites' order. `--carried` takes a previous run's: the results of mutants whose line
-hasn't changed carry over, but for those MISSED and not listed as equivalent, which run again.
+`error`), its seconds and the suites' order. `--carried` takes a previous run's: the catches (by the compiler, or by
+a suite the sweep still has) and the survivors listed as equivalent of mutants whose line hasn't changed carry
+over; the others are decided again (carried_over).
 
 The suites' order learns each suite's catches and seconds (stats.json, plan.Stats). No copy is kept in the
 repository, which would go stale: `--stats` takes the newest run's (the workflow finds it, whatever results it
@@ -50,7 +51,8 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 SURVIVORS = os.path.join(HERE, "survivors.txt")
 PER_SHARD = 30  # mutants a shard is given when no limit is: about what one runner clears in its budget
 BY_COMPILER = ("compiler fails", "compiler hangs")
-NOT_RUN = ("same", "unreached")  # final without a suite: equivalent for every output, or no suite runs its lines
+# not run: equivalent for every output, or no suite runs its lines (each run decides them again)
+NOT_RUN = ("same", "unreached")
 Record = dict[str, Any]
 
 
@@ -132,7 +134,7 @@ def list_mode(args: argparse.Namespace) -> None:
 
 
 def calls_mode(args: argparse.Namespace) -> None:
-    unmapped = plan.refresh_calls(args.dirs, args.source, args.out)
+    unmapped = plan.refresh_calls(args.dirs, args.source, args.commit, args.out)
     calls = plan.Calls.load(args.out)
     print(f"{args.out}: {len(calls.functions)} functions, {len(calls.lines)} files, from {args.source}")
     if unmapped:
@@ -156,13 +158,20 @@ def deal(predicted: dict[str, float], shards: int) -> dict[str, int]:
 
 
 def carried_over(path: str | None, ids: set[str], survivors: dict[str, tuple[str, str]]) -> list[Record]:
-    """A previous run's results that still hold: their line is unchanged (the id is still made), and they are final
-    (not a MISSED one unless it is listed as equivalent, which runs again; not `not run` nor `error`)."""
+    """A previous run's results that still hold: their line is unchanged (the id is still made), and they are final:
+    caught by the compiler or by a suite the sweep still has, or MISSED and listed as equivalent. The others are
+    decided again: a lead or a new survivor (its check may be written by now), `not run`, `error`, and `same` and
+    `unreached`, which the cheap phase decides from more than the mutant's line (every policy in the repository,
+    the lines the suites ran) in seconds."""
+    suites = {s for s, _ in plan.SUITES}
     out = []
     for r in read_jsonl(os.path.join(path, "results.jsonl")) if path else []:
-        if r["id"] not in ids or r["result"] in ("not run", "error"):
+        if r["id"] not in ids:
             continue
-        if r["result"] == "MISSED" and survivors.get(r["id"], ("",))[0] != "equivalent":
+        if r["result"] == "MISSED":
+            if survivors.get(r["id"], ("",))[0] != "equivalent":
+                continue
+        elif r["result"] not in suites and r["result"] not in BY_COMPILER:
             continue
         out.append({**r, "carried": True})
     return out
@@ -209,7 +218,7 @@ def prepare(args: argparse.Namespace) -> None:
           f"candidates; to run: {limit or 'all of them that need suites'}", flush=True)  # fmt: skip
     t0 = time.time()
     base = plan.measure(args.root, work)
-    calls = plan.Calls.load(args.calls)
+    calls = plan.Calls.load(args.calls, args.root)
     print(f"measured the outputs unmutated in {time.time() - t0:.0f} s; calls: {calls.source}", flush=True)
     rows = plan.cheap(base, calls, work, candidates, args.procs, limit) if candidates else []
     shutil.rmtree(work, ignore_errors=True)
@@ -561,6 +570,7 @@ def main() -> int:
     p = sub.add_parser("calls", help="the call data, from coverage directories (CI's coverage-pg16-* artifacts)")
     p.add_argument("dirs", nargs="+")
     p.add_argument("--source", required=True, help="where the data comes from (the reports say it)")
+    p.add_argument("--commit", required=True, help="the commit it was measured at (its lines are moved from there)")
     p.add_argument("--out", required=True)
     p = sub.add_parser("prepare", help="the cheap phase, and the shards' queues")
     p.add_argument("--out", required=True)

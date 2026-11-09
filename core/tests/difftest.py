@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """difftest: check the compiled policy against an independent evaluator.
 
-    python3 tests/difftest.py --db authz_difftest --gen docs --steps 150 --seed 1
+    python3 tests/difftest.py --db authz_difftest --gen docs --steps 100 --seed 1
 
 Builds a random data set for the policy, applies the compiled policy, then
 repeatedly changes the data at random (moves, links, team nesting, shares,
@@ -19,16 +19,23 @@ one transaction) and after every change compares, for every user:
   - both again as the app role, on the rows it may select (where the app role
     checks them: a condition must read with the policy's rights there too)
   - for one of them, again with a scope: lists, checks and policies
-  - authz.explain() of every object and permission, as an administrator asks it and as the user asks it of
-    themselves (by their id too), authz.who() and authz.who_among(), authz.perms_of() and authz.explain_rule()
-  - the sharing API tried as the user and undone: authz.share(), unshare(), create_link(), list_shares(), the
-    links API (list_links) and the custom roles API (create_role and the rest)
+  - on two rows of each type (another two in each snapshot), every permission: authz.explain(), as an
+    administrator asks it and as the user asks it of themselves (by their id too), authz.perms_of() and
+    authz.explain_rule(); on six (another six each time), authz.who() and authz.who_among()
+  - the sharing API tried as the user and undone, on those two rows and two they may share: authz.share(),
+    unshare(), create_link(), list_shares(), the links API (list_links) and the custom roles API (create_role and
+    the rest)
   - requests for access, breaking the glass and access reviews, tried by the same user and undone: what each call
     says, the requests it shows, the shares it makes or revokes, and the lines it writes in the audit trail
   - the masked views, read as each user: their rows, and the rows each masked column is shown on
   - authz.verify(): the closure tables match a rebuild
+  - the sync index, where the policy syncs: the rows each principal's keys read, and its PowerSync mirror's, against
+    the reference, and authz.sync_verify()
+  - the change feed (authz.changes): it announced every object whose answer changed for anyone since the last check
 
-(check() has them all, each with the words a difference is reported in.)
+(check() has them all, each with the words a difference is reported in. An answer is compared once it is asked:
+one asked that no check compares fails the run, as does a kind of answer the checks look for that no snapshot
+of a run gave once every user had their turn.)
 
 against a reference evaluator written directly from the language's meaning:
 relations and permissions are sets of object ids, computed together as the
@@ -36,8 +43,10 @@ least fixpoint of the policy. It shares only the parser with the compiler.
 
 A change may fail only as random changes may: a key it repeats or a row it
 names that isn't there, raised by its own statement (by SQLSTATE), or a refusal
-of rowstile's that the generator expects (by the code in its HINT). Anything
-else, or more than half the changes refused, fails the run.
+of rowstile's that the generator expects (by the code in its HINT; one for a
+move under itself, AZ713, only where the change, made again with rowstile's
+triggers off and undone, puts a row under itself). Anything else, or more than
+half the changes refused, fails the run.
 
 With --decisions it says at the end which parts of the policy never decided an
 answer in those checks, whose SQL the run never judged (tests/decisions.py),
@@ -66,7 +75,7 @@ from typing import Any, ClassVar
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import compile_policy  # noqa: E402
-from authzlib import evaluate  # noqa: E402
+from authzlib import evaluate, statements  # noqa: E402
 from authzlib.parse import Arrow, ArrowOn, Caveat, Cols, Cond, Policy, Ref, Rule, Source, Type, leaves  # noqa: E402
 from authzlib.sqlutil import ident, q, qt, reads_more  # noqa: E402  (names as the policy writes them, quoted: ...)
 from decisions import Decisions, Gain, Plan, allows, scope_items  # noqa: E402
@@ -75,6 +84,30 @@ from decisions import Decisions, Gain, Plan, allows, scope_items  # noqa: E402
 Answer = Any
 Snapshot = dict[tuple[str, ...], Answer]
 Ids = dict[str, list[str]]  # the ids of each type's rows, as text
+# the parts of a snapshot that are the reference's inputs, not answers to compare (what the evaluator reads; a
+# `shared if` evaluated beside the data, read where the verdict turns on it)
+INPUTS = ("data", "decisions", "share if")
+# the kinds of answers that are lists of ids (of rows, of users): each id once
+ID_LISTS = ("list", "rls", "view", "mask", "policy", "policy as app", "column", "column as app", "sync", "mirror")
+
+
+class Asked(dict[tuple[str, ...], Answer]):
+    """A snapshot that remembers which answers the checks read (`snap[key]`, `snap.get(key)`), and those they looked
+    for that it doesn't have: an answer asked of the database that no check compares, or a kind of answer the checks
+    look for and no snapshot gives, is a check gone quiet (Checker.unread, Checker.quiet)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.read: set[tuple[str, ...]] = set()
+        self.missing: set[tuple[str, ...]] = set()
+
+    def __getitem__(self, key: tuple[str, ...]) -> Answer:
+        self.read.add(key)
+        return super().__getitem__(key)
+
+    def get(self, key: Answer, default: Answer = None, /) -> Answer:  # (a key: tuple[str, ...])
+        (self.read if key in self else self.missing).add(key)
+        return super().get(key, default)
 
 
 def read(path: str) -> str:
@@ -119,7 +152,9 @@ SQLSTATE = re.compile(r"^(?:psql:\S* )?ERROR:\s+([0-9A-Z]{5}): ", re.M)
 ROWSTILE_HINT = re.compile(r"^HINT:\s+rowstile help (AZ\d+)", re.M)
 IN_ROWSTILE = re.compile(r'\bfunction "?authz(?:_int|_gen)?"?\.')
 KEY_ERRORS = ("23505", "23503")  # unique_violation, foreign_key_violation
-SHARE_COLUMNS = "object_type, object_id, relation, subject_type, subject_id, subject_relation, expires_at, starts_at"
+# a share's columns up to when it ends, and then when it starts (authz.shares names them so)
+SHARE_EXPIRES = "object_type, object_id, relation, subject_type, subject_id, subject_relation, expires_at"
+SHARE_COLUMNS = f"{SHARE_EXPIRES}, starts_at"
 STEER = 0.25  # of the changes, those aimed at parts of the policy that have decided no answer yet (Gen.steered)
 AIMS = 3  # how many parts one such change aims at, at most; or an eighth of the parts left, when that is more
 PAGE = 2  # authz.list's page size, where it is asked in pages
@@ -201,6 +236,39 @@ def asked_of_every_row(who: str, tname: str, perm: str, answers: Answer, ids: se
     if asked == {*ids, *more}:
         return []
     return [f"{who}: authz.can('{tname}', ..., '{perm}') was asked of {sorted(asked)}, not of {sorted({*ids, *more})}"]
+
+
+def reaches_itself(links: Sequence[tuple[tuple[str, str], tuple[str, str]]]) -> bool:
+    """Whether some row reaches itself through these links ((type, id) to (type, id)): a loop."""
+    after: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for a, b in links:
+        after.setdefault(a, []).append(b)
+    done: set[tuple[str, str]] = set()
+    for start in after:
+        if start in done:
+            continue
+        path, on = [(start, iter(after[start]))], {start}
+        while path:
+            node, nexts = path[-1]
+            step = next(nexts, None)
+            if step is None:
+                path.pop()
+                on.discard(node)
+                done.add(node)
+            elif step in on:
+                return True
+            elif step not in done:
+                path.append((step, iter(after.get(step, []))))
+                on.add(step)
+    return False
+
+
+# rowstile's triggers on every table the owner may change, off until the transaction ends (it is undone)
+TRIGGERS_OFF = (
+    "DO $d$ DECLARE r record; BEGIN FOR r IN SELECT DISTINCT c.oid::regclass AS t FROM pg_trigger g "
+    "JOIN pg_class c ON c.oid = g.tgrelid WHERE NOT g.tgisinternal AND pg_has_role(c.relowner, 'USAGE') LOOP "
+    "EXECUTE format('ALTER TABLE %s DISABLE TRIGGER USER', r.t); END LOOP; END $d$;"
+)
 
 
 def signs_in_as_user(u: str, types: dict[str, Type]) -> bool:
@@ -596,6 +664,9 @@ class Checker:
         # the change feed: where it was after the last snapshot, what each user held then, and who signed in
         self.fed: tuple[int, dict[tuple[str, str, str], frozenset[str]], dict[str, bool]] | None = None
         self.unfed = unfed(self.pol)
+        # over a run: the kinds of answers the checks read, and those they looked for in a snapshot without them
+        self.answered: set[str] = set()
+        self.looked_for: set[str] = set()
 
     def feed_position(self) -> int:
         rows = self.db.rows("SELECT coalesce(max(pos), 0) FROM authz.changes")
@@ -651,6 +722,8 @@ class Checker:
             lines.append(f"SELECT {lit(json.dumps(key))}, ({sql});")
 
         self.db.run("\n".join(self.as_app_functions()))
+        # the rows asked about by name are another few in each snapshot: their order is salted with its number
+        salt = lit(self.checks)
         self.shares_tried = self.shareable(conditions=True)
         self.links_tried = self.shareable("link")  # (a link's `shared if` would read its hash, made at random)
         # who tries to share in this snapshot: one user, in turn (each attempt is a subtransaction of its own)
@@ -708,7 +781,10 @@ class Checker:
         # the rows explain is asked about by each user themselves, whether they may see them or not: picked here
         sample = {
             t.name: [
-                row[0] for row in self.db.rows(f"SELECT {idsql(t)} FROM {qt(t.table)} ORDER BY md5({idsql(t)}) LIMIT 2")
+                row[0]
+                for row in self.db.rows(
+                    f"SELECT {idsql(t)} FROM {qt(t.table)} ORDER BY md5({idsql(t)} || {salt}) LIMIT 2"
+                )
             ]
             for t in self.types.values()
         }
@@ -721,7 +797,7 @@ class Checker:
             more: dict[str, int] = {}
             for tname, i, rname, lid in self.db.rows(
                 "SELECT object_type, object_id, relation, left(subject_id, 16) FROM authz.shares "
-                "WHERE subject_type = 'link' ORDER BY md5(object_id), 1, 2, 3, 4"
+                f"WHERE subject_type = 'link' ORDER BY md5(object_id || {salt}), 1, 2, 3, 4"
             ):
                 if (tname, i) not in self.links_now:
                     if more.get(tname, 0) == 3 or not any(t == tname for t, _ in self.link_by):
@@ -843,7 +919,7 @@ class Checker:
                     if by in t.perms:
                         rows += (
                             f" UNION (SELECT {idsql(t)} FROM {qt(t.table)} WHERE authz.can({lit(tname)}, {idsql(t)}, "
-                            f"{lit(by)}) ORDER BY md5({idsql(t)}) LIMIT 2)"
+                            f"{lit(by)}) ORDER BY md5({idsql(t)} || {salt}) LIMIT 2)"
                         )
                     for what in ("share", "unshare"):
                         emit(
@@ -895,7 +971,7 @@ class Checker:
                         f"SELECT coalesce(json_agg(json_build_array(i, difftest_app.try_list_shares({lit(tname)}, i))), "
                         f"'[]') FROM (SELECT unnest(ARRAY[{', '.join(lit(i) for i in sample[tname])}]::text[]) UNION "
                         f"(SELECT {idsql(t)} FROM {qt(t.table)} WHERE authz.can({lit(tname)}, {idsql(t)}, 'share') "
-                        f"ORDER BY md5({idsql(t)}) LIMIT 2)) s(i)",
+                        f"ORDER BY md5({idsql(t)} || {salt}) LIMIT 2)) s(i)",
                     )
                 # requests, breaking the glass and reviews, tried by the same user, each attempt undone
                 for tname, rname in self.requests_tried:
@@ -926,7 +1002,7 @@ class Checker:
                         f"{'true' if self.review_undecided else 'false'}))), '[]') "
                         f"FROM (SELECT unnest({text_array(sample[tname])}) UNION "
                         f"(SELECT {idsql(t)} FROM {qt(t.table)} WHERE authz.can({lit(tname)}, {idsql(t)}, 'share') "
-                        f"ORDER BY md5({idsql(t)}) LIMIT 2)) s(i)",
+                        f"ORDER BY md5({idsql(t)} || {salt}) LIMIT 2)) s(i)",
                     )
             for table in dict.fromkeys(r.table for r in self.rules if r.command == "select"):
                 t = self.ref.type_of_table(table)
@@ -953,8 +1029,7 @@ class Checker:
                     emit(
                         [u, "explain", t.name, p],
                         f"SELECT coalesce(json_agg(json_build_array(i, (SELECT e FROM authz.explain({lit(t.name)}, i, "
-                        f"{lit(p)}, {asked}) e LIMIT 1))), '[]') FROM (SELECT {idsql(t)} AS i FROM {qt(t.table)} "
-                        f"ORDER BY md5({idsql(t)}) LIMIT 2) s",
+                        f"{lit(p)}, {asked}) e LIMIT 1))), '[]') FROM unnest({text_array(sample[t.name])}) i",
                     )
             # every policy expression on every row (as the owner, so RLS does not filter)
             for table, name, qual, check in self.policies:
@@ -1020,7 +1095,7 @@ class Checker:
                     ["who", t.name, p],
                     f"SELECT coalesce(json_agg(json_build_array(i, (SELECT coalesce(json_agg(x ORDER BY x), '[]') "
                     f"FROM authz.who({lit(t.name)}, i, {lit(p)}) x))), '[]') FROM (SELECT {idsql(t)} AS i "
-                    f"FROM {qt(t.table)} ORDER BY md5({idsql(t)} || 'w') LIMIT 6) s",
+                    f"FROM {qt(t.table)} ORDER BY md5({idsql(t)} || 'w' || {salt}) LIMIT 6) s",
                 )
         # authz.who_among on the same rows, for every user id the suite signs in (rows of the user table or not):
         # one public permission of each type, in turn
@@ -1033,7 +1108,7 @@ class Checker:
                     ["who_among", t.name, p],
                     f"SELECT coalesce(json_agg(json_build_array(i, (SELECT coalesce(json_agg(x ORDER BY x), '[]') "
                     f"FROM authz.who_among({lit(t.name)}, i, {lit(p)}, {text_array(user_ids)}) x))), '[]') "
-                    f"FROM (SELECT {idsql(t)} AS i FROM {qt(t.table)} ORDER BY md5({idsql(t)} || 'w') LIMIT 6) s",
+                    f"FROM (SELECT {idsql(t)} AS i FROM {qt(t.table)} ORDER BY md5({idsql(t)} || 'w' || {salt}) LIMIT 6) s",
                 )
         lines.append("SELECT '[\"verify\"]', to_json(authz.verify());")
         if self.pol.syncs:
@@ -1048,7 +1123,7 @@ class Checker:
         random.Random(self.checks).shuffle(blocks)
         n = max(1, min(SESSIONS, len(blocks) // 2))
         scripts = ["\n".join(line for block in blocks[i::n] for line in block) for i in range(n)]
-        out: Snapshot = {}
+        out = Asked()
         for key, val in self.db.rows_together(scripts):
             out[tuple(json.loads(key))] = json.loads(val)
         return out
@@ -1323,7 +1398,7 @@ class Checker:
                     want = f"42501: you cannot see roles of {owner} {i}"
                 if got != want:
                     problems.append(f"user {u}: authz.roles_of('{owner}', {i}) says {got!r}, expected {want!r}")
-        for rid in [*self.roles_now, MISSING_ROLE]:
+        for rid in [*self.roles_now, MISSING_ROLE] if self.role_owners else []:
             got = snap.get((u, "role", rid))
             if got is None:
                 continue
@@ -1477,7 +1552,8 @@ class Checker:
         close revokes) and the audit trail it writes, from the policy and what the reference says u holds. All are
         for users: a service is told so first (AZ715). Deciding a request, or an item of a review, needs the
         permission that shares the relation (the one unsharing it needs), and approving one is a share, as
-        authz.share judges it; breaking the glass needs `break_glass`, and starting a review `share`."""
+        authz.share judges it; breaking the glass needs `break_glass` (and the relation's `shared if`, for the one who
+        breaks it), and starting a review `share`."""
         if (u, "pending") not in snap:
             return []
         problems: list[str] = []
@@ -1589,6 +1665,13 @@ class Checker:
                     want = f"42501: you cannot break the glass on {tname} {i}"
                 elif (tname, rname, "user") not in self.catalog:
                     want = f"P0001: the policy does not allow sharing {tname}.{rname} with a user"
+                elif self.shares_tried.get((tname, rname), (None, None, None))[2] and i not in snap.get(
+                    (u, "share if", tname, rname, *([] if u == self.share_target else [u])), []
+                ):
+                    # the relation's `shared if`, on the share to whoever breaks the glass (as authz.share asks it)
+                    want = (
+                        f"42501: the policy does not allow you {tname}.{rname} on {tname} {i}, even to break the glass"
+                    )
                 elif (held := self.user_shares.get((tname, i, rname, uid))) == "waiting":
                     want = f"42501: a share of yours gives you {tname}.{rname} on {tname} {i} "
                 else:
@@ -1663,24 +1746,23 @@ class Checker:
     def sync_problems(self, snap: Snapshot) -> list[str]:
         """The sync index: for every principal signed in (a row of its type, passing its where), the rows of each
         synced table its keys read are those the reference says it holds the synced permission (or the table's select
-        rule) on, without shares that have a caveat and without links. And it matches a rebuild."""
+        rule) on, without shares that have a caveat and without links; for nobody (signed out, an id no row has, or
+        one failing the type's where), none. And it matches a rebuild."""
         if not self.pol.syncs:
             return []
         problems = [] if snap[("sync verify",)] is True else ["authz.sync_verify() is false: the sync index is stale"]
         theirs: dict[tuple[object, ...], Answer] = {tuple(k[1:]): v for k, v in snap.items() if k[0] == "sync data"}
         for u in self.users:
-            if not u:
-                continue
             raw: dict[tuple[object, ...], Answer] = {
                 tuple(k[2:]): v for k, v in snap.items() if k[0] == u and k[1] == "data"
             }
             raw.update(theirs)
             state = self.sync_ref.evaluate(evaluate.Data.of(raw), u, set())
-            if self.sync_ref.principal is None:
-                continue  # nobody: an id no row has, or failing the type's where, holds no keys
             for table, line in self.pol.syncs.items():
                 t = self.ref.type_of_table(table)
-                if line.perm is None:
+                if self.sync_ref.principal is None:
+                    want: set[str] = set()  # nobody holds no keys
+                elif line.perm is None:
                     want = self.sync_ref.eval_expr(
                         state,
                         t,
@@ -1689,7 +1771,7 @@ class Checker:
                         ),
                     )
                 else:
-                    want = state[(t.name, line.perm)]
+                    want = set(state[(t.name, line.perm)])
                 want = want & self.sync_ref.ids(t) & self.sync_ref.valid(t)
                 got = set(snap[(u, "sync", t.name)])
                 if got != want:
@@ -1868,7 +1950,7 @@ class Checker:
                             f"in key order (as the database orders it) {pages[1]}"
                         )
                     for i, ok in snap[(u, "can", t.name, p)]:
-                        if bool(ok) != (i in want):
+                        if ok is not (i in want):  # (true or false: NULL is neither)
                             problems.append(f"user {u}: authz.can('{t.name}', {i}, '{p}') = {ok}, expected {i in want}")
                     problems += asked_of_every_row(
                         f"user {u}", t.name, p, snap[(u, "can", t.name, p)], ids, MISSING_ROW
@@ -1971,7 +2053,52 @@ class Checker:
         problems += self.feed_problems(start, held, signed)
         # (after this snapshot's own writes, tried and undone: the next change's entries are what follow)
         self.fed = (self.feed_position(), held, signed)
-        return problems
+        problems += self.repeated(snap)
+        problems += self.more_problems(snap)
+        return problems + self.unread(snap)
+
+    def more_problems(self, snap: Snapshot) -> list[str]:
+        """What a checker made from this one compares besides, in the same snapshot (before unread is asked)."""
+        return []
+
+    def kind(self, key: tuple[str, ...]) -> str:
+        """What a snapshot's key asks: (user, kind, ...), or (kind, ...) as an administrator or with a scope."""
+        return key[1] if len(key) > 1 and key[0] in self.users else key[0]
+
+    def unread(self, snap: Snapshot) -> list[str]:
+        """The answers the snapshot asked that no check read (the reference's inputs aside): a check whose key, or
+        whose condition, is no longer the question's. And over the run, what the checks read and looked for."""
+        if not isinstance(snap, Asked):
+            return []
+        self.answered |= {self.kind(k) for k in snap.read}
+        self.looked_for |= {self.kind(k) for k in snap.missing}
+        left = sorted(k for k in snap if k not in snap.read and self.kind(k) not in (*INPUTS, "sync data"))
+        if not left:
+            return []
+        return [f"{len(left)} answers asked of the database that no check compared, such as {left[:3]}"]
+
+    def quiet(self) -> list[str]:
+        """At the end of a run in which every user had a turn (whose turn it is says which questions are asked): the
+        kinds of answers the checks looked for that no snapshot gave, which they then compared with nothing."""
+        if self.checks < len(self.users):
+            return []
+        never = sorted(self.looked_for - self.answered - set(INPUTS))
+        return [f"the checks looked for answers no snapshot of the run gave: {never}"] if never else []
+
+    def repeated(self, snap: Snapshot) -> list[str]:
+        """The answers that give an id twice: a list, the rows a rule, a view or a column rule holds for, who holds a
+        permission. (They are compared with the reference's sets as sets, where an id given twice would pass.)"""
+        out: list[str] = []
+        for key, got in snap.items():
+            kind = self.kind(key)
+            if kind == "scoped":
+                kind = key[1]
+            lists = [got] if kind in ID_LISTS else [x[1] for x in got] if kind in ("who", "who_among") else []
+            for ids in lists:
+                twice = sorted({str(i) for i in ids if ids.count(i) > 1})
+                if twice:
+                    out.append(f"{' '.join(str(k) for k in key)} gives {twice} more than once")
+        return out[:12]
 
     def check_scoped(self, snap: Snapshot, state: evaluate.State) -> list[str]:
         """The same user limited to a scope: what the scope names is as without it, the rest is refused."""
@@ -1987,7 +2114,7 @@ class Checker:
                         f"{who}: authz.list('{t.name}', '{p}') extra {sorted(got - want)} missing {sorted(want - got)}"
                     )
                 for i, ok in snap[("scoped", "can", t.name, p)]:
-                    if bool(ok) != (i in want):
+                    if ok is not (i in want):
                         problems.append(f"{who}: authz.can('{t.name}', {i}, '{p}') = {ok}, expected {i in want}")
                 problems += asked_of_every_row(who, t.name, p, snap[("scoped", "can", t.name, p)], self.ref.ids(t))
         for table, name, qual, check in self.policies:
@@ -2035,6 +2162,44 @@ class Checker:
                                 out_all.setdefault((tt.name, pp, ii), set()).add(u)
             self._nocontext, self._nocontext_all = out, out_all
         return (self._nocontext_all if everyone else self._nocontext).get((t.name, p, i), set())
+
+    def wrong_refusal(self, seeded: str, sql: str, err: str) -> str | None:
+        """A change refused as a move under itself (AZ713, in err), made again with rowstile's triggers off, one
+        statement at a time, and undone (seeded: what makes its random() draw as the first time did): the problem if
+        no row then reaches itself through the columns that link the policy's types (what the guard reads) after
+        any of them. None if one does, if it wasn't that refusal, or if the change fails again some other way."""
+        hint = ROWSTILE_HINT.search(err)
+        if not hint or hint.group(1) != "AZ713":
+            return None
+        links = []
+        for key, sql_of in self.ref.data_queries():
+            if key[0] == "pairs":
+                t = self.types[str(key[1])]
+                src = t.relations[str(key[2])].sources[int(key[3])]
+                if src.kind == "column" and key[4] in self.types and src.column != t.pk:
+                    links.append((key, sql_of))
+        steps = [
+            x
+            for _, x in statements.split(sql)
+            if x.split(None, 1)[0].lower() not in ("begin", "commit", "end", "start")
+        ]
+        script = ["BEGIN;", TRIGGERS_OFF, seeded]
+        for n, step in enumerate(steps):
+            script.append(f"{step};")
+            script += [f"SELECT {lit(json.dumps(['loop', n, *key]))}, ({sql_of});" for key, sql_of in links]
+        script.append("ROLLBACK;")
+        code, out, _ = self.db.run("\n".join(script), check=False)
+        if code != 0:
+            return None  # (it failed another way: nothing to say)
+        after: dict[int, list[tuple[tuple[str, str], tuple[str, str]]]] = {n: [] for n in range(len(steps))}
+        for line in out.splitlines():
+            key, _, val = line.partition("\t")
+            if key.startswith('["loop"'):
+                _, n, _, t, _, _, st, _ = json.loads(key)
+                after[n] += [((t, str(o)), (st, str(x))) for o, x in json.loads(val)]
+        if any(reaches_itself(edges) for edges in after.values()):
+            return None
+        return f"refused as a move under itself (AZ713), but no row is under itself after it: {sql.strip()[:300]}"
 
     def snapshot_data_only(self, context: bool = False, after: str = "") -> Snapshot:
         """The data each user's evaluation reads, without the request context (what who() and the invariants see),
@@ -3032,7 +3197,7 @@ class CompositeGen(Gen):
         if r.random() < 0.25:  # a team inside a team, by sharing
             (o1, s1), (o2, s2) = self.team(ids), self.team(ids)
             return (
-                f"INSERT INTO authz.shares VALUES ('team', ROW({o1}, {lit(s1)})::text, 'member', 'team', "
+                f"INSERT INTO authz.shares ({SHARE_EXPIRES}) VALUES ('team', ROW({o1}, {lit(s1)})::text, 'member', 'team', "
                 f"ROW({o2}, {lit(s2)})::text, 'member', NULL) ON CONFLICT DO NOTHING;"
             )
         k = r.random()
@@ -3309,7 +3474,7 @@ class CrossGen(Gen):
     def grants(self) -> str:
         # a link on each region to begin with: seen by whoever runs it, turned off only by its chiefs
         links = [
-            f"INSERT INTO authz.shares VALUES ('region', {i}, 'guest', 'link', "
+            f"INSERT INTO authz.shares ({SHARE_EXPIRES}) VALUES ('region', {i}, 'guest', 'link', "
             f"encode(sha256(convert_to({lit(self.r.choice(self.tokens))}, 'UTF8')), 'hex'), '', NULL);"
             for i in range(1, 5)
         ]
@@ -3322,7 +3487,7 @@ class CrossGen(Gen):
             return NOTHING
         if r.random() < 0.2:  # a region's chief by sharing, beside the one its column names
             return (
-                f"INSERT INTO authz.shares VALUES ('region', {r.choice(regions)}, 'chief', 'user', "
+                f"INSERT INTO authz.shares ({SHARE_EXPIRES}) VALUES ('region', {r.choice(regions)}, 'chief', 'user', "
                 f"{r.choice(self.users)}, '', {r.choice(['NULL', EXPIRED])}) ON CONFLICT DO NOTHING;"
             )
         if r.random() < 0.2:  # a region's guest: a user, or a link (some present its token: context())
@@ -3331,12 +3496,12 @@ class CrossGen(Gen):
                 [("user", r.choice(self.users)), ("link", f"encode(sha256(convert_to({token}, 'UTF8')), 'hex')")]
             )
             return (
-                f"INSERT INTO authz.shares VALUES ('region', {r.choice(regions)}, 'guest', '{kind}', {sid}, '', NULL) "
+                f"INSERT INTO authz.shares ({SHARE_EXPIRES}) VALUES ('region', {r.choice(regions)}, 'guest', '{kind}', {sid}, '', NULL) "
                 "ON CONFLICT DO NOTHING;"
             )
         if r.random() < 0.5:  # a project shared with a folder: a link, which never expires
             return (
-                f"INSERT INTO authz.shares VALUES ('project', {r.choice(projects)}, 'host', 'folder', "
+                f"INSERT INTO authz.shares ({SHARE_EXPIRES}) VALUES ('project', {r.choice(projects)}, 'host', 'folder', "
                 f"{r.choice(folders)}, '', NULL) ON CONFLICT DO NOTHING;"
             )
         expires, starts = r.choice(self.WHEN)
@@ -3393,7 +3558,7 @@ class CrossGen(Gen):
             lambda: f"DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = '{f}';",
             lambda: f"UPDATE authz.shares SET expires_at = {EXPIRED} WHERE relation = 'viewer' AND random() < 0.3;",
             lambda: (
-                f"INSERT INTO authz.shares VALUES ('project', {p}, 'host', 'folder', {f}, '', {LATER});"
+                f"INSERT INTO authz.shares ({SHARE_EXPIRES}) VALUES ('project', {p}, 'host', 'folder', {f}, '', {LATER});"
                 if ints(ids, "project") and ints(ids, "folder")
                 else NOTHING  # (see there())
             ),
@@ -3447,6 +3612,14 @@ GENERATORS: dict[str, type[Gen]] = {
 }
 
 
+def too_many_refused(refused: int, made: int) -> str | None:
+    """More than half the changes of a run refused (and more than five): it checked little. (Each generator has a
+    tenth of its changes refused at most: 150 of each, seed 7.)"""
+    if refused > max(5, made // 2):
+        return f"{refused} of {made} changes refused: more than half, so the run checked little"
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default="authz_difftest")
@@ -3496,18 +3669,27 @@ def main() -> None:
             ids
         )
         # (what a change draws with SQL's random() is the seed's too: a run can be made again)
-        code, _, err = db.run(f"{CHANGE}SELECT setseed({sqlseed.random():.6f});\n{sql}", check=False)
+        seeded = f"SELECT setseed({sqlseed.random():.6f});"
+        code, _, err = db.run(f"{CHANGE}{seeded}\n{sql}", check=False)
         if code != 0:
             if gen.refused(err):
                 refused += 1
+                wrong = checker.wrong_refusal(seeded, sql, err)
+                if wrong:
+                    print(f"step {step + 1}: {wrong}")
+                    failures += 1
             else:
                 print(f"step {step + 1}: unexpected error\n  {sql}\n  {err.strip()}")
                 failures += 1
         made += 1
         if not args.quiet:
             print(f"step {step + 1}: {'refused' if code else 'ok'}  {sql.splitlines()[0][:110]}")
-    if refused > max(5, made // 2):  # (each generator has a tenth of its changes refused at most: 150 of each, seed 7)
-        print(f"{refused} of {made} changes refused: more than half, so the run checked little")
+    few = too_many_refused(refused, made)
+    if few:
+        print(few)
+        failures += 1
+    for quiet in checker.quiet():
+        print(quiet)
         failures += 1
     print(
         f"{args.gen} seed {args.seed}: {args.steps} changes ({refused} refused as expected), "

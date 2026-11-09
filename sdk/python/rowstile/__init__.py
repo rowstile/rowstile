@@ -415,9 +415,11 @@ def refusal(exc: BaseException) -> Refused | None:
     message = _field(err, "message_primary", "message") or str(err[-1]).split("\n")[0]
     code = error_code(exc)
     # Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
-    # without its schema, and sets no field for it
+    # without its schema, and sets no field for it; it names the policy too when it is a restrictive one (the app's
+    # own: rowstile makes none), quoting the name as it is
     generic = re.match(
-        r'(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"', message
+        r'(new|target) row violates row-level security policy (".*?" )?(\(USING expression\) )?for table "([^"]+)"',
+        message,
     )
     if code is None and not generic:
         # the same refusal in another language (the server's lc_messages): the function that raised it says so,
@@ -428,7 +430,11 @@ def refusal(exc: BaseException) -> Refused | None:
     if code in _CALL_PROBLEMS:  # sign in first (AZ714) is a 42501 too, but no refusal: a 401
         return None
     if generic:
-        row, existing, name = generic.groups()
+        row, policy, existing, name = generic.groups()
+        if policy:
+            # a restrictive policy of the app's own (authz.lint() reports it): Postgres's words name it, and say no
+            # more. An upsert's is about the update of the row there already
+            return Refused(message, name, "update" if row == "new" and existing else None)
         if row == "target":
             # MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
             return Refused(

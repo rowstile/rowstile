@@ -304,6 +304,20 @@ class SdkTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # a restrictive policy of the app's own (authz.lint() reports it): its refusal is a refusal too, in Postgres's words,
+  # which name the policy and no rule of rowstile's
+  test "a restrictive policy of the app's own refuses" do
+    Rows.owner do |c|
+      c.exec("CREATE POLICY short_notes ON app.notes AS RESTRICTIVE FOR UPDATE TO conf_app USING (true) " \
+             "WITH CHECK (length(body) < 10)")
+    end
+    refused = Rowstile.acting_as(3) { assert_refused { Note.find(4).update!(body: "a long body") } }
+    assert_equal ["notes", nil, [], 'new row violates row-level security policy "short_notes" for table "notes"'],
+                 [refused.table, refused.command, refused.why, refused.message]
+  ensure
+    Rows.owner { |c| c.exec("DROP POLICY IF EXISTS short_notes ON app.notes") }
+  end
+
   # what isn't a database's error has no code, no SQLSTATE, no refusal and no problem
   test "an error that isn't the database's" do
     error = RuntimeError.new("no")
@@ -393,6 +407,14 @@ class SdkTest < ActionDispatch::IntegrationTest
                                     PG::PG_DIAG_MESSAGE_PRIMARY => 'you cannot share file new row violates row-level ' \
                                                                    'security policy for table "app.secrets"'))
     assert_equal ["AZ705", nil, nil], [share.code, share.table, share.command]
+    # a restrictive policy of the app's own, named with a quote in it: an upsert's is the update's, a MERGE's no command
+    named = lambda do |words|
+      r = Rowstile.refusal(raised(PG::PG_DIAG_SQLSTATE => "42501", PG::PG_DIAG_MESSAGE_PRIMARY => words))
+      [r.message, r.table, r.command, r.why]
+    end
+    upsert = 'new row violates row-level security policy "a" b" (USING expression) for table "notes"'
+    merge = 'target row violates row-level security policy "only_mine" (USING expression) for table "notes"'
+    assert_equal [[upsert, "notes", "update", []], [merge, "notes", nil, []]], [named.call(upsert), named.call(merge)]
   end
 
   # the gem without Rails: no Railtie, no Action Pack, the rest as it is (its problem bodies too)

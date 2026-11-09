@@ -15,6 +15,7 @@ fails=0
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
 T=$(mktemp -d)
+trap 'dropdb --if-exists "$DB" 2>/dev/null; rm -rf "$T"' EXIT  # (however it ends)
 
 for f in tests/hand/*.authz; do
   name=$(basename "$f" .authz)
@@ -39,6 +40,4 @@ for f in tests/hand/*.authz; do
   done < "$T/rows"
 done
 
-dropdb --if-exists "$DB" 2>/dev/null
-rm -rf "$T"
 if [ $fails -eq 0 ]; then echo "hand answers: all passed"; else echo "hand answers: $fails failed"; exit 1; fi

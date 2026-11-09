@@ -57,7 +57,7 @@ suite asks the server where each one is (`tests/races.sh`), never a `sleep`:
 | `tests/migration_tools.sh` | nightly (`nightly.yml`'s tools job; not in `run_tests.sh`: it starts containers of its own): the migrations for goose, dbmate, Flyway and Django run by each tool itself (goose's and dbmate's release binaries, Flyway's image, Django installed by version in Python's image), in an empty folder and in one numbered by hand, then the app's next migration, numbered after rowstile's |
 | `tests/upgrade.sh` | the release before this one, from PyPI (`tests/previous_release.py`), makes the docs app's database each way an app may have one (pushed to, applied, set up by its migrations), and the app shares, makes an API key and asks for access; this version then upgrades each as an app does (push, apply, reapply, the next migration from the old lock file): each holds what applying this version on a new database leaves (the columns of the tables kept across applies too), the policy's tests and the scenario pass, and the shares, the key, the request and the audit trail made before are there and work. The release before is one from 0.1.0-beta.1 on (the beta started afresh: no alpha is upgraded from); where PyPI can't be reached, it says so and skips, and where PyPI has none older than this version, it fails: the beta is out. With a world of data made under the older release (`--world`, every run: `tests/upgrade_world.py`, difftest's docs world, shares in every state, `authz.share`, moves), upgraded by reapply and by a migration: every `authz.can` answer and difftest's questions as on a new database with the same rows, the reference evaluator's answers, the catalog and the inheritance rows. `--every` (nightly, `ROWSTILE_UPGRADES=every`): all of it from every release on PyPI from the beta on. Each release is upgraded with the docs app it was released with (`tests/docs_app.py`: a copy in `tests/docs_apps/` where it differs from `example/`, from its tag; `--sync` writes them) |
 | `tests/review.sh` | `rowstile review` in a git repository with a review database: meaning, access, risk, tests, deploy, the comment, JSON and annotations, a refactor found equivalent, the database left as it was; `rowstile fmt` |
-| `tests/migrate_test.py` | each kind of policy change, both ways, and what a new version changes alone (a grant, a message of a function, a tree's included): the migration leaves exactly what applying the new policy whole leaves (functions and their privileges, views, triggers, policies, catalogs, the columns of rowstile's types, inheritance rows), with the app writing in between; lines that only move need none, and the database is already what applying whole leaves |
+| `tests/migrate_test.py` | each kind of policy change, both ways, and what a new version changes alone (a grant, a message of a function, a tree's included): the migration leaves exactly what applying the new policy whole leaves (functions and their privileges, views, triggers, policies, catalogs, the columns of rowstile's types, inheritance rows, the columns of rowstile's tables, where each line the messages name is), with the app writing in between; lines that only move need one that writes where they are, and nothing else |
 | `tests/interrupt.py` | every run (a sample of the cuts; the full run and `--proofs`: after every statement; `--soak`: other policies' first apply, where the seed says): on the docs app, `rowstile apply` (on a new database and over a policy), `push`, `reapply --force` and both of a migration that builds an inheritance table beside the one in use, each cut after a statement, the command's sent one at a time (the server ends the session, or the connection is closed under it): the command says it lost the database (exit 2), the database is as it was, the app (as the app role, signed in) reads the old policy's answers whole just before the cut and after it, and after some cuts the next run finishes as an uncut one does; between a migration's two, the old policy in force and its inheritance tables exact; the command itself ended by the server while a statement waits for a lock, or stopped by `statement_timeout` |
 | `tests/concurrency.sh` | two sessions racing: moves, loops, sharing during a delete |
 | `tests/adversarial.sh` | the app role, logged in as its own role, trying to read hidden rows (by id, COPY, leaky functions, prepared statements), reach rowstile's internals (and the catalog of every policy here against the rules, `tests/catalog.sql`), turn row-level security off, change or share what it may not, and learn about hidden objects |
@@ -158,24 +158,26 @@ Python, each comparison turned round, a `not` dropped or added, each `if` forced
 dropped, a quoting call (`q`, `qt`, `lit`) dropped. Never in an f-string's fields, a docstring, a message or an SQL
 comment. Each mutant has an id (`g` and ten hex digits) that stays the same until its own line changes.
 
-`mutants/plan.py` first compiles every policy in the repository before and after each mutant, with no database:
-the fixed policies, the cookbook's, the four apps', the docs app's diagram, clients and diffs, and the migrations
-`tests/migrate_test.py` checks. A mutant that changes none of them is equivalent for all of them and doesn't run
-(`same`); one that breaks a compile is caught there. The others run the suites. Those that called a function whose
-SQL changed, or ran the mutated line (CI's coverage run on `main`: `functions.tsv` and coverage.py's contexts),
-run first, then the rest; each group the most catches per second first. Each suite's catches and seconds come
-from the newest run that kept them (no copy is kept here: it would go stale), and the report names that run. A
-catch counts when the suite is red twice, and only if it is green unmutated on the same machine.
+`mutants/plan.py` first compiles every policy in the repository before and after each mutant, with no database: the
+fixed policies, the cookbook's, every app's (`examples/`, `integrations/`), the docs app's diagram, clients and
+diffs, and the migrations `tests/migrate_test.py` checks. A mutant that changes none of them is equivalent for all
+of them and doesn't run (`same`); one that breaks a compile is caught there. The others run the suites. Those that
+called a function whose SQL changed, or ran the mutated line (a green CI coverage run of the same commit, else
+`main`'s latest, its lines moved to the commit's: `functions.tsv` and coverage.py's contexts), run first, then the
+rest; each group the most catches per second first. Each suite's catches and seconds come from the newest run that
+kept them (no copy is kept here: it would go stale), and the report names that run. A catch counts when the suite is
+red twice, and only if it is green unmutated on the same machine.
 
 It runs on GitHub's runners (`.github/workflows/mutants.yml`), weekly and by hand, never on a push: a job prepares
 the queue, up to eight jobs run a share of it each, side by side, and a last one collects the results. Each run
-carries over the results of the last one whose mutants' lines are unchanged, and takes the next mutants in an
-order spread over operators and files. A mutant no suite catches (a survivor) is listed in
+carries over the catches and the equivalent survivors of the last one whose mutants' lines are unchanged (a catch by
+a suite the sweep no longer has runs again; `same` and `unreached` are decided again each run), and takes the next
+mutants in an order spread over operators and files. A mutant no suite catches (a survivor) is listed in
 `mutants/survivors.txt`, as `equivalent` (it can't change an answer) or `lead` (the check that would catch it): a
-survivor not listed fails the run. The run's summary has the score, what caught what and each survivor's edit;
-the artifact `mutants-results` has every result. A run of some mutants only (`only`, `since`, `limit`) with
-`resume` other than `latest` holds only its own results: it keeps them as `mutants-results-partial`, which the
-next run doesn't start from.
+survivor not listed fails the run. The run's summary has the score, what caught what and each survivor's edit; the
+artifact `mutants-results` has every result. A run of some mutants only (`only`, `since`, `limit`) with `resume`
+other than `latest` holds only its own results: it keeps them as `mutants-results-partial`, which the next run
+doesn't start from.
 
     gh workflow run mutants.yml -f since=<commit>    # the mutants in lines changed since that commit
     gh workflow run mutants.yml -f limit=40          # 40 that need suites, spread over operators and files

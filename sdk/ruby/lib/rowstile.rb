@@ -175,7 +175,10 @@ module Rowstile
 
   UNSEEN = "this user may not see the row as written (the select rule). An insert that reads it back " \
            "(RETURNING), an upsert, and an update with a WHERE need to see it."
-  GENERIC = /\A(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/
+  # Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
+  # without its schema; it names the policy too when it is a restrictive one (the app's own: rowstile makes none),
+  # quoting the name as it is
+  GENERIC = /\A(new|target) row violates row-level security policy (".*?" )?(\(USING expression\) )?for table "([^"]+)"/
   # the function in Postgres that raises those refusals (the error's source function): what tells one in another
   # language
   ROW_CHECK = "ExecWithCheckOptions"
@@ -326,7 +329,10 @@ module Rowstile
     end
 
     def generic_refusal(message, match)
-      row, existing, name = match.captures
+      row, policy, existing, name = match.captures
+      # a restrictive policy of the app's own (authz.lint() reports it): its words name it, and say no more. An
+      # upsert's is about the update of the row there already
+      return Refused.new(message, table: name, command: row == "new" && existing ? "update" : nil) if policy
       if row == "target" # MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
         return Refused.new("#{message}: MERGE matched a row the update or delete rule doesn't let this user change",
                            table: name)

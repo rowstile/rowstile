@@ -299,14 +299,38 @@ impl std::error::Error for Error {
 }
 
 /// Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
-/// without its schema, and sets no field for it.
+/// without its schema, and sets no field for it; it names the policy too when it is a restrictive one (the app's own:
+/// rowstile makes none), quoting the name as it is.
 fn generic_refusal(message: &str) -> Option<Refused> {
     let (target, rest) = match message.strip_prefix("target row violates row-level security policy ") {
         Some(rest) => (true, rest),
         None => (false, message.strip_prefix("new row violates row-level security policy ")?),
     };
+    // the policy's name runs to the first `" ` the rest of the words follow (it may hold a quote itself)
+    let (policy, rest) = match rest.strip_prefix('"') {
+        Some(quoted) => {
+            let after = quoted.match_indices("\" ").map(|(at, _)| at + 2).find(|&after| {
+                let rest = &quoted[after..];
+                rest.starts_with("for table \"") || rest.starts_with("(USING expression) for table \"")
+            })?;
+            (true, &quoted[after..])
+        }
+        None => (false, rest),
+    };
     let (using, rest) = rest.strip_prefix("(USING expression) ").map_or((false, rest), |rest| (true, rest));
     let (table, _) = rest.strip_prefix("for table \"")?.split_once('"')?;
+    if policy {
+        // a restrictive policy of the app's own (authz.lint() reports it): its words name it, and say no more. An
+        // upsert's is about the update of the row there already
+        return Some(Refused {
+            message: message.to_owned(),
+            table: Some(table.to_owned()),
+            command: (!target && using).then(|| "update".to_owned()),
+            why: Vec::new(),
+            code: "AZ709".to_owned(),
+            source: None,
+        });
+    }
     let (said, command) = match (target, using) {
         // MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
         (true, _) => ("MERGE matched a row the update or delete rule doesn't let this user change", None),

@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -30,7 +31,7 @@ import textwrap
 import threading
 import types
 import unittest
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import ClassVar, Protocol, cast
@@ -55,7 +56,8 @@ from authzlib import (  # noqa: E402
 from authzlib.compiler import strongly_connected  # noqa: E402
 from authzlib.conditions import Scalar  # noqa: E402
 from authzlib.connection import Row, Value  # noqa: E402
-from authzlib.review import Group, Review  # noqa: E402
+from authzlib.review import Group  # noqa: E402
+from authzlib.review import Review as ReviewData  # noqa: E402  (the test class Review is another)
 from authzlib.versions import STAGES, VERSION, pypi, spelled, stage  # noqa: E402
 
 sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -352,7 +354,7 @@ class ThisRow(unittest.TestCase):
         """An apostrophe inside E'...', $$...$$, a quoted name or a comment ends nothing: the subquery after it is
         code. Read as a quote's end, it would pair with the next quote and hide the subquery, and a rule would then
         run the condition with the app role's rights."""
-        from authzlib.parse import Loc, PolicyError
+        from authzlib.parse import Loc
         from authzlib.sqlutil import check_stable_condition, on_row, reads_more, reads_tables, sql_code
 
         sub = "not exists (select 1 from app.blocks b where b.kind = 'mute')"
@@ -397,7 +399,7 @@ class ThisRow(unittest.TestCase):
         a column, read whole."""
         from authzlib.conditions import tokens
         from authzlib.database import BARE
-        from authzlib.parse import Loc, PolicyError
+        from authzlib.parse import Loc
         from authzlib.sqlutil import (
             check_stable_condition,
             fold,
@@ -470,7 +472,7 @@ class ThisRow(unittest.TestCase):
         """The language's reference and AZ305's page name what a condition that limits inheritance can't read, and
         the check refuses each, as the page writes it, and nothing else: no name of its own is missing there."""
         from authzlib.errors import CODES
-        from authzlib.parse import Loc, PolicyError
+        from authzlib.parse import Loc
         from authzlib.sqlutil import TIME_WORDS, UNSTABLE_CALLS, UNSTABLE_WORDS, check_stable_condition
 
         with open(os.path.join(os.path.dirname(ROOT), "docs", "reference", "language.md"), encoding="utf-8") as fh:
@@ -549,8 +551,6 @@ class Golden(unittest.TestCase):
     def test_a_migration(self) -> None:
         # a permission added to the docs app, as rowstile migrate writes it after the first; the build it names
         # changes with every change to authzlib/, and isn't kept
-        from authzlib import migrate
-
         text = read(POLICIES["docs"])
         new = replaced(
             text,
@@ -1355,6 +1355,18 @@ class LanguageForms(unittest.TestCase):
             ("  can view = owner\ninvariants\n  never doc view\n", (7, 12, 7, 16)),
             ('  can view = owner\ntest "t"\n  as user 1 sees 3x {SELECT 1}\n', (7, 17, 7, 19)),
             ("  can view = owner\nscope files-:read = doc.view\n", (6, 12, 6, 13)),
+            # a quote left open in a test's braces: its lines are the step's, to the end, where the words end (not
+            # the line break after the last one, nor the blank lines)
+            (
+                '  can view = owner\ntest "t"\n  as user 1 sees 1 {SELECT \'a}\n  user 1 can view doc 1\n',
+                (7, 19, 8, 23),
+            ),
+            (
+                '  can view = owner\ntest "t"\n  as user 1 sees 1 {SELECT \'a}\n  user 1 can view doc 1\n\n',
+                (7, 19, 8, 23),
+            ),
+            ("  can view = owner and {a = 'x\n  y'}\n", (5, 29, 5, 30)),  # (the line break: the end of its line)
+            ('  can view = owner\ntest "t"\n  as user 1 sees 1 {SELECT "x}\n  user 1 can view doc 1\n', (7, 19, 8, 23)),
         ):
             with self.subTest(tail), self.assertRaises(PolicyError) as e:
                 Compiler(parse_policy(base + tail)).compile("x")
@@ -1816,7 +1828,6 @@ class ClientNames(unittest.TestCase):
         clash += "type note = app.notes\n  owner : user = owner_id\n  can note = owner\n  can equals = owner\n  can view = owner\n"
         lines = [x.strip() for x in database.client("csharp", clash).split("\n")]
         self.assertIn("// policy would be Policy: it has no name here, use new Permission(...)", lines)
-        self.assertNotIn("public static class Policy\n", lines)
         for said in ("note would be Note", "equals would be Equals"):
             self.assertIn(f"// {said}: it has no name here, use new Permission(...)", lines)
         self.assertIn('public static readonly Permission View = new(Type, "view");', lines)
@@ -2155,11 +2166,14 @@ class ClientNames(unittest.TestCase):
         self.assertEqual(
             len(re.findall(r"^const (\w+) =", made, re.M)), len(set(re.findall(r"^const (\w+) =", made, re.M)))
         )
-        # a policy that syncs nothing has the keys table alone, and no filter
+        # a policy that syncs nothing has the keys table alone, and no filter: its one import has no relationships
         made = database.client("zero", self.CASES)
         self.assertIn("export const syncTables = [keys] as const;", made)
         self.assertIn("export const readable = {} as const;", made)
-        self.assertNotIn("relationships", made.split("\n")[7])
+        self.assertEqual(
+            [x for x in made.split("\n") if x.startswith("import ")],
+            ['import { string, table } from "@rocicorp/zero";'],
+        )
 
     def test_share_takes_caveat_args_as_a_dict(self) -> None:
         sent: list[Sequence[object]] = []
@@ -3256,7 +3270,6 @@ class Command(unittest.TestCase):
         # the options the command takes (it refuses the others) are those its usage names, and those the reference's
         # table names (docs/reference/tools.md), and --db where it reads a database. The usage names the arguments it
         # takes, and the table the policy file where the usage does
-        import features
         import mcp
 
         listed = features.usage()
@@ -3592,8 +3605,6 @@ class Statements(unittest.TestCase):
     """Reading the compiled SQL back as statements, the way psql does (the migrations work on them)."""
 
     def test_nested_comments_quoted_names_and_what_it_refuses(self) -> None:
-        from authzlib import statements
-
         sql = (
             "CREATE TABLE a (x int); /* outer /* inner; */ still a comment; */\n"
             'CREATE TABLE "b;""c" (y int);\n'
@@ -3672,7 +3683,7 @@ class Statements(unittest.TestCase):
         )
         self.assertEqual(made("CREATE FUNCTION app.fé(a int) RETURNS int AS $$ $$"), ("function", "app.fé(a int)"))
         # the same letters as a condition's reading (sqlutil.py; statements.py imports nothing of ours)
-        from authzlib import sqlutil, statements
+        from authzlib import sqlutil
 
         self.assertEqual(statements.LETTER, sqlutil.LETTER)
 
@@ -3734,8 +3745,6 @@ class Migrations(unittest.TestCase):
     """What rowstile migrate writes, without a database (tests/migrate_test.py applies them)."""
 
     def setUp(self) -> None:
-        from authzlib import migrate
-
         self.migrate = migrate
         self.text = read(POLICIES["docs"])
 
@@ -3868,12 +3877,22 @@ class Migrations(unittest.TestCase):
         )
         self.assertEqual(m.summary, ["- type org = app.orgs", "+ type org = app.orgs (id int)"])
 
-    def test_lines_that_only_move_need_no_migration(self) -> None:
+    def test_lines_that_only_move_are_written_again(self) -> None:
+        # the messages name a rule's line as authz_gen.policy_lines holds it: lines that moved are a migration, which
+        # writes where they are now and makes nothing
         moved = replaced(self.text, "app role app_user\n", "app role app_user\n\n-- a note\n")
-        self.assertTrue(one_migration(moved, self.lock(self.text)).empty)
+        m = one_migration(moved, self.lock(self.text))
+        self.assertIn("DELETE FROM authz_gen.policy_lines;\nINSERT INTO authz_gen.policy_lines VALUES", m.sql)
+        self.assertNotRegex(m.sql, r"(?m)^\s*(CREATE|DROP|ALTER)\b")
+        self.assertEqual(
+            m.summary, ["the same policy, its lines moved: where the messages say each one is, written again"]
+        )
+        self.assertNotEqual(m.lock, self.lock(self.text))
         sql, comp, _ = database.migratable(moved, {})
         pushed = self.migrate.migration(sql, comp, self.migrate.parse_lock(self.lock(self.text)), lines=True)
-        self.assertIn("DELETE FROM authz_gen.policy_lines", pushed.sql)
+        self.assertEqual(pushed.sql, m.sql)
+        # a comment that moves no line changes nothing the database holds
+        self.assertTrue(one_migration(self.text + "\n-- the end\n", self.lock(self.text)).empty)
 
     def test_a_body_that_calls_what_goes_is_not_made_again(self) -> None:
         # a PL/pgSQL or SQL body looks up what it calls when it runs: rebuilding a tree (the views and functions
@@ -4380,9 +4399,7 @@ class Review(unittest.TestCase):
         tests_after: dict[str, str] | None = None,
         lock: bool = True,
         worlds: int = 40,
-    ) -> Review:
-        from authzlib import migrate
-
+    ) -> ReviewData:
         base_lock = migrate.lock_of(database.migratable(self.text, {})[1]) if lock else None
         return self.review.review(
             (self.text, {}, tests_before or {}), (new, {}, tests_after or {}), base_lock, None, None, worlds=worlds
@@ -4400,8 +4417,6 @@ class Review(unittest.TestCase):
         self.assertNotRegex(self.review.text(r), r"(?m)^\s+changed\s")
         # with its first migration (a lock file at the head, none at the base): the tables it locks are the app's,
         # not the ones rowstile keeps (its audit trail's triggers, its shares')
-        from authzlib import migrate
-
         head_lock = migrate.lock_of(database.migratable(text, {})[1])
         [m] = self.review.review(None, (text, {}, {}), None, head_lock, None, worlds=10)["deploy"]["migrations"]
         self.assertEqual(
@@ -4410,9 +4425,15 @@ class Review(unittest.TestCase):
         )
 
     def test_comments_only(self) -> None:
-        r = self.run_review(replaced(self.text, "app role app_user\n", "app role app_user   -- the app's role\n\n"))
+        r = self.run_review(replaced(self.text, "app role app_user\n", "app role app_user   -- the app's role\n"))
         self.assertEqual(r["meaning"]["equivalent"], "text")
         self.assertEqual(r["deploy"]["migrations"], [])
+        self.assertIn("**Meaning**: unchanged", self.review.markdown(r))
+        # lines that move: a migration all the same, which writes where they are (it locks no table, rebuilds nothing)
+        r = self.run_review(replaced(self.text, "app role app_user\n", "app role app_user   -- the app's role\n\n"))
+        self.assertEqual(r["meaning"]["equivalent"], "text")
+        [m] = r["deploy"]["migrations"]
+        self.assertEqual((m["locks"], m["rebuilds"], m["builds_beside"]), ({}, [], []))
         self.assertIn("**Meaning**: unchanged", self.review.markdown(r))
 
     def test_a_refactor_is_checked_in_small_worlds(self) -> None:
@@ -4722,7 +4743,7 @@ rules app.folders
   update : edit
 """
 
-    def small(self, old: str, new: str, files: dict[str, str] | None = None) -> Review:
+    def small(self, old: str, new: str, files: dict[str, str] | None = None) -> ReviewData:
         self.assertIn(old, self.SMALL)
         return self.review.review(
             (self.SMALL, files or {}, {}), (self.SMALL.replace(old, new), files or {}, {}), worlds=40
@@ -5175,8 +5196,6 @@ rules app.folders
 
     def test_a_lock_another_version_wrote_is_current_when_nothing_changes(self) -> None:
         # a pull request that upgrades rowstile, whose lock file says the new version: no migration, and not behind
-        from authzlib import migrate
-
         lock = migrate.lock_of(database.migratable(self.text, {})[1])
         old = replaced(lock, f"# rowstile {authzlib.__version__}:", "# rowstile 0.0.9:")
         for base_lock, head_lock in ((old, lock), (lock, old)):
@@ -5502,7 +5521,7 @@ rules app.files
   update after : folder.edit
 """
 
-    def watched(self, old: str, new: str, base: str | None = None) -> Review:
+    def watched(self, old: str, new: str, base: str | None = None) -> ReviewData:
         base = base or self.WATCHED
         self.assertIn(old, base)
         return self.review.review((base, {}, {}), (base.replace(old, new), {}, {}), worlds=50)
@@ -5622,8 +5641,6 @@ rules app.files
     def test_deploy_names_the_tables_found_as_it_runs(self) -> None:
         # a trigger on each table an inheritance condition reads: the DO block finds those tables in the database,
         # and says what it locks
-        from authzlib import migrate
-
         policy = (
             "app role app_user\ntype user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
             "  owner  : user = owner_id\n"
@@ -6657,7 +6674,6 @@ class Wire(unittest.TestCase):
         session starts; answer: what it answers (a text, and its type) to one statement the client then sends,
         whose text is seen["query"]. address: where it listens (127.0.0.2: a name its certificates don't have)."""
         import base64
-        import hashlib
         import hmac
         import ssl
         import struct
@@ -6681,8 +6697,7 @@ class Wire(unittest.TestCase):
                 data += chunk
             return data
 
-        def said(kind: bytes, body: bytes = b"") -> bytes:
-            return kind + struct.pack("!i", 4 + len(body)) + body
+        said = Wire.said
 
         def sasl(conn: socket.socket) -> bool:
             salt, rounds = b"0123456789abcdef", 4096
@@ -7144,8 +7159,6 @@ class Wire(unittest.TestCase):
                 self.assertEqual(self.pgwire._signature_hash(ssl.PEM_cert_to_DER_cert(fh.read())), hashed, name)
 
     def test_each_way_a_server_asks_for_the_password(self) -> None:
-        import hashlib
-
         wrong = self.pgwire.ProtocolError
 
         def connect(port: int, password: str | None = "secret") -> None:
@@ -7323,8 +7336,6 @@ class Wire(unittest.TestCase):
         savepoint or looking for the policy's condition that failed doesn't put another error in their place."""
         import select
         import struct
-
-        from authzlib import database
 
         pgwire, said = self.pgwire, self.said
         # as Postgres sends it
@@ -8261,15 +8272,22 @@ class Fmt(unittest.TestCase):
         self.assertEqual(format(src), want)
 
     def test_every_policy_formats_the_same_twice_and_says_the_same(self) -> None:
+        # the suites' fixed policies, the docs app's tests, and each recipe's and each app's policy and tests, found
         from authzlib.fmt import format
         from authzlib.migrate import meaning_lines
 
-        for rel in list(POLICIES.values()) + [
-            "example/docs.test.authz",
-            "../docs/cookbook/sharing-and-links/policy.authz",
-            "../examples/filemanager/db/policy.authz",
-            "../examples/messenger/db/policy.authz",
-        ]:
+        # every policy and test file in the repository (the cookbook's, the hand answers', the apps'), but the editor's
+        # fixture that includes a file it doesn't have (it is a grammar's case, not a policy)
+        repo = os.path.dirname(ROOT)
+        every = sorted(
+            os.path.relpath(f, ROOT)
+            for f in glob.glob(os.path.join(repo, "**", "*.authz"), recursive=True)
+            if not {"node_modules", "dist", ".git"} & set(os.path.relpath(f, repo).split(os.sep))
+        )
+        self.assertGreater(len(every), 100)
+        for rel in every:
+            if rel == os.path.join("..", "editor", "test", "blocks.authz"):
+                continue
             text = read(rel)
             once = format(text)
             self.assertEqual(format(once), once, rel)
@@ -8548,7 +8566,7 @@ class Confidence(unittest.TestCase):
             self.assertEqual(data.pairs[("user", "self", 0, "user", "")], [(i, i) for i in data.ids["user"]])
 
     def test_prove_says_when_none_is_found(self) -> None:
-        from authzlib import evaluate, prove
+        from authzlib import prove
 
         text = read(POLICIES["docs"]).replace(
             "never folder: share and not org.member", "never folder: edit and not view"
@@ -8703,8 +8721,6 @@ class Confidence(unittest.TestCase):
         # the column values it reads for a world were kept by the world's id(): once that world was gone, another
         # could be made at its address and read the first one's rows (prove counted a counterexample that wasn't).
         # Every id the same here: the rows must still be the second world's
-        from authzlib import evaluate
-
         pol = parse_policy(self.HEAD + "type doc = app.docs\n  can view = {published}\n", "p.authz")
 
         def world(published: bool) -> evaluate.Data:
@@ -8726,8 +8742,6 @@ class Confidence(unittest.TestCase):
         return [r["holds"] for r in prove.prove(parse_policy(self.HEAD + text, "p.authz"), worlds)]
 
     def same(self, before: str, after: str, worlds: int = 200) -> bool:
-        from authzlib import evaluate
-
         a, b = parse_policy(self.HEAD + before, "a.authz"), parse_policy(self.HEAD + after, "b.authz")
         return evaluate.compare(a, b, worlds) is None
 
@@ -8975,7 +8989,7 @@ class Confidence(unittest.TestCase):
     def test_a_link_to_every_user_reads_as_one(self) -> None:
         # a share to user:* is to every signed-in user, not to one: its subject is '*' in every world, as in
         # authz.shares, and the counterexample says user:*
-        from authzlib import evaluate, prove
+        from authzlib import prove
 
         text = (
             "type folder = app.folders\n  viewer : user:* shared\n  owner : user = owner_id\n  can share = nobody\n"
@@ -8998,8 +9012,6 @@ class Confidence(unittest.TestCase):
     def test_a_world_says_what_each_link_and_role_names(self) -> None:
         # who a link or a custom role is given to, as the policy writes it, and whose role it is; which rows a where
         # keeps, none here; and with types, only those types' rows
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD.replace("app.users\n", "app.users where {active}\n")
             + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
@@ -9047,8 +9059,6 @@ class Confidence(unittest.TestCase):
     def test_a_difference_is_shown_in_the_smallest_world_it_shows_in(self) -> None:
         # a viewer taken away: the folder's parent plays no part, so the world shown has no parent link, though
         # the world it was found in had one; it is one world, as each policy reads it
-        from authzlib import evaluate
-
         base = (
             self.HEAD + "type folder = app.folders\n  parent : folder = parent_id\n  owner : user = owner_id\n"
             "  viewer : user = app.folder_viewers(folder_id -> user_id)\n  can view = owner or viewer or parent.view\n"
@@ -9090,8 +9100,6 @@ class Confidence(unittest.TestCase):
 
     def test_one_world_as_two_policies_read_it_is_made_smaller_as_one(self) -> None:
         # a link both read goes from both at once; a condition or a column only one reads, from that one
-        from authzlib import evaluate
-
         ids = {"user": ["1"], "doc": ["1"]}
         q = ("doc", "q", 0, "user", "")
         a = evaluate.Data(ids=ids, valid=ids, pairs={q: [("1", "1")]}, columns={"doc": {"1": {"x": None}}})
@@ -9127,8 +9135,6 @@ class Confidence(unittest.TestCase):
         # a type moved to another table, roles no longer limited by `from`, or a type that signs in now: more than
         # permissions and rules changed, so no narrower comparison is made (None); and a policy without conditions
         # has no corners
-        from authzlib import evaluate
-
         base = (
             self.HEAD + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
             "type doc = app.docs\n  owner : user = owner_id\n  org : org = org_id\n  roles : user from org\n"
@@ -9149,8 +9155,6 @@ class Confidence(unittest.TestCase):
     def test_a_corner_leaves_a_link_tables_where_to_its_rows(self) -> None:
         # a corner says which of the permissions' conditions hold: a link table's where is a condition on the
         # table's rows, read or drawn there, even where a permission's condition has its text
-        from authzlib import evaluate
-
         doc = self.HEAD + "type doc = app.docs\n  reader : user = app.doc_readers(doc_id -> user_id)"
         pol = parse_policy(doc + " where {active}\n  can view = reader and {active}\n", "p.authz")
         found = evaluate.corners([pol])
@@ -9221,8 +9225,6 @@ class Confidence(unittest.TestCase):
         # a deny inside inheritance is split into a hidden view__base and `view__base and not hidden` (compiling
         # does it, and the review compares compiled policies): widening the inheritance changes only the hidden
         # one, which isn't compared itself; view, which reads it, is
-        from authzlib import Compiler, evaluate
-
         folder = (
             "type folder = app.folders\n  owner : user = owner_id\n  editor : user = editor_id\n"
             "  parent : folder = parent_id\n  blocked : user = blocked_id\n"
@@ -9267,8 +9269,6 @@ class Confidence(unittest.TestCase):
     def test_a_condition_on_who_is_signed_in_is_listed_with_the_where_that_says_it_too(self) -> None:
         # a type's where on authz.uid() and a permission that asks it again: the where adds nothing, and the
         # listed worlds (alone here) say the two policies are the same
-        from authzlib import evaluate
-
         doc = "type doc = app.docs{}\n  owner : user = owner_id\n  can view = owner and {{editor_id = authz.uid()}}\n"
         a = parse_policy(self.HEAD + doc.format(" where {editor_id = authz.uid()}"), "a.authz")
         b = parse_policy(self.HEAD + doc.format(""), "b.authz")
@@ -9277,8 +9277,6 @@ class Confidence(unittest.TestCase):
     def test_the_listing_stops_where_its_steps_are_spent(self) -> None:
         # past its budget of steps (made small here), the listing stops once every world of one link is listed,
         # not before, and says how far it got
-        from authzlib import evaluate
-
         policy = self.approve()
         a = parse_policy(self.HEAD + policy + "  can approve = owner and legal and finance and security and privacy\n")
         b = parse_policy(
@@ -9294,8 +9292,6 @@ class Confidence(unittest.TestCase):
             )
 
     def test_a_long_and_of_links_widened_is_found(self) -> None:
-        from authzlib import evaluate
-
         # a dense world has as many rows of each type as it is large: every pair of them may hold the links
         self.assertEqual(evaluate.World("s", 4, density=0.75).ids("doc"), ["1", "2", "3", "4"])
         folder = (
@@ -9331,7 +9327,7 @@ class Confidence(unittest.TestCase):
         # a share that reaches three folders down, widened to four: only five folders in a row show it, and a drawn
         # world has four at most; the worlds have chains one link longer than the policies read (a dozen of them, however
         # few are drawn: 40 drawn here, not 200)
-        from authzlib import evaluate, prove
+        from authzlib import prove
 
         levels = "".join(f"  can v{i} = v{i - 1} or parent.v{i - 1}\n" for i in (1, 2, 3))
         # a project a folder may sit in, as its parent, holds nothing of its own
@@ -9366,8 +9362,6 @@ class Confidence(unittest.TestCase):
     def test_a_corner_leaves_drawn_what_has_too_many_values_to_try(self) -> None:
         # four columns of nine values each (the seven named, one none of them names, NULL): more combinations than a
         # corner tries, so their values stay as the world drew them
-        from authzlib import evaluate
-
         cond = " and ".join(f"{c} in (1, 2, 3, 4, 5, 6, 7)" for c in "abcd")
         pol = parse_policy(
             self.HEAD + f"type doc = app.docs\n  owner : user = owner_id\n  can view = owner and {{{cond}}}\n",
@@ -9380,8 +9374,6 @@ class Confidence(unittest.TestCase):
     def test_the_first_difference_comes_with_its_world_as_each_policys_data(self) -> None:
         # what tests/rewrites.py loads into a database, to see it answer as the review says: a permission's
         # difference, or a rule's
-        from authzlib import evaluate
-
         doc = "type doc = app.docs\n  owner : user = owner_id\n  viewer : user = viewer_id\n  can view = owner"
         for change, rule, what in (
             (" or viewer", "owner", "doc.view"),
@@ -9400,8 +9392,6 @@ class Confidence(unittest.TestCase):
     def test_a_worlds_column_a_relation_reads_holds_its_links_id(self) -> None:
         # {parent_id is null} and the parent link are one fact: the rows a world gives the database (tests/small.py
         # load_sql) have the column the link says, in drawn worlds and in chains
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD + "type folder = app.folders\n  owner : user = owner_id\n  parent : folder = parent_id\n"
             "  can view = owner or parent.view\n  can top = owner and {parent_id is null}\n",
@@ -9416,8 +9406,6 @@ class Confidence(unittest.TestCase):
 
     def test_a_chain_world_nests_groups_in_a_chain_too(self) -> None:
         # a team inside the next one, as a folder inside the next: what a policy reads at the end of a long nesting
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD + "type team = app.teams\n  member : user = owner_id\n"
             "  member : team#member = app.team_links(team_id -> sub_id)\n  can view = member\n",
@@ -9429,8 +9417,6 @@ class Confidence(unittest.TestCase):
 
     def test_a_dense_world_gives_most_of_the_custom_roles_it_could(self) -> None:
         # as it holds most of the links it could (DENSITIES); a drawn one gives a few (World.ROLE)
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
             "type doc = app.docs\n  org : org = org_id\n  roles : user from org\n  can view = roles\n",
@@ -9450,8 +9436,6 @@ class Confidence(unittest.TestCase):
 
     def test_a_policy_that_reads_two_links_deep_is_tried_on_chains(self) -> None:
         # a file's folder's org's members: two links deep, so beside the dense worlds a dozen chains of four
-        from authzlib import evaluate
-
         pol = parse_policy(
             self.HEAD
             + "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n  can view = member\n"
@@ -9469,8 +9453,6 @@ class Confidence(unittest.TestCase):
     def test_a_corner_chooses_as_many_values_as_it_tries(self) -> None:
         # four columns of eight values each (the six named, one none of them names, NULL): just as many combinations
         # as a corner tries, so it chooses them, and the condition it says holds holds on every row
-        from authzlib import evaluate
-
         cond = " and ".join(f"{c} in (1, 2, 3, 4, 5, 6)" for c in "abcd")
         pol = parse_policy(
             self.HEAD + f"type doc = app.docs\n  owner : user = owner_id\n  can view = owner and {{{cond}}}\n",
@@ -9485,8 +9467,6 @@ class Confidence(unittest.TestCase):
         # a corner chooses together the values of columns that conditions read together. The rewrite reads b1
         # beside b2, the policy b1 alone: chosen for each policy's own conditions, a row's b1 differed between them,
         # and a rewrite that changes nothing showed a difference ({not b1} held before, on a row with b1 true)
-        from authzlib import evaluate
-
         doc = "type doc = app.docs\n  r : user = owner_id\n  can p = r and {b1}\n  can q = {not b1}"
         before, after = doc + "\n", doc + " or ({b1 and b2} and nobody)\n"
         self.assertTrue(self.same(before, after))
@@ -9541,8 +9521,6 @@ class Confidence(unittest.TestCase):
         )
         self.assertEqual(self.proofs(folder + "owner and {owner_id = 7}\ninvariants\n  never folder: edit\n"), [False])
         # a key of text: a text is an id
-        from authzlib import evaluate
-
         text = "app role app_user\ntype user = app.users (id text)\n" + folder.replace(
             "app.folders", "app.folders (id text)"
         )
@@ -9565,11 +9543,36 @@ class Confidence(unittest.TestCase):
                 told += edits[0] != edits[1]
         self.assertGreater(told, 0)
 
+    def test_a_condition_on_the_key_reads_the_rows_own_id(self) -> None:
+        # `{id = 2}` holds on the row whose id is 2, as the database says: the key column is the row's id, in every
+        # world (drawn, a corner, listed), never a value drawn beside it; the worlds hold the ids the conditions name
+        import small
+        from authzlib import evaluate
+
+        folder = "type folder = app.folders\n  owner : user = owner_id\n  can view = owner or "
+        pol = parse_policy(self.HEAD + folder + "{id = 2}\n", "p.authz")
+        drawn = list(evaluate.worlds_to_try([pol], 60, "s"))
+        listed = list(itertools.islice(evaluate.Listing([pol]).worlds(), 500))
+        for w in drawn + listed:
+            data = w.data(pol)
+            ref = evaluate.Reference(pol)
+            mine = {o for o, s in data.pairs[("folder", "owner", 0, "user", "")] if s == "1"}
+            self.assertEqual(ref.evaluate(data, "1")[("folder", "view")], mine | ({"2"} & set(data.ids["folder"])))
+            # ... and made as rows, the key is written once, as the row's id
+            rows, _ = small.load_sql(pol, data)
+            self.assertNotRegex(rows, r'\("id", [^)]*"id"')
+        # a row 7 is in the worlds where a condition names it
+        plain = "type folder = app.folders\n  owner : user = owner_id\n  can view = "
+        self.assertFalse(self.same(plain + "owner\n", plain + "owner or ({id = 7} and signed_in)\n"))
+        # no id lies between two whole numbers: `> 1` and `>= 2` are one on a bigint key
+        self.assertTrue(self.same(plain + "owner and {id > 1}\n", plain + "owner and {id >= 2}\n"))
+        # a key of two columns names no one column: its columns are drawn as any other
+        two = "type folder = app.folders (org_id bigint, id bigint)\n  owner : user = owner_id\n  can view = owner and "
+        self.assertFalse(self.same(two + "{id = 2}\n", two + "{id <> 2}\n"))
+
     def test_a_corner_chooses_the_columns_a_condition_reads_beside_a_relations(self) -> None:
         # the corner where {owner_id is not null and a and b} holds: on each row with an owner (its link), a and b
         # are chosen so that it holds there
-        from authzlib import evaluate
-
         cond = "owner_id is not null and a and b"
         pol = parse_policy(
             self.HEAD + f"type doc = app.docs\n  owner : user = owner_id\n  can view = owner or {{{cond}}}\n", "p.authz"
@@ -9607,8 +9610,6 @@ class Confidence(unittest.TestCase):
         # a row of a document is of two classes ({a} holds or not); with no link, then each document's owner. A world
         # that is another with its rows renamed is listed once: two documents of one owner, both {a} or one of them
         # or neither (3), and of two owners (3); three: 14. Every one of them, then: a document has one owner
-        from authzlib import evaluate
-
         doc = self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n  can view = "
         a, b = parse_policy(doc + "owner and {a}\n", "a.authz"), parse_policy(doc + "{a} and owner\n", "b.authz")
         listing = evaluate.Listing((a, b))
@@ -9643,8 +9644,6 @@ class Confidence(unittest.TestCase):
         # two folders, each with its owner: swapping the folders and the users gives the same links. But a column a
         # condition compares with authz.uid() holds a user's id, which a renaming doesn't change: "each folder made by
         # the other's owner" is a world of its own, not "each made by its owner" renamed
-        from authzlib import evaluate
-
         doc = self.HEAD + "type folder = app.folders\n  owner : user = owner_id\n  can view = "
         a = parse_policy(doc + "owner and {creator_id = authz.uid()}\n", "a.authz")
         b = parse_policy(doc + "{creator_id = authz.uid()} and owner\n", "b.authz")
@@ -9668,8 +9667,6 @@ class Confidence(unittest.TestCase):
     def test_the_listing_stops_however_many_classes_its_rows_have(self) -> None:
         # five flags on users and five on folders: 32 classes of each, so the worlds of one link (an owner) are
         # 32 x 32. The listing stops at LISTED_AT_MOST for each drawn world, and says how far it got
-        from authzlib import evaluate
-
         n = 5
         head = (
             self.HEAD.replace("app.users\n", "app.users\n  can u = " + " or ".join(f"{{b{i}}}" for i in range(n)))
@@ -9697,8 +9694,6 @@ class Confidence(unittest.TestCase):
         # link could make left it at fewer links
         import time
 
-        from authzlib import evaluate
-
         doc = self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n  can view = "
         others = "".join(f"type t{i} = app.t{i}\n  owner : user = owner_id\n  can see = owner\n" for i in range(12))
         a, b = parse_policy(doc + "owner\n" + others, "a.authz"), parse_policy(doc + "owner or owner\n" + others, "b")
@@ -9718,8 +9713,6 @@ class Confidence(unittest.TestCase):
 
     def test_a_listed_world_shares_with_everyone_and_by_link(self) -> None:
         # a share names a row of its subject's type, or `*` (every user, anyone), or a link's token: the one asked with
-        from authzlib import evaluate
-
         doc = self.HEAD + "type doc = app.docs\n  viewer : user, user:*, anyone, link shared by view\n  can view = "
         a, b = parse_policy(doc + "viewer\n", "a.authz"), parse_policy(doc + "viewer and signed_in\n", "b.authz")
         listing = evaluate.Listing((a, b))
@@ -9745,8 +9738,6 @@ class Confidence(unittest.TestCase):
     def test_the_listing_says_where_it_took_some_values_only(self) -> None:
         # four columns of nine values each (the seven named, one none of them names, NULL), read by one condition:
         # more combinations than a row's classes are made from, so only the first are, and the review says so
-        from authzlib import evaluate
-
         cond = " and ".join(f"{c} in (1, 2, 3, 4, 5, 6, 7)" for c in "abcd")
         doc = self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n  can view = "
         a, b = (
@@ -9788,8 +9779,6 @@ class Confidence(unittest.TestCase):
             evaluate.Reference(pol)
 
     def test_the_evaluator_refuses_data_it_cannot_read(self) -> None:
-        from authzlib import evaluate
-
         with self.assertRaisesRegex(ValueError, "not the evaluator's data"):
             evaluate.Data.of({("idz", "doc"): ["1"]})
         # a condition it doesn't read as a fact about the row, with no rows said to hold it
@@ -11211,7 +11200,6 @@ class Rewrites(unittest.TestCase):
             self.assertIn(left, (None, "a"))
 
     def test_a_policys_rewrites_each_rewrite_one_permission_or_select_rule(self) -> None:
-        import genpolicy
         import rewrites
 
         spec = genpolicy.make(1)
@@ -11268,13 +11256,16 @@ class Invariance(unittest.TestCase):
 
     def test_sql_is_read_as_what_it_says_but_for_order(self) -> None:
         """Only what may come in any order is: an `or`'s and an `and`'s operands, a simple CASE's branches, the items
-        of an ARRAY, an IN and a VALUES list, statements but for what one sets and another reads, an explanation's
-        words. An `and` and an `or` that trade places, an operator's operands swapped or a NOT moved are another
-        SQL, though their words are the same."""
+        of an ARRAY, an IN and a VALUES list, statements but for what one sets and another reads (and in a
+        function's body, what one does: a write, a call, an error, a return of a value), an explanation's words. An
+        `and` and an `or` that trade places, an operator's operands swapped, a NOT moved or a body's write moved are
+        another SQL, though their words are the same."""
         import invariance
 
         def same(a: str, b: str) -> bool:
             return invariance.sql_form(a) == invariance.sql_form(b)
+
+        body = "CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN {} END $f$"
 
         for a, b in [
             ("SELECT 1 WHERE (x.a AND x.b) OR x.c", "SELECT 1 WHERE (x.a OR x.b) AND x.c"),
@@ -11285,6 +11276,27 @@ class Invariance(unittest.TestCase):
             ("BEGIN v := 1; RETURN v; END", "BEGIN RETURN v; v := 1; END"),
             ("BEGIN m := m || 'a'; RAISE '%', m; END", "BEGIN RAISE '%', m; m := m || 'a'; END"),
             ("RETURN NEXT 'p = a or (b and c)'", "RETURN NEXT 'p = (a or b) and c'"),
+            (
+                body.format("DELETE FROM t; INSERT INTO t VALUES (1);"),
+                body.format("INSERT INTO t VALUES (1); DELETE FROM t;"),
+            ),
+            (body.format("UPDATE t SET a = 1; RETURN NEW;"), body.format("RETURN NEW; UPDATE t SET a = 1;")),
+            (
+                body.format("PERFORM authz_int.check_writable(); DELETE FROM t;"),
+                body.format("DELETE FROM t; PERFORM authz_int.check_writable();"),
+            ),
+            (
+                body.format("IF a THEN RETURN NULL; END IF; IF b THEN RETURN NEW; END IF;"),
+                body.format("IF b THEN RETURN NEW; END IF; IF a THEN RETURN NULL; END IF;"),
+            ),
+            (
+                body.format("v := 1; DELETE FROM t WHERE x = v; v := 2; DELETE FROM u WHERE x = v;"),
+                body.format("v := 2; DELETE FROM u WHERE x = v; v := 1; DELETE FROM t WHERE x = v;"),
+            ),
+            (
+                "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC DELETE FROM t; INSERT INTO t VALUES (1); END",
+                "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC INSERT INTO t VALUES (1); DELETE FROM t; END",
+            ),
         ]:
             self.assertFalse(same(a, b), (a, b))
             self.assertEqual(sorted(invariance.TOKEN.findall(a)), sorted(invariance.TOKEN.findall(b)), (a, b))
@@ -11318,8 +11330,44 @@ class Invariance(unittest.TestCase):
                 "FOR a IN SELECT 1 UNION ALL SELECT 2 LOOP RETURN NEXT a; END LOOP",
                 "FOR a IN SELECT 2 UNION ALL SELECT 1 LOOP RETURN NEXT a; END LOOP",
             ),
+            # in a body: inserts next to each other (an audit row per column), the rows so far returned where one of
+            # a relation's sources holds (an explanation), a PERFORM of no row (a condition checked as it is made)
+            (
+                body.format("INSERT INTO a VALUES (1); INSERT INTO a VALUES (2);"),
+                body.format("INSERT INTO a VALUES (2); INSERT INTO a VALUES (1);"),
+            ),
+            (
+                body.format(
+                    "IF a THEN RETURN NEXT 'a'; RETURN; END IF; IF b THEN RETURN NEXT 'b'; RETURN; END IF; RETURN NEXT 'no';"
+                ),
+                body.format(
+                    "IF b THEN RETURN NEXT 'b'; RETURN; END IF; IF a THEN RETURN NEXT 'a'; RETURN; END IF; RETURN NEXT 'no';"
+                ),
+            ),
+            (
+                body.format("PERFORM 1 FROM t WHERE a LIMIT 0; PERFORM 1 FROM t WHERE b LIMIT 0;"),
+                body.format("PERFORM 1 FROM t WHERE b LIMIT 0; PERFORM 1 FROM t WHERE a LIMIT 0;"),
+            ),
+            # a DO runs once, as the statements around it: what it does comes in the policy's order
+            (
+                "DO $d$ BEGIN DELETE FROM t; INSERT INTO u VALUES (1); END $d$",
+                "DO $d$ BEGIN INSERT INTO u VALUES (1); DELETE FROM t; END $d$",
+            ),
         ]:
             self.assertTrue(same(a, b), (a, b))
+
+    def test_a_trees_number_alone_is_blurred(self) -> None:
+        # a second tree of the same types and relations is numbered in the order the compiler meets it: the number
+        # alone, so its objects stay apart; in a name its number may make longer than Postgres's 63 bytes, which is
+        # then shortened with a hash, what follows it too
+        import invariance
+
+        u = invariance.unordered
+        self.assertEqual(u('authz_int."t1__parent__tree2_refresh"'), u('authz_int."t1__parent__tree_refresh"'))
+        self.assertNotEqual(u('authz_int."t1__parent__tree_refresh"'), u('authz_int."t1__parent__tree_rebuild"'))
+        long = "authz_folder_project__host_inside_parent__tree{}_rows_project_ins"
+        self.assertEqual(u(long.format("")), u(long.format("2")))
+        self.assertEqual(u(long.format("2")), u("authz_folder_project__host_inside_parent__tree2_rows_fo_605054e5"))
 
     def test_an_or_and_an_and_that_trade_places_are_another_sql(self) -> None:
         """A wrong rewrite planted in the compiled policy: in one object, the first `or` and the first `and` swapped."""
@@ -11772,6 +11820,54 @@ class SmallPolicies(unittest.TestCase):
         base = self.s.reference(text)
         told = {m.what for m in self.s.mutants(spec, text) for w in choice.worlds if m.answers(w) != base(w)}
         self.assertEqual(len(told), choice.told)
+
+    def test_beside_the_worlds_chosen_two_no_part_asked_for(self) -> None:
+        # the database's own mistakes need not look like a part made wrong: the world where the policy grants most is
+        # loaded too, and one drawn, the same each run
+        spec = self.s.decorated(self.spec("type user\ntype t1\n  r1 : user column\n  can p1 = r1"))
+        text = genpolicy.policy_text(spec)
+        base = self.s.reference(text)
+        choice = self.s.choose(spec, text, self.s.canonical(spec))
+        every = list(self.s.worlds(parse_policy(text, "small.authz"), self.s.canonical(spec)))
+        most = max(sum(map(len, base(w).values())) for w in every)
+        self.assertIn(most, [sum(map(len, base(w).values())) for w in choice.worlds])
+        again = self.s.choose(spec, text, self.s.canonical(spec))
+        self.assertEqual(choice.worlds, again.worlds)
+
+    def test_a_column_the_table_lets_be_null_is_null_in_some_worlds(self) -> None:
+        # b1 may be NULL in genpolicy's tables, b3 may not: a world gives b1 false, NULL or true, b3 false or true;
+        # where b1 is NULL, `{b1}` holds nothing and `not {b1}` holds
+        spec = self.s.decorated(self.spec("type user\ntype t1 where\n  r1 : user column\n  can p1 = r1 and not {b1}"))
+        pol = parse_policy(genpolicy.policy_text(spec), "small.authz")
+        _, dims = self.s.dims(pol, 1)
+        values = {opt[0][3]: [o[0][4] for o in d] for d in dims for opt in d[:1] if opt and opt[0][0] == "col"}
+        self.assertEqual(values, {"b1": [False, None, True], "b3": [False, True]})
+        null = [w for w in self.s.worlds(pol, "k") if w.columns["t1"].get("1", {}).get("b1", False) is None and w.pairs]
+        self.assertTrue(null)
+        ref = evaluate.Reference(pol)
+        for w in null:
+            state = ref.evaluate(w, "1")
+            held = {i for i in state[("t1", "r1")] if w.columns["t1"][i].get("b1") is not True}
+            self.assertEqual(state[("t1", "p1")], held & set(w.valid["t1"]))
+        # made smaller, b1 stays NULL; b3, which its table keeps from being NULL, is false
+        world = dataclasses.replace(null[0], columns={"t1": {"1": {"b1": None, "b3": None}}, "user": {}})
+        self.assertEqual(self.s.revalid(pol, world).columns["t1"]["1"], {"b1": None, "b3": False})
+        rows, _ = self.s.load_sql(pol, self.s.revalid(pol, world))
+        self.assertIn('("id", "b1", "b3") VALUES (1, NULL, false)', rows)
+
+    def test_a_batch_postgres_refuses_fails_its_policies_and_the_run_goes_on(self) -> None:
+        # SQL Postgres refuses (psql's error), or a rule's policy missing (the checker stops): every policy of the
+        # batch failed, with the first lines of what was said, and the next batch is checked
+        import difftest
+
+        spec = self.s.decorated(self.spec("type user\ntype t1\n  r1 : user column\n  can p1 = r1"))
+        items = [self.s.Item("3/1", spec, []), self.s.Item("3/2", spec, [])]
+        for error in (RuntimeError("psql failed:\nERROR:  division by zero"), SystemExit("1 rules, 0 policies")):
+            with mock.patch.object(self.s, "batch_checks", side_effect=error):
+                found = self.s.check_batch(difftest.DB("unused"), items, "/nowhere", True)
+            self.assertEqual(set(found), {"3/1", "3/2"})
+            self.assertEqual(found["3/1"][0], "the checks could not go on:")
+            self.assertIn(str(error).splitlines()[-1], found["3/2"])
 
 
 class Decisions(unittest.TestCase):
@@ -12431,6 +12527,102 @@ class DifftestChanges(unittest.TestCase):
             ["user 1: authz.can('doc', ..., 'view') was asked of ['2', '999999'], not of ['1', '2', '999999']"],
         )
 
+    def test_a_loop_of_links(self) -> None:
+        # what a refusal for a move under itself must have met in the data after the change (Checker.wrong_refusal)
+        import difftest
+
+        a, b, c = ("folder", "1"), ("folder", "2"), ("project", "1")
+        self.assertFalse(difftest.reaches_itself([(a, b), (b, c)]))
+        self.assertTrue(difftest.reaches_itself([(a, b), (b, c), (c, a)]))
+        self.assertTrue(difftest.reaches_itself([(a, a)]))
+        self.assertFalse(difftest.reaches_itself([(a, c), (b, c), (("folder", "3"), a)]))
+        self.assertFalse(difftest.reaches_itself([]))
+
+    def test_every_answer_asked_is_compared(self) -> None:
+        """A snapshot's answers that no check reads, an id given twice, a kind of answer the checks look for and no
+        snapshot of a run gives: each fails, where the checks would otherwise pass without comparing them."""
+        import difftest
+
+        checker = object.__new__(difftest.Checker)
+        checker.users, checker.checks = ["1", "2", ""], 0
+        checker.answered, checker.looked_for = set(), set()
+        snap = difftest.Asked()
+        snap.update({("1", "list", "doc", "view"): ["1", "2"], ("1", "data", "ids", "doc"): ["1", "2"]})
+        snap[("2", "explain", "doc", "view")] = [["1", "yes"]]
+        self.assertEqual(snap[("1", "list", "doc", "view")], ["1", "2"])
+        self.assertEqual(snap.get(("2", "share", "doc", "viewer"), []), [])
+        # the explain answer was asked and read by nothing (the data is the reference's, not an answer)
+        self.assertEqual(
+            checker.unread(snap),
+            ["1 answers asked of the database that no check compared, such as [('2', 'explain', 'doc', 'view')]"],
+        )
+        _ = snap[("2", "explain", "doc", "view")]
+        self.assertEqual(checker.unread(snap), [])
+        # share was looked for and never there: once every user had a turn, the run says so
+        self.assertEqual(checker.quiet(), [])
+        checker.checks = 3
+        self.assertEqual(checker.quiet(), ["the checks looked for answers no snapshot of the run gave: ['share']"])
+        checker.answered.add("share")
+        self.assertEqual(checker.quiet(), [])
+        # an id given twice, by a list, a rule's rows or who
+        twice = difftest.Asked()
+        twice.update(
+            {
+                ("1", "list", "doc", "view"): ["1", "2", "1"],
+                ("scoped", "policy", "app.docs", "authz_select", "using"): ["3", "3"],
+                ("who", "doc", "view"): [["1", ["1", "1"]]],
+                ("1", "can", "doc", "view"): [["1", True], ["1", True]],
+            }
+        )
+        self.assertEqual(
+            checker.repeated(twice),
+            [
+                "1 list doc view gives ['1'] more than once",
+                "scoped policy app.docs authz_select using gives ['3'] more than once",
+                "who doc view gives ['1'] more than once",
+            ],
+        )
+        # and a run with more than half its changes refused
+        self.assertIsNone(difftest.too_many_refused(5, 8))
+        self.assertIsNotNone(difftest.too_many_refused(6, 8))
+        self.assertIsNotNone(difftest.too_many_refused(51, 100))
+
+    def test_genpolicy_goes_on_past_what_postgres_refuses(self) -> None:
+        # psql's error (the schema, the data, the compiled policy), or the checker stopping on a missing rule's
+        # policy: the policy fails, with what was said, and the next seed is run
+        import difftest
+
+        for error in (RuntimeError("psql failed:\nERROR:  division by zero"), SystemExit("1 rules, 0 policies")):
+            with mock.patch.object(genpolicy, "checks", side_effect=error):
+                problems = genpolicy.run(genpolicy.make(1), difftest.DB("unused"), 3, "/nowhere")
+            self.assertEqual(problems[0], "the checks could not go on:")
+            self.assertIn(str(error).splitlines()[-1], problems)
+        # check_invariants() giving rows for someone it doesn't ask as (an id no row has): a problem, not left unread
+        spec = next(s for s in map(genpolicy.make, range(1, 60)) if s.invariants)
+        pol = parse_policy(genpolicy.policy_text(spec), "gen.authz")
+        inv = pol.invariants[0]
+        gone = spec.spelling.ident(genpolicy.GONE)
+        checker = object.__new__(difftest.Checker)
+        checker.pol, checker.users = pol, []
+        checker.gen = genpolicy.gen_class(spec, "gen.authz", "gen.sql")(random.Random(1))
+        rows = [[f"never {inv.type}: {inv.src} (line 9)", gone, "[]"], [f"never {inv.type}: {inv.src} (x)", "x9", "[]"]]
+        db = mock.Mock(rows=mock.Mock(return_value=rows))
+        checker.db = db
+        with mock.patch.object(checker, "snapshot_data_only", create=True, return_value={}):
+            problems, _ = genpolicy.invariant_problems(checker)
+        self.assertEqual(
+            problems,
+            [f"check_invariants() gives rows for {sorted([gone, 'x9'])}, who are neither a principal's row nor nobody"],
+        )
+        # with no seed to run, the summary says so (and too few were checked)
+        p = subprocess.run(
+            [sys.executable, "tests/genpolicy.py", "--policies", "0"], cwd=ROOT, capture_output=True, text=True
+        )
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertIn("genpolicy with no seed: 0 passed, 0 failed", p.stdout)
+        self.assertIn("FAIL no seed to run: nothing checked", p.stdout)
+        self.assertNotIn("Traceback", p.stderr)
+
     def test_genpolicy_data_drawn_from_the_seed(self) -> None:
         """What genpolicy's first data and changes draw with SQL's random() is the seed's too: each script that draws
         sets the seed first, the same on every run, so `--only SEED` and the shrinking run on the same data."""
@@ -12455,6 +12647,9 @@ class DifftestChanges(unittest.TestCase):
                 self.types = self.pol.types
 
             def check(self) -> list[str]:
+                return []
+
+            def quiet(self) -> list[str]:
                 return []
 
         spec = dataclasses.replace(genpolicy.make(1), invariants=[])
@@ -12618,6 +12813,41 @@ class SearchPath(unittest.TestCase):
                     self.assertIn("SET search_path FROM CURRENT", st.split("$f$")[0], f"{name}: {st[:120]}")
 
 
+RAISE_END = re.compile(r";(?=\n|\"|')")  # a RAISE statement's end, in SQL or in a string
+
+
+def raise_statements() -> Iterator[tuple[str, int, str]]:
+    """Each RAISE EXCEPTION statement in authzlib's code: its file (authzlib/x.py), its line, its text to its end."""
+    for name in sorted(os.listdir(os.path.join(ROOT, "authzlib"))):
+        if not name.endswith(".py"):
+            continue
+        src = read(f"authzlib/{name}")
+        for m in re.finditer(r"RAISE EXCEPTION", src):
+            end = RAISE_END.search(src, m.start())
+            yield f"authzlib/{name}", src.count("\n", 0, m.start()) + 1, src[m.start() : end.end() if end else len(src)]
+
+
+def code_strings(src: str) -> list[str]:
+    """The strings a Python source's code holds (messages, SQL), not its comments nor its docstrings: where a code
+    that is used is written."""
+    import ast
+
+    tree = ast.parse(src)
+    docs = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+    return [
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs
+    ]
+
+
 class ErrorCodes(unittest.TestCase):
     """Every mistake has a stable code and a page (authzlib/errors.py; docs/errors/ is written from it)."""
 
@@ -12662,8 +12892,18 @@ class ErrorCodes(unittest.TestCase):
                     f"authzlib/{name} line {node.lineno}: a mistake without a known code",
                 )
                 used.add(str(value))
-            used |= {a or b for a, b in re.findall(r"\[(AZ\d{3})\]|rowstile help (AZ\d{3})", src)}
+            used |= {
+                a or b
+                for text in code_strings(src)
+                for a, b in re.findall(r"\[(AZ\d{3})\]|rowstile help (AZ\d{3})", text)
+            }
         self.assertEqual(sorted(set(CODES) - used), [], "codes nothing raises (retire them in errors.py instead)")
+
+    def test_a_code_counts_as_used_where_code_writes_it(self) -> None:
+        # a message or SQL, not a comment nor a docstring: a code whose last raise went, but that a comment still
+        # names, is a code nothing raises
+        src = '"""The module (AZ101)."""\n# [AZ102] said here only\ndef f() -> None:\n    """[AZ103]"""\n    fail("[AZ104]")\n'
+        self.assertEqual(code_strings(src), ["[AZ104]"])
 
     def test_every_code_found_when_compiling_has_a_case(self) -> None:
         """Each code the compiler gives (found when a policy or its tests are compiled) has a case in
@@ -12694,27 +12934,19 @@ class ErrorCodes(unittest.TestCase):
         the message."""
         from authzlib.errors import CODES
 
-        for name in sorted(os.listdir(os.path.join(ROOT, "authzlib"))):
-            if not name.endswith(".py"):
-                continue
-            src = read(f"authzlib/{name}")
-            for m in re.finditer(r"RAISE EXCEPTION", src):
-                end = re.compile(r";(?=\n|\"|')").search(src, m.start())  # the statement's end, in SQL or a string
-                stmt = src[m.start() : end.end() if end else len(src)]
-                for code in re.findall(r"\[(AZ\d{3})\]", stmt):
-                    self.assertNotEqual(
-                        CODES[code].when,
-                        "runtime",
-                        f"authzlib/{name} line {src.count(chr(10), 0, m.start()) + 1}: {code} is one apps meet: "
-                        "its code goes in the HINT (rowstile help " + code + "), not at the end of the message",
-                    )
-                if re.search(r"\[AZ\d{3}\]|rowstile help AZ\d{3}|HINT = \{lit\(hint\)\}", stmt) or any(
-                    u in stmt for u in self.UNCODED
-                ):
-                    continue
-                self.fail(
-                    f"authzlib/{name} line {src.count(chr(10), 0, m.start()) + 1}: a RAISE without a code: {stmt[:120]}"
+        for path, line, stmt in raise_statements():
+            for code in re.findall(r"\[(AZ\d{3})\]", stmt):
+                self.assertNotEqual(
+                    CODES[code].when,
+                    "runtime",
+                    f"{path} line {line}: {code} is one apps meet: "
+                    "its code goes in the HINT (rowstile help " + code + "), not at the end of the message",
                 )
+            if re.search(r"\[AZ\d{3}\]|rowstile help AZ\d{3}|HINT = \{lit\(hint\)\}", stmt) or any(
+                u in stmt for u in self.UNCODED
+            ):
+                continue
+            self.fail(f"{path} line {line}: a RAISE without a code: {stmt[:120]}")
 
     def test_examples(self) -> None:
         """Each page's mistake gives its code; its fix compiles."""
@@ -12787,20 +13019,14 @@ class RuntimeAnswers(unittest.TestCase):
     def raised(self) -> dict[str, set[str]]:
         """Each runtime code, and the SQLSTATEs the generated SQL raises it with."""
         out: dict[str, set[str]] = {}
-        for name in sorted(os.listdir(os.path.join(ROOT, "authzlib"))):
-            if not name.endswith(".py"):
+        for path, line, stmt in raise_statements():
+            code = re.search(r"rowstile help (AZ7\d\d)", stmt)
+            if not code:
                 continue
-            src = read(f"authzlib/{name}")
-            for m in re.finditer(r"RAISE EXCEPTION", src):
-                end = re.compile(r";(?=\n|\"|')").search(src, m.start())  # the statement's end, in SQL or a string
-                stmt = src[m.start() : end.end() if end else len(src)]
-                code = re.search(r"rowstile help (AZ7\d\d)", stmt)
-                if not code:
-                    continue
-                state = re.search(r"ERRCODE = '(\w+)'", stmt)
-                where = f"authzlib/{name} line {src.count(chr(10), 0, m.start()) + 1}"
-                self.assertIn(state.group(1) if state else "", self.STATES, f"{where}: an ERRCODE this test can't name")
-                out.setdefault(code.group(1), set()).add(self.STATES[state.group(1) if state else ""])
+            state = re.search(r"ERRCODE = '(\w+)'", stmt)
+            where = f"{path} line {line}"
+            self.assertIn(state.group(1) if state else "", self.STATES, f"{where}: an ERRCODE this test can't name")
+            out.setdefault(code.group(1), set()).add(self.STATES[state.group(1) if state else ""])
         return out
 
     def page(self, code: str) -> tuple[str, str]:
@@ -13048,6 +13274,8 @@ class StackPages(unittest.TestCase):
         )
         out: dict[str, list[str]] = {}
         for f in files:
+            if f.endswith(".md") and f != path:  # a folder's READMEs and docs show code: they are no tested file
+                continue
             if f.endswith(
                 (
                     ".py",
@@ -13579,20 +13807,21 @@ class BlogPosts(unittest.TestCase):
             "experiment.sql: its header says to read the middle of the three timings",
         )
         small, large = runs["200,000 files"], runs["2 million files"]
-        for said, run in (
-            ("3,410 files in the\nsmall run, 54,610 in the large one", None),
-            ("88,800 rows", small),
-            ("8,728 kB", small),
-            ("1,218,200", large),
-            ("109 MB", large),
-            ("1,365 folders", large),
-            ("2,377 walks", small),
-            ("5,461 folders", large),
+        # each figure as its run's line says it: its unit, or what the number counts there (rows inserted, rows
+        # deleted, loops of a plan's node), not the number alone (109 ms, a line's number would do)
+        for said, run, line in (
+            ("3,410 files in the\nsmall run, 54,610 in the large one", None, ""),
+            ("88,800 rows", small, r"INSERT 0 88800\n"),
+            ("8,728 kB", small, r"\| 8728 kB\n"),
+            ("1,218,200", large, r"INSERT 0 1218200\n"),
+            ("109 MB", large, r"\| 109 MB\n"),
+            ("1,365 folders", large, r"DELETE 1365\n"),
+            ("2,377 walks", small, r"loops=2377\)"),
+            ("5,461 folders", large, r"\(actual rows=5461 "),
         ):
             self.assertIn(said, text)
             if run is not None:
-                number = search(r"[\d,]+", said).group(0).replace(",", "")
-                self.assertRegex(run, rf"(?<!\d){number}(?!\d)", f"{said!r} is in no line of its run")
+                self.assertRegex(run, line, f"{said!r} is in no line of its run")
         self.assertRegex(small, r"files_user_7_sees \n-+\n\s+3410\n")
         self.assertRegex(large, r"files_user_7_sees \n-+\n\s+54610\n")
         for run in (small, large):
@@ -13696,7 +13925,10 @@ class BlogPosts(unittest.TestCase):
         self.assertIn(f"{exists_one} against {in_one.removesuffix(' ms')}.", flat)
         for said in ("2,501 files", "42,000", "40,000 of them", "400,000 shares", "about 262,000 rows"):
             self.assertIn(said, flat)
-        self.assertEqual(8 * 1024 * 1024 // 32, 262144)  # 4 MB times 2, at 32 bytes a row
+        # "about 262,000 rows": work_mem times hash_mem_multiplier (the runs' settings), at 32 bytes a row
+        for version, line in settings.items():
+            m = search(r"\|\s+\d+\s+\|\s+(\d+)MB\s+\|\s+(\d+)\n", line)
+            self.assertEqual(round(int(m.group(1)) * 1024 * 1024 * int(m.group(2)) / 32, -3), 262000, version)
         # "twice as long", "about half the time": what the table's own cells say
         cell = {n: statistics.median(t for _, t in timed(on18[n])[:3]) for n in "12356"}
         self.assertTrue(1.8 < cell["2"] / cell["1"] < 2.2)
@@ -14698,6 +14930,32 @@ class StudioPort(unittest.TestCase):
         s.listen()
         return s.getsockname()[1]
 
+    def test_on_windows_the_server_asks_for_the_port_alone(self) -> None:
+        # the branch that runs on Windows only, run here with the platform made Windows: SO_EXCLUSIVEADDRUSE asked
+        # for (a stand-in value: Linux has none), SO_REUSEADDR left off, then the address bound
+        import importlib
+        from http.server import BaseHTTPRequestHandler
+
+        import studio
+
+        self.addCleanup(importlib.reload, studio)  # (the module as this platform makes it, after)
+        with (
+            mock.patch.object(sys, "platform", "win32"),
+            mock.patch.object(socket, "SO_EXCLUSIVEADDRUSE", -5, create=True),
+        ):
+            windows = importlib.reload(studio)
+            self.assertFalse(windows.Server.allow_reuse_address)
+            server = windows.Server(("127.0.0.1", 0), BaseHTTPRequestHandler, bind_and_activate=False)
+            server.socket.close()
+            held = mock.MagicMock()
+            held.getsockname.return_value = ("127.0.0.1", 4983)
+            server.socket = held
+            server.server_bind()
+        calls = held.setsockopt.call_args_list
+        self.assertIn(mock.call(socket.SOL_SOCKET, -5, 1), calls)
+        self.assertNotIn(mock.call(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1), calls)
+        held.bind.assert_called_once_with(("127.0.0.1", 0))
+
     def test_the_socket_options_are_the_ones_meant(self) -> None:
         import studio
 
@@ -14793,7 +15051,7 @@ class LlmsTxt(unittest.TestCase):
             self.assertIn(f"<!-- {link} -->", full)
         # without the notes for the repository's checks, which the pages don't show: after a sentence, or a line
         self.assertNotRegex(full, llms_full.NOTE)
-        self.assertIn("Lines that only moved need no migration.\n", full)
+        self.assertIn("Lines that only moved (a comment added above a rule) make a small migration", full)
         self.assertEqual(
             llms_full.without_notes(
                 '<!-- tested: x -->\nA promise. <!-- checked: tests/x.sh "y" --> `<!-- kept -->`\n'
@@ -14832,7 +15090,11 @@ class LlmsTxt(unittest.TestCase):
         # sdk/, those it reads are the READMEs, and the files context7.json leaves out are there
         with open(os.path.join(self.REPO, "context7.json"), encoding="utf-8") as fh:
             index = json.load(fh)
-        left_out = [os.path.join(self.REPO, *g.split("/")) for g in index["excludeFolders"] if not g.startswith("**/")]
+        left_out = [
+            os.path.join(self.REPO, *g.rstrip("/").split("/"))
+            for g in index["excludeFolders"]
+            if not g.startswith("**/")
+        ]
         read = [
             os.path.relpath(f, self.REPO)
             for f in self.files(os.path.join(self.REPO, "sdk"))
@@ -14844,6 +15106,29 @@ class LlmsTxt(unittest.TestCase):
         found = {os.path.basename(f) for f in self.files(self.REPO)}
         for name in index["excludeFiles"]:
             self.assertIn(name, found, f"context7.json leaves out {name}, which no folder holds")
+
+    def test_the_index_reads_the_posts_not_their_runs(self) -> None:
+        # under docs/blog, Context7 reads the posts and their index: a post's folder holds its experiment and the
+        # logs of its runs (run-*.txt), which are no docs
+        with open(os.path.join(self.REPO, "context7.json"), encoding="utf-8") as fh:
+            index = json.load(fh)
+        left_out = [
+            os.path.join(self.REPO, *g.rstrip("/").split("/"))
+            for g in index["excludeFolders"]
+            if not g.startswith("**/")
+        ]
+        read = [
+            os.path.relpath(f, self.REPO).replace(os.sep, "/")
+            for f in self.files(os.path.join(self.REPO, "docs", "blog"))
+            if f.endswith((".md", ".mdx", ".markdown", ".rst", ".txt", ".ipynb"))
+            and os.path.basename(f) not in index["excludeFiles"]
+            and not any(fnmatch.fnmatch(f, g + "/*") for g in left_out)
+        ]
+        posts = sorted(
+            f"docs/blog/{f}" for f in os.listdir(os.path.join(self.REPO, "docs", "blog")) if f.endswith(".md")
+        )
+        self.assertEqual(sorted(read), posts)
+        self.assertTrue(any(f.endswith("/README.md") for f in posts) and len(posts) > 1, posts)
 
     def test_the_notes_left_out_are_those_the_docs_hold(self) -> None:
         # the kinds of notes for the checks, which llms-full.txt and the site's Markdown copies leave out: one list
@@ -15041,43 +15326,24 @@ class PythonExtras(unittest.TestCase):
 
 
 class Licence(unittest.TestCase):
-    """The Python package, the Go module and the Zed extension ship the licence: their copies (sdk/python/LICENSE,
-    what the build takes; sdk/go/LICENSE, the module's; editor/zed/LICENSE, what Zed's registry reads) are the
-    repository's."""
+    """Each package that ships the licence ships the repository's: every SDK folder that holds a copy (a Go module,
+    a gem, a crate, a Hex package and a Composer package are their folder alone; the Python package's build takes
+    sdk/python/LICENSE), the VS Code extension (vsce packages the files package.json names, from its folder) and the
+    Zed extension (Zed's registry reads its own folder's)."""
 
     REPO = os.path.dirname(ROOT)
 
-    def test_the_python_package_has_the_repositorys_licence(self) -> None:
-        with (
-            open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as a,
-            open(os.path.join(self.REPO, "sdk", "python", "LICENSE"), encoding="utf-8") as b,
-        ):
-            self.assertEqual(a.read(), b.read(), "sdk/python/LICENSE: copy the repository's LICENSE")
-
-    def test_the_go_module_has_the_repositorys_licence(self) -> None:
-        # a Go module is its folder alone (sdk/go): the licence at the repository's root isn't in it
-        with (
-            open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as a,
-            open(os.path.join(self.REPO, "sdk", "go", "LICENSE"), encoding="utf-8") as b,
-        ):
-            self.assertEqual(a.read(), b.read(), "sdk/go/LICENSE: copy the repository's LICENSE")
-
-    def test_the_zed_extension_has_the_repositorys_licence(self) -> None:
-        # Zed's registry reads the licence in the extension's own folder: one at the repository's root doesn't count
-        with (
-            open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as a,
-            open(os.path.join(self.REPO, "editor", "zed", "LICENSE"), encoding="utf-8") as b,
-        ):
-            self.assertEqual(a.read(), b.read(), "editor/zed/LICENSE: copy the repository's LICENSE")
-
-    def test_the_vscode_extension_has_the_repositorys_licence(self) -> None:
-        # vsce packages the licence package.json's files names from the extension's folder (editor/README.md's
-        # npm run package, and the release's)
-        with (
-            open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as a,
-            open(os.path.join(self.REPO, "editor", "LICENSE"), encoding="utf-8") as b,
-        ):
-            self.assertEqual(a.read(), b.read(), "editor/LICENSE: copy the repository's LICENSE")
+    def test_every_copy_of_the_licence_is_the_repositorys(self) -> None:
+        copies = sorted(glob.glob(os.path.join(self.REPO, "sdk", "*", "LICENSE")))
+        copies += [os.path.join(self.REPO, "editor", "LICENSE"), os.path.join(self.REPO, "editor", "zed", "LICENSE")]
+        names = [os.path.relpath(c, self.REPO) for c in copies]
+        for want in ("sdk/python/LICENSE", "sdk/go/LICENSE", "sdk/ruby/LICENSE", "sdk/rust/LICENSE"):
+            self.assertIn(want, names)  # (the glob finds those it must)
+        with open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as fh:
+            licence = fh.read()
+        for path, name in zip(copies, names, strict=True):
+            with open(path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), licence, f"{name}: copy the repository's LICENSE")
 
 
 class CoverageReport(unittest.TestCase):
@@ -15126,6 +15392,21 @@ class CoverageReport(unittest.TestCase):
             "diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-x\n+y\n"
         )
         self.assertEqual(self.report.changed(diff), {"authzlib/parse.py": {12, 22, 23, 24}})
+        # a line of a statement past its first (an argument, a condition's second line): the statement's first line
+        # too, as coverage.py names it; a line of its own, alone
+        code = [
+            "def f(x):",
+            "    if (x",
+            "        and x > 1):",
+            "        fail(",
+            "            'a',",
+            "        )",
+            "    y = 1",
+        ]
+        self.assertEqual(self.report.held(code, {3}), {2, 3})
+        self.assertEqual(self.report.held(code, {5}), {4, 5})
+        self.assertEqual(self.report.held(code, {7}), {7})
+        self.assertEqual(self.report.held(["(  # not Python"], {1}), {1})
 
     def test_never_judged(self) -> None:
         judged = "random changes, compared with the reference evaluator (docs, 15 changes)"
@@ -15298,10 +15579,10 @@ class CoverageReport(unittest.TestCase):
         for text in steps:
             label = text.split('"', 1)[0]
             body = re.split(r"\n\s*record ", text, maxsplit=1)[0]  # the step's own commands
-            runs = re.search(r"tests/(?:difftest|genpolicy|around)\.py", body) is not None
+            runs = re.search(r"tests/(?:(?:difftest|genpolicy|around|small)\.py|hand_answers\.sh)", body) is not None
             compares += runs
             self.assertEqual(bool(self.report.ORACLE.search(label)), runs, label)
-        self.assertGreaterEqual(compares, 6)
+        self.assertGreaterEqual(compares, 8)
 
     def test_the_settings_name_the_code(self) -> None:
         settings = read("tests/coverage.ini")
@@ -15564,6 +15845,19 @@ END outer;"""
         self.assertEqual(
             (said[2], failed), ("  authz_gen: 3 4, and the floor has no line for it: add `authz_gen 3 4`", True)
         )
+        # a function of a floored schema whose source wasn't read: its branches would read as fewer, unjudged
+        said, failed = self.p.judge(
+            {"authz": (10, 20), "authz_gen": (3, 4)}, floor, "f.txt", {"authz.share(x integer)": "?", "app.f()": "?"}
+        )
+        self.assertEqual(
+            (said[1], failed),
+            (
+                "  authz.share(x integer): its source wasn't read here, so its branches aren't counted (the report's "
+                "Sources not read)",
+                True,
+            ),
+        )
+        self.assertNotIn("app.f()", "".join(said))
         # counted from the totals: a statement or branch never run, in the floor's schemas alone
         line = {"schema": "authz", "name": "share", "args": "x integer", "md5": "m", "ratios": self.RATIOS}
         with tempfile.TemporaryDirectory() as d:
@@ -15582,6 +15876,28 @@ END outer;"""
             t.statements[(kind, str(n))] = self.p.Seen("authz", kind, "RETURN", f"line {n}", made=1, called=called)
         t.branches[("authz.can", "b")] = self.p.Seen("authz", "authz.can", "ELSE", "b", made=1, called=False)
         self.assertEqual(self.p.never_run(t), {"authz": (2, 0), "authz_gen": (0, 0)})
+
+    def test_two_guards_of_the_same_words_are_two(self) -> None:
+        # the same message on other conditions (authz.login_key's two 'invalid API key'): one ran, the other not
+        source = "\nBEGIN\n  IF x = 1 THEN\n    RAISE EXCEPTION 'no';\n  ELSIF x = 2 THEN\n    RAISE EXCEPTION 'no';\n  END IF;\n  RETURN 1;\nEND "
+        profile = [
+            [1, None, 1, 2, "statement block", 2, 1],
+            [2, 1, 1, 3, "IF", 2, 1],
+            [3, 2, 1, 4, "RAISE", 1, 1],
+            [4, 2, 2, 6, "RAISE", 0, 0],
+            [5, 1, 2, 8, "RETURN", 1, 0],
+        ]
+        line = {"schema": "authz", "name": "share", "args": "x integer", "md5": "m2", "ratios": self.RATIOS}
+        with tempfile.TemporaryDirectory() as d:
+            self.p.save(
+                d,
+                "step",
+                "authz_a",
+                ["connected", json.dumps({**line, "source": source, "statements": profile}), "read"],
+            )
+            m = self.p.measured([d])
+        raises = [x for x in self.p.totals(m, self.kind).statements.values() if x.raise_]
+        self.assertEqual(sorted((x.under, x.ran) for x in raises), [("ELSIF x = 2 THEN", 0), ("IF x = 1 THEN", 1)])
 
     def test_a_raise_never_run_comes_first(self) -> None:
         profile = [[*r[:5], 0 if r[0] == 5 else r[5], 0] for r in self.PROFILE]
@@ -15844,31 +16160,26 @@ class Features(unittest.TestCase):
             features.problems([gone if x is f else x for x in features.FEATURES]),
         )
 
-    def test_a_feature_that_grants_outside_tier_one_is_named_on_the_page(self) -> None:
-        # what writes authz.shares, itself or through a call (lint only names signatures in strings)
+    def test_a_feature_that_grants_or_revokes_is_tier_one(self) -> None:
+        # what writes authz.shares or what a custom role gives, itself or through a call (lint only names signatures
+        # in strings)
         self.assertEqual(
             features.granting(),
             {"api.share", "api.unshare", "api.create_link", "api.revoke_link", "api.decide_request"}
-            | {"api.break_glass", "api.close_review"},
+            | {"api.break_glass", "api.close_review"}
+            | {"api.create_role", "api.set_role_permissions", "api.delete_role"},
         )
-        self.assertEqual(features.exceptions(), set())  # every one is in tier 1
-        # a granting feature put in tier 2 without the page saying so; one the page names; one it names wrongly
+        # a granting feature put in tier 2: refused, saying the page's rule
         lowered = [
-            dataclasses.replace(x, tier=2) if x.id in ("api.links", "api.reviews") else x for x in features.FEATURES
+            dataclasses.replace(x, tier=2) if x.id in ("api.links", "api.roles") else x for x in features.FEATURES
         ]
+        found = features.problems(lowered)
         self.assertIn(
-            "api.links: tier 2, and it grants or revokes access (api.create_link, api.revoke_link): make it tier 1, or "
-            f"name it on docs/how-it-is-checked.md where it says which features {features.EXCEPTIONS}",
-            features.problems(lowered),
-        )
-        with mock.patch.object(features, "exceptions", return_value={"api.reviews", "api.sharing"}):
-            found = features.problems(lowered)
-        self.assertFalse([p for p in found if p.startswith("api.reviews: tier 2")], found)
-        self.assertIn(
-            f"docs/how-it-is-checked.md names api.sharing among the features {features.EXCEPTIONS}, and it is no "
-            "feature of tier 2 or 3",
+            "api.links: tier 2, and it grants or revokes access (api.create_link, api.revoke_link): make it tier 1, as "
+            "docs/how-it-is-checked.md says every such feature is",
             found,
         )
+        self.assertTrue([p for p in found if p.startswith("api.roles: tier 2, and it grants or revokes access")], found)
 
     def test_the_surface_is_read_from_the_code(self) -> None:
         found = features.surface()
@@ -15877,6 +16188,8 @@ class Features(unittest.TestCase):
         self.assertIn("cli.migrate --one-phase", found["the command"])
         self.assertIn("cli.migrate --check", found["the command"])
         self.assertNotIn("cli.review --check", found["the command"])  # 'migrate --check' on review's lines
+        # a sub-package's own modules (rowstile.django.testing), not its __init__ alone
+        self.assertIn("sdk.py.django.testing.database_per_worker", set().union(*found.values()))
         self.assertIn("lsp.documentSymbol", found["the language server"])
         self.assertIn("studio.decide", found["Studio"])
         self.assertIn("sdk.ts.prisma.AuthzCalls", found["the TypeScript SDK"])
@@ -15978,8 +16291,8 @@ class ScannerSteps(unittest.TestCase):
 
 class FuzzParser(unittest.TestCase):
     """tests/fuzz_parser.py, each push's robustness check of the parser: it mutates every fixed policy of the suites,
-    the docs app with its named tests and the hand-answered policies, and puts in the language's words, as the
-    parser looks for them, not the forms it dropped."""
+    the docs app with its named tests, the hand-answered policies and every app's, and puts in the language's words,
+    as the parser looks for them, not the forms it dropped."""
 
     def test_it_starts_from_the_suites_policies(self) -> None:
         import fuzz_parser
@@ -15988,7 +16301,8 @@ class FuzzParser(unittest.TestCase):
         files = glob.glob(os.path.join(ROOT, "tests", "*.authz")) + glob.glob(
             os.path.join(ROOT, "tests", "hand", "*.authz")
         )
-        self.assertEqual(len(texts), len(files) + 3)  # (and the docs app with its named tests, the two example apps)
+        apps = sweep_plan.app_policies(os.path.dirname(ROOT))
+        self.assertEqual(len(texts), len(files) + 1 + len(apps))  # (and the docs app with its named tests, the apps)
         every = "\n".join(texts)
         # forms only a few of them have: named tests and their lines, scopes in a test, a principal type, dollar
         # quotes and E'' strings, a link table's where with this., cascade from
@@ -16205,7 +16519,6 @@ class Respelling(unittest.TestCase):
 
     def setUp(self) -> None:
         sys.path.insert(0, os.path.join(ROOT, "tests"))
-        import genpolicy
 
         self.g = genpolicy
 
@@ -16525,7 +16838,6 @@ class Worlds(unittest.TestCase):
         """Worlds where the app signs each user in with what they sent: an API key or a JWT, tried under the
         connection's settings, the refusal kept and the user then signed in as elsewhere."""
         import base64
-        import hashlib
         import hmac
         import time
 
@@ -16660,6 +16972,67 @@ class Worlds(unittest.TestCase):
                 f'ALTER DATABASE "d" SET search_path = {schema}, around_open, public;',
             )
 
+    def test_a_server_without_icu_runs_and_counts_the_same_worlds(self) -> None:
+        """Without ICU, a Turkish database is made with the C locale: world_of says so, and main asks it so for the
+        world it runs and for the pairs it counts (the ledger), alike."""
+        turkish = [seed for seed in range(1, 41) if self.a.world_of(seed)[1].database == "turkish"]
+        self.assertTrue(turkish)
+        for seed in turkish:
+            self.assertEqual(self.a.world_of(seed, icu=False)[1].database, "C")
+        text = read(os.path.join(ROOT, "tests", "around.py"))
+        main = text[text.index("\ndef main(") :]
+        self.assertEqual(main.count("world_of(seed, icu)"), 2)
+        self.assertNotIn('database="C"', main)
+
+    def test_a_change_excuses_only_the_shares_it_inserts(self) -> None:
+        """A share on no row is excused only if one of the change's own INSERTs names it (genpolicy's grant(), as
+        SHARE_INSERT reads it) and it was written since the change began: transaction ids compared modulo 2^32, as
+        Postgres compares them, whatever the epoch."""
+        inserts = 0
+        for seed in range(1, 30):
+            spec = self.g.make(seed)
+            gen = self.g.gen_class(spec, "p.authz", "s.sql")(random.Random(seed))
+            for _ in range(6):
+                sql = gen.grant(None)
+                if sql.startswith("INSERT INTO authz.shares"):
+                    inserts += 1
+                    self.assertEqual(len(self.a.SHARE_INSERT.findall(sql)), 1, sql)
+        self.assertGreater(inserts, 20)
+        epoch = 5 * 2**32
+        self.assertTrue(self.a.written_since(1000, epoch + 1000))
+        self.assertTrue(self.a.written_since(1001, epoch + 1000))
+        self.assertFalse(self.a.written_since(999, epoch + 1000))
+        self.assertTrue(self.a.written_since(3, epoch + 2**32 - 2))  # (the 32-bit id wrapped since)
+        self.assertFalse(self.a.written_since(2**32 - 3, epoch + 2**32 - 2))
+
+    def test_lint_is_asked_for_what_each_drift_gives(self) -> None:
+        """After a grant behind the policy's back, lint must report an error on what it was given on, saying who
+        holds what (a new error of another kind does not do)."""
+        said = {statement: self.a.granted(statement) for statement in self.a.grants("o")}
+        self.assertEqual(
+            said["GRANT UPDATE ON authz.settings TO app_user"], ("'authz.settings: '", "app_user holds UPDATE on it")
+        )
+        self.assertEqual(said["GRANT ALL ON authz.shares TO PUBLIC"], ("'authz.shares: '", "PUBLIC holds "))
+        self.assertEqual(said["GRANT USAGE ON SCHEMA authz_int TO o"], ("'authz_int: '", "o holds USAGE on it"))
+        self.assertEqual(
+            said["GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz TO o"], ("'authz.'", "o holds EXECUTE on it")
+        )
+        text = read(os.path.join(ROOT, "tests", "around.py"))
+        self.assertIn("may use it directly", text[text.index("\ndef drift(") : text.index("\ndef user_gone(")])
+
+
+class Interleavings(unittest.TestCase):
+    """interleave.py's options: a pair asked for by name is one of the chosen worlds' (else nothing would run, and
+    the run would say all passed)."""
+
+    def test_a_pair_no_world_has_is_refused(self) -> None:
+        for args in (["--pairs", "create-mvoe"], ["--worlds", "boxes", "--pairs", "share-delete"], ["--pairs", "move"]):
+            p = subprocess.run(
+                [sys.executable, os.path.join(ROOT, "tests", "interleave.py"), *args], capture_output=True, text=True
+            )
+            self.assertEqual(p.returncode, 2, (args, p.stderr))
+            self.assertIn("no pair", p.stderr)
+
 
 class GeneratedShapes(unittest.TestCase):
     """genpolicy's policies say now and then what no other draw does (also(), across(), perm_groups(), keys other than
@@ -16672,7 +17045,6 @@ class GeneratedShapes(unittest.TestCase):
 
     def setUp(self) -> None:
         sys.path.insert(0, os.path.join(ROOT, "tests"))
-        import genpolicy
 
         self.g = genpolicy
 
@@ -17255,6 +17627,64 @@ class ExampleOwners(unittest.TestCase):
                     self.assertRegex(url, rf"^postgresql://{owner}:{owner}@", (app, name))
 
 
+class HelpdeskTestScript(unittest.TestCase):
+    """examples/helpdesk/test.sh (its own containers, by docker run, not compose) takes its database, Electric and
+    their network down however the run ends, a step that stops it early too; KEEP=1 leaves the database."""
+
+    NAME = "rowstile-example-helpdesk"
+
+    def run_script(self, keep: str = "") -> tuple[int, list[str], str]:
+        """The script, copied into a tree of its own (its tools are the repository's node_modules: Prisma here
+        fails, so the run stops right after the database is made), with docker, npm and python3 that only say what
+        was asked of them: its exit status, docker's calls, what it printed."""
+        with tempfile.TemporaryDirectory() as d:
+            app = os.path.join(d, "examples", "helpdesk")
+            os.makedirs(os.path.join(app, "db"))
+            shutil.copy(os.path.join(os.path.dirname(ROOT), "examples", "helpdesk", "test.sh"), app)
+            with open(os.path.join(app, "db", "electric.sql"), "w", encoding="utf-8") as fh:
+                fh.write("")
+            tools, log = os.path.join(d, "tools"), os.path.join(d, "log")
+            os.makedirs(tools)
+            os.makedirs(os.path.join(d, "node_modules", ".bin"))
+            for path, body in (
+                (os.path.join(tools, "docker"), f'echo "docker $*" >> "{log}"'),
+                (os.path.join(tools, "npm"), ""),
+                (os.path.join(tools, "python3"), ""),
+                (os.path.join(tools, "sleep"), ""),
+                (os.path.join(d, "node_modules", ".bin", "prisma"), "exit 1"),
+            ):
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(f"#!/bin/sh\n{body}\n")
+                os.chmod(path, 0o755)
+            env = {**os.environ, "PATH": tools + os.pathsep + os.environ["PATH"], "KEEP": keep}
+            p = subprocess.run(
+                ["bash", os.path.join(app, "test.sh")], env=env, capture_output=True, text=True, timeout=60
+            )
+            with open(log, encoding="utf-8") as fh:
+                calls = fh.read().splitlines()
+        return p.returncode, calls, p.stdout + p.stderr
+
+    def test_a_run_that_stops_early_takes_its_containers_down(self) -> None:
+        rc, calls, out = self.run_script()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL  prisma migrate deploy", out)
+        self.assertTrue(any(c.startswith(f"docker run -d --name {self.NAME} ") for c in calls), calls)
+        self.assertEqual(
+            calls[-3:],
+            [
+                f"docker rm -f -v {self.NAME}-electric",
+                f"docker rm -f -v {self.NAME}",
+                f"docker network rm {self.NAME}-net",
+            ],
+            out,
+        )
+
+    def test_keep_leaves_the_database(self) -> None:
+        rc, calls, out = self.run_script(keep="1")
+        self.assertEqual((rc, calls[-1]), (1, f"docker rm -f -v {self.NAME}-electric"), out)
+        self.assertNotIn(f"docker network rm {self.NAME}-net", calls)
+
+
 class PublicSurface(unittest.TestCase):
     """examples/public_surface.py, which each example's check_public_surface.py runs: the app uses only rowstile's
     public surface. It reads every text file, matches names as Postgres reads them, and leaves alone only what
@@ -17425,7 +17855,7 @@ class PublicSurface(unittest.TestCase):
         self.assertEqual(self.found("signed in as the user (`authz.user_id`, authz.acting_user)", "README.md"), [])
 
     def test_the_examples_pass(self) -> None:
-        for app in ("filemanager", "messenger"):
+        for app in ("filemanager", "messenger", "helpdesk"):
             script = os.path.join(self.REPO, "examples", app, "check_public_surface.py")
             p = subprocess.run([sys.executable, script], capture_output=True, text=True, timeout=60)
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
@@ -18447,6 +18877,8 @@ class Delivery(unittest.TestCase):
                     self.assertIsNone(limit, f"{path}: {name}")
                 else:
                     self.assertIsNotNone(limit, f"{path}: {name}: timeout-minutes")
+                    # ten at least (CLAUDE.md): a short limit fails a slow but healthy run on a busy runner
+                    self.assertGreaterEqual(int(limit.group(1)) if limit else 0, 10, f"{path}: {name}: timeout-minutes")
         # a part's suites get more than ci.sh gives them: ci.sh stops them first, and says what was still running
         part = int(search(r"then LIMIT=(\d+); fi", read("ci.sh")).group(1))
         self.assertGreater(int(search(r"timeout-minutes: (\d+)", self.job("suites.yml", "suites")).group(1)) * 60, part)
@@ -18800,6 +19232,17 @@ class Delivery(unittest.TestCase):
             self.assertEqual(self.tag_check(d, "0.3.1", other)[:2], (1, refused.format("0.3.1", "0.3")))
             # by hand, a dry run anywhere
             self.assertEqual(self.tag_check(d, "0.3.0-dev", other, "workflow_dispatch")[::2], (0, "none"))
+
+    def test_the_go_module_gets_the_release_s_version(self) -> None:
+        # RELEASING.md, sdk/go/README.md: a release tags its own commit sdk/go/vX.Y.Z, once its GitHub release is made,
+        # and a dry run tags nothing
+        job = self.release_jobs()["go-tag"]
+        self.assertIn("    needs: [check, github-release]\n    if: needs.check.outputs.publish == 'public'\n", job)
+        self.assertIn("    permissions: {contents: write}\n", job)
+        self.assertIn('tag="sdk/go/v$VERSION"', job)
+        self.assertIn('-f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA"', job)
+        with open(os.path.join(self.REPO, "sdk", "go", "go.mod"), encoding="utf-8") as fh:
+            self.assertEqual(fh.readline(), "module github.com/rowstile/rowstile/sdk/go\n")
 
     def test_a_tag_is_published_once_every_suite_passed_on_it(self) -> None:
         # RELEASING.md: a release's commit, rebased onto main with main's next version after it, has no CI run of its
@@ -19425,12 +19868,100 @@ class Mutants(unittest.TestCase):
             {"id": "gc", "result": "MISSED"},
             {"id": "gd", "result": "not run"},
             {"id": "ge", "result": "scenario"},
+            {"id": "gf", "result": "compiler fails"},
+            {"id": "gg", "result": "same"},
+            {"id": "gh", "result": "unreached"},
+            {"id": "gi", "result": "a suite since taken out"},
+            {"id": "gj", "result": "error"},
         ]
+        ids = {"ga", "gb", "gc", "gd", "gf", "gg", "gh", "gi", "gj"}
         with tempfile.TemporaryDirectory() as d:
             sweep.write_jsonl(os.path.join(d, "results.jsonl"), rows)
-            got = sweep.carried_over(d, {"ga", "gb", "gc", "gd"}, {"gc": ("equivalent", "why"), "gb": ("lead", "")})
-        # a lead runs again (its check may be written by now); ge's line changed
-        self.assertEqual([r["id"] for r in got], ["ga", "gc"])
+            got = sweep.carried_over(d, ids, {"gc": ("equivalent", "why"), "gb": ("lead", "")})
+        # a lead runs again (its check may be written by now); ge's line changed. `same` and `unreached` are decided
+        # again: they hang on more than the line (a new app's policy, what the suites ran); so is a catch by a suite
+        # the sweep no longer has
+        self.assertEqual([r["id"] for r in got], ["ga", "gc", "gf"])
+        self.assertTrue(all(r["carried"] for r in got))
+
+    def test_every_apps_policy_is_compiled(self) -> None:
+        # the cheap phase's other outputs (and the parser fuzzer's seeds): every app's policy and its tests, found;
+        # a mutant that changes only an app's SQL is no `same`
+        found = set()
+        for top in ("examples", "integrations"):
+            for d, dirs, files in os.walk(os.path.join(self.REPO, top)):
+                dirs[:] = [x for x in dirs if x not in {"node_modules", ".venv", "dist", "vendor", "deps", "_build"}]
+                found |= {os.path.relpath(os.path.join(d, f), self.REPO) for f in files if f == "policy.authz"}
+        apps = sweep_plan.app_policies(self.REPO)
+        self.assertEqual(apps, sorted(found))
+        self.assertIn("integrations/laravel/database/policy.authz", apps)
+        import fuzz_parser
+
+        self.assertEqual([f"../{p}" for p in sweep_plan.APPS], list(fuzz_parser.APPS))
+        outputs = {(label, policy, tests) for label, policy, tests, _ in sweep_plan.other_outputs(self.REPO)}
+        for p in apps:
+            app = os.path.dirname(os.path.dirname(p))
+            self.assertIn((app, p, None), outputs)
+            for t in glob.glob(os.path.join(os.path.dirname(p), "tests", "*.authz"), root_dir=self.REPO):
+                self.assertIn((f"{app} tests {os.path.basename(t)}", p, t), outputs)
+        self.assertEqual(len({label for label, *_ in outputs}), len(outputs))
+
+    def calls_at(self, root: str, data: Mapping[str, object]) -> sweep_plan.Calls:
+        path = os.path.join(root, "calls.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        return sweep_plan.Calls.load(path, root)
+
+    def test_the_call_data_is_read_at_the_sweeps_commit(self) -> None:
+        # CI's coverage run may be at another commit than the sweep's: its lines are moved through git's diff, and
+        # those changed since are unknown (none taken as unreached); a commit the checkout lacks: nothing is known
+        git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "core", "authzlib")
+            os.makedirs(src)
+
+            def commit(text: str) -> str:
+                with open(os.path.join(src, "x.py"), "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                subprocess.run([*git, "-C", d, "add", "-A"], check=True, capture_output=True)
+                subprocess.run([*git, "-C", d, "commit", "-qm", "x"], check=True, capture_output=True)
+                return subprocess.run(
+                    ["git", "-C", d, "rev-parse", "HEAD"], capture_output=True, text=True
+                ).stdout.strip()
+
+            subprocess.run(["git", "init", "-q", d], check=True)
+            old = commit("".join(f"line {n}\n" for n in range(1, 11)))
+            # two lines in before line 3, line 6 changed, line 9 dropped
+            lines = [f"line {n}\n" for n in range(1, 11)]
+            lines[5] = "changed\n"
+            del lines[8]
+            commit("".join(lines[:2] + ["new\n", "new\n"] + lines[2:]))
+            data = {"source": "a run", "functions": {}, "lines": {"authzlib/x.py": {"cli": [[1, 10]]}}}
+            calls = self.calls_at(d, {**data, "commit": old})
+            self.assertEqual(calls.lines["authzlib/x.py"]["cli"], [[1, 2], [5, 7], [9, 11]])
+            self.assertEqual(calls.unknown["authzlib/x.py"], [[3, 4], [8, 8]])
+            self.assertEqual([calls.known("authzlib/x.py", n) for n in (2, 3, 8, 9)], [True, False, False, True])
+            self.assertIn("its lines moved to this checkout's, from", calls.source)
+            same = self.calls_at(d, {**data, "commit": "HEAD"})
+            self.assertEqual((same.lines["authzlib/x.py"]["cli"], same.unknown, same.source), ([[1, 10]], {}, "a run"))
+            for gone in ({**data, "commit": "0" * 40}, data):
+                lost = self.calls_at(d, gone)
+                self.assertEqual((lost.lines, lost.measured, lost.known("authzlib/x.py", 1)), ({}, False, False))
+                self.assertIn("not found in this checkout: no line taken as unreached", lost.source)
+        self.assertEqual([sweep_plan.moved([(3, 0, 4, 2), (6, 1, 8, 1)], n) for n in (3, 4, 6, 7)], [3, 6, 0, 9])
+
+    def test_no_line_the_call_data_cant_speak_for_is_unreached(self) -> None:
+        text = "def view(t: str) -> str:\n    return f'SELECT 1 WHERE {t} AND b'\n"
+        m = next(m for m in self.made(text) if m.op == "sql AND->OR")
+        base = sweep_plan.Base(self.REPO, sweep_plan.Group("", {}, {}), [])
+        known = sweep_plan.Calls({}, {}, "test")
+        for calls, kind in (
+            (known, "unreached"),
+            (sweep_plan.Calls({}, {}, "test", unknown={"authzlib/view.py": [[2, 2]]}), "python"),
+            (sweep_plan.Calls.load(None), "python"),
+        ):
+            got = sweep_plan.Planner(base, calls).classify(m, text, "core")
+            self.assertEqual((got.kind, got.selected), (kind, []), calls)
 
     def test_the_survivors_file(self) -> None:
         listed = sweep.read_survivors(sweep.SURVIVORS)
@@ -19624,6 +20155,9 @@ class Mutants(unittest.TestCase):
         self.assertLess(timeout, 360)  # GitHub's runners stop a job at six hours
         self.assertLessEqual(budget + 60, timeout)  # the mutant in flight when the budget is used up still ends
         self.assertEqual(set(re.findall(r"sweep\.py (\w+)", text)), {"calls", "prepare", "run", "collect"})
+        # the call data: a green run of this very commit, else main's latest, and the commit it was measured at
+        self.assertIn('for pick in "--commit=$GITHUB_SHA" --branch=main; do', text)
+        self.assertIn('--commit "$sha" --out .mutants/prepared/calls.json', text)
         # the next run resumes from what collect keeps: every run's results, but a run that didn't carry the latest
         # ones (resume: none or a run id; a run of every mutant still runs 30 a shard) keeps them under another name
         self.assertIn("-n mutants-results ", text)
@@ -19912,6 +20446,16 @@ class Executable(unittest.TestCase):
                         missing.append(path)
         self.assertEqual(missing, [])
 
+    def test_every_file_is_lf_in_the_index(self) -> None:
+        # .gitattributes: everything LF, a batch file too (CRLF only when checked out): none CRLF in git itself
+        try:
+            out = subprocess.run(
+                ["git", "ls-files", "--eol"], cwd=self.REPO, capture_output=True, text=True, check=True
+            ).stdout
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("not a git checkout")
+        self.assertEqual([line.split("\t", 1)[1] for line in out.splitlines() if "i/crlf" in line.split()[0]], [])
+
 
 class Private(unittest.TestCase):
     """Decisions and plans are kept out of this repository: no file points at them, so no reader meets a link
@@ -20069,7 +20613,7 @@ class Version(unittest.TestCase):
         import shutil
 
         with tempfile.TemporaryDirectory() as d:
-            for path, _ in [*version.places(), *version.places(version.EXAMPLES)]:
+            for path, _ in [*version.places(), *version.places(version.EXAMPLES), *version.places(version.GEMS)]:
                 os.makedirs(os.path.dirname(os.path.join(d, path)), exist_ok=True)
                 shutil.copyfile(os.path.join(self.REPO, path), os.path.join(d, path))
             with mock.patch.object(version, "ROOT", d):
@@ -20078,6 +20622,9 @@ class Version(unittest.TestCase):
                 self.assertEqual(version.found(version.EXAMPLES), shown)
                 version.set_version("9.0.0-rc.1")
                 self.assertEqual(list(version.found(version.EXAMPLES)), ["9.0.0-rc.1"])
+                # the Rails app's lock file, as RubyGems spells the gem's version
+                with open(os.path.join(d, "integrations", "rails", "Gemfile.lock"), encoding="utf-8") as fh:
+                    self.assertEqual(re.findall(r"^ +rowstile \(([^)]+)\)$", fh.read(), re.M), ["9.0.0.pre.rc.1"] * 2)
 
     def test_npms_latest_follows_next_until_a_release(self) -> None:
         # while only alphas and candidates are published, a plain `npm i rowstile` gets the newest: each release
@@ -20162,6 +20709,28 @@ class Version(unittest.TestCase):
             )
         )
         self.assertEqual(len(slept), 3)
+        # a read the registry doesn't answer (a timeout, E429) is asked again, not the end of the run
+        flaky: list[tuple[dict[str, str], list[str]] | Exception] = [
+            npm_latest.Unread("npm view rowstile: npm error code ETIMEDOUT"),
+            stale,
+            fresh,
+        ]
+        slept.clear()
+
+        def reading(_: str) -> tuple[dict[str, str], list[str]]:
+            got = flaky.pop(0)
+            if isinstance(got, Exception):
+                raise got
+            return got
+
+        told = io.StringIO()  # what the release's log says of it, kept out of the tests' own output
+        with contextlib.redirect_stdout(told):
+            found = npm_latest.shown(
+                "rowstile", "0.1.0-alpha.7", 100.0, reading, slept.append, lambda: float(sum(slept))
+            )
+        self.assertEqual(found, fresh)
+        self.assertEqual(len(slept), 2)
+        self.assertEqual(told.getvalue(), "rowstile: npm view rowstile: npm error code ETIMEDOUT (asked again)\n")
         # a package npm doesn't have yet (its first version goes out by hand) is passed over, not a failure: the
         # others still move, and the npm job publishes the rest without it unless a token is set
         said = subprocess.CompletedProcess

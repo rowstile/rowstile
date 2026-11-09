@@ -222,20 +222,40 @@ final class Rowstile
     /**
      * Throws ConnectionProblem on a connection that skips row-level security (a superuser, BYPASSRLS, the tables'
      * owner): call it before the app serves, and refuse to start on it. As nobody: there is no request yet to ask who
-     * is signed in.
+     * is signed in. Returns what is worth saying but no reason to refuse: the server's messages in a language other
+     * than English (lc_messages), in which PHP can't tell Postgres's own row-level security refusal from another
+     * error, since pdo_pgsql gives its text alone.
+     *
+     * @return list<string>
      */
-    public static function check(Querier|PDO $db): void
+    public static function check(Querier|PDO $db): array
     {
         $rows = $db instanceof PDO
             ? self::transactionAs($db, null, static fn (PDO $pdo): array => (new PdoQuerier($pdo))->select(self::CHECK))
             : self::actingAs(null, static fn (): array => $db->select(self::CHECK));
-        $problems = array_map(static fn (array $row): string => self::text($row['problem'] ?? null), $rows);
+        $problems = [];
+        $language = '';
+        foreach ($rows as $row) {
+            $language = self::text($row['language'] ?? null);
+            if (($row['problem'] ?? null) !== null) {
+                $problems[] = self::text($row['problem']);
+            }
+        }
         if ($problems !== []) {
             throw new ConnectionProblem($problems);
         }
+        // English (Windows says English_United States.1252), or none set (the server's environment's)
+        if (preg_match('/^((C|POSIX|en|English)([._@].*)?)?$/i', $language) === 1) {
+            return [];
+        }
+        return ["the server writes its messages in another language (lc_messages is {$language}): Postgres's own "
+            ."row-level security refusals stay database errors in PHP, not Refused. Set the app role's to English, as a "
+            ."superuser: ALTER ROLE <the app role> SET lc_messages = 'C'"];
     }
 
-    private const CHECK = "SELECT problem FROM authz.connection_check() WHERE severity = 'error'";
+    // the errors authz.connection_check() finds, and the language the server writes in (one row when there are none)
+    private const CHECK = "SELECT c.problem, current_setting('lc_messages') AS language FROM (SELECT 1) one "
+        ."LEFT JOIN authz.connection_check() c ON c.severity = 'error'";
 
     /**
      * The error as rowstile's when it is one: a refusal Refused, the not-signed-in error (AZ701) NotSignedIn, a call
@@ -272,9 +292,16 @@ final class Rowstile
         if ($said === null || $said->sqlstate !== '42501') {
             return null;
         }
-        $generic = preg_match('/^(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/', $said->message, $m) === 1;
+        // Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. It names the policy too
+        // when it is a restrictive one (the app's own: rowstile makes none), quoting the name as it is
+        $generic = preg_match('/^(new|target) row violates row-level security policy (".*?" )?(\(USING expression\) )?for table "([^"]+)"/', $said->message, $m) === 1;
+        if ($generic && $m[2] !== '') {
+            // a restrictive policy of the app's own (authz.lint() reports it): its words name it, and say no more. An
+            // upsert's is about the update of the row there already
+            return new Refused($said->message, $m[4], $m[1] === 'new' && $m[3] !== '' ? 'update' : null, [], 'AZ709', $error);
+        }
         if ($generic) {
-            return self::genericRefusal($said->message, $m[1], $m[2] !== '', $m[3], $error);
+            return self::genericRefusal($said->message, $m[1], $m[3] !== '', $m[4], $error);
         }
         $code = $said->code();
         if ($code === null || isset(CallError::CODES[$code])) { // sign in first (AZ714) is a 42501 too, but no refusal

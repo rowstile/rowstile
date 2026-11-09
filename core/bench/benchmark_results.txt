@@ -1,57 +1,56 @@
-# Measured on 2026-10-03 by the build of that day, before the project took the name rowstile (rowfence
-# 0.1.0-dev), on the laptop it was developed on then, which is out of use; not measured again since.
-# Query 4's two rows ran the same call: authz.can reads the policy whoever calls it, so its "no RLS" row measured
-# nothing more. benchmark.sql now runs it once, with the compiled policy.
-# bench/benchmark.sql on PostgreSQL 16 (2026-10-03), the dev laptop with nothing else running: 16 CPUs, 128 MB of
-# shared buffers, as the tables' owner (not a superuser). 200,000 files, 10,000 folders, 2,000 users, 200 teams nested
-# several levels deep (and 20,000 more in chains for the nested teams), 500 folders also linked into a second folder.
+# Measured on 2026-11-09 on one of GitHub's runners (ubuntu-latest: 4 CPUs, AMD EPYC 9V45), by
+# core/bench/benchmark.sh (`gh workflow run nightly.yml -f only=speed`), the build of main at 30ac69b4 (0.1.0-dev):
+# bench/benchmark.sql on PostgreSQL 16.15, 128 MB of shared buffers, as the tables' owner (not a superuser).
+# 200,000 files, 10,000 folders, 2,000 users, 200 teams nested several levels deep (and 20,000 more in chains for
+# the nested teams), 500 folders also linked into a second folder.
 # 'cached plan' = what prepared statements get. 'no RLS' = the same query as the table owner.
-# JIT off (SET jit = off; recommended: ALTER ROLE app_user SET jit = off). With JIT on, query 1 takes about 300 ms.
+# JIT off (SET jit = off; recommended: ALTER ROLE app_user SET jit = off).
+# A runner is a shared machine: a run there is slower than the laptop's of 2026-10-03 (16 CPUs, nothing else
+# running), whose figures this file held before.
 
 == Applying the policy and writes (ms) ==
-                                   what                                    |  ms   
----------------------------------------------------------------------------+-------
- apply docs.sql (incl. backfill of 10,000 folders)                         | 942.5
- move a folder holding 3441 subfolders                                     | 294.6
- change owner_id of 10,000 files, with the audit trail and the change feed | 291.8
- ... the same without them                                                 | 137.3
+                                   what                                    |   ms   
+---------------------------------------------------------------------------+--------
+ apply docs.sql (incl. backfill of 10,000 folders)                         | 1480.9
+ move a folder holding 3441 subfolders                                     |  485.5
+ change owner_id of 10,000 files, with the audit trail and the change feed |  358.1
+ ... the same without them                                                 |  162.6
 (4 rows)
 
 == Reads through RLS (ms) ==
                 query                |     variant     | runs | median_ms | avg_ms | max_ms | avg_rows 
 -------------------------------------+-----------------+------+-----------+--------+--------+----------
- 1. list visible files (of 200,000)  | no RLS          |   25 |      5.41 |   5.42 |   6.39 |   200000
- 1. list visible files (of 200,000)  | compiled policy |   25 |     32.43 |  30.99 |  35.70 |    63836
+ 1. list visible files (of 200,000)  | no RLS          |   25 |      6.43 |   6.46 |   7.30 |   200000
+ 1. list visible files (of 200,000)  | compiled policy |   25 |     42.25 |  39.99 |  44.56 |    63836
  2b. open a folder (cached plan)     | no RLS          |  250 |      0.01 |   0.01 |   0.06 |       20
- 2b. open a folder (cached plan)     | compiled policy |  250 |      1.23 |   1.26 |   2.82 |        7
- 2. open a folder                    | no RLS          |  250 |      0.01 |   0.02 |   0.15 |       20
- 2. open a folder                    | compiled policy |  250 |      1.93 |   1.88 |   5.48 |        6
- 3b. open one file (cached plan)     | no RLS          | 1000 |      0.00 |   0.00 |   0.11 |        1
- 3b. open one file (cached plan)     | compiled policy | 1000 |      1.09 |   1.02 |   3.71 |        0
- 3. open one file                    | no RLS          | 1000 |      0.01 |   0.02 |   0.24 |        1
- 3. open one file                    | compiled policy | 1000 |      1.80 |   1.75 |   5.04 |        0
- 4. app check: authz.can(file, edit) | no RLS          | 1000 |      0.33 |   0.34 |   2.24 |        0
- 4. app check: authz.can(file, edit) | compiled policy | 1000 |      0.32 |   0.32 |   1.46 |        0
-(12 rows)
+ 2b. open a folder (cached plan)     | compiled policy |  250 |      1.30 |   1.28 |   1.95 |        7
+ 2. open a folder                    | no RLS          |  250 |      0.02 |   0.02 |   0.09 |       20
+ 2. open a folder                    | compiled policy |  250 |      2.05 |   2.01 |   5.13 |        6
+ 3b. open one file (cached plan)     | no RLS          | 1000 |      0.01 |   0.01 |   0.09 |        1
+ 3b. open one file (cached plan)     | compiled policy | 1000 |      1.18 |   1.02 |   2.15 |        0
+ 3. open one file                    | no RLS          | 1000 |      0.02 |   0.02 |   0.08 |        1
+ 3. open one file                    | compiled policy | 1000 |      1.92 |   1.80 |   5.00 |        0
+ 4. app check: authz.can(file, edit) | compiled policy | 1000 |      0.36 |   0.34 |   0.93 |        0
+(11 rows)
 
 == Nested teams: 20,000 more, in chains; a user in three bottom teams, folder 3 given to one top (ms) ==
     chains     |                what                | median_ms 
 ---------------+------------------------------------+-----------
- teams 1 deep  | authz.can on a folder it can't see |      0.46
- teams 10 deep | authz.can on a folder it can't see |      0.67
- teams 1 deep  | authz.can on the folder            |      0.16
+ teams 1 deep  | authz.can on a folder it can't see |      0.43
+ teams 10 deep | authz.can on a folder it can't see |      0.71
+ teams 1 deep  | authz.can on the folder            |      0.17
  teams 10 deep | authz.can on the folder            |      0.20
- teams 1 deep  | open the folder (its files)        |      1.45
- teams 10 deep | open the folder (its files)        |      1.74
+ teams 1 deep  | open the folder (its files)        |      1.44
+ teams 10 deep | open the folder (its files)        |      1.87
 (6 rows)
 
 == Per user, compiled policy (median ms; user 1 is an org admin) ==
  user_id | files_visible | list | open_folder | open_file | can  
 ---------+---------------+------+-------------+-----------+------
-       1 |        200000 | 23.6 |        0.97 |      0.31 | 0.12
-    1000 |         52582 | 33.4 |        1.15 |      1.03 | 0.28
-      11 |         32058 | 33.5 |        1.60 |      1.41 | 0.43
-     500 |         23211 | 30.1 |        1.24 |      1.13 | 0.32
-    1500 |         11331 | 32.7 |        1.28 |      1.15 | 0.34
+       1 |        200000 | 29.9 |        1.02 |      0.32 | 0.11
+    1000 |         52582 | 43.7 |        1.22 |      1.08 | 0.33
+      11 |         32058 | 43.1 |        1.74 |      1.59 | 0.49
+     500 |         23211 | 40.6 |        1.30 |      1.19 | 0.36
+    1500 |         11331 | 42.3 |        1.34 |      1.20 | 0.37
 (5 rows)
 

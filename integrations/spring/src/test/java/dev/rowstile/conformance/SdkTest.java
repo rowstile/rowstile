@@ -26,6 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -117,6 +118,34 @@ class SdkTest extends Conformance {
         // what tells them in any language: the function that raised each
         assertEquals(List.of("ExecWithCheckOptions", "ExecWithCheckOptions", "ExecWithCheckOptions"), refused.stream()
                 .map(r -> ((PSQLException) r.getCause()).getServerErrorMessage().getRoutine()).toList());
+    }
+
+    @Test
+    @DisplayName("A restrictive policy of the app's own refuses: Refused, in Postgres's words, which name the policy")
+    void restrictivePolicy() throws SQLException {
+        try (Connection owner = owner(); Statement st = owner.createStatement()) {
+            st.execute("CREATE POLICY short_notes ON app.notes AS RESTRICTIVE FOR UPDATE TO conf_app USING (true)"
+                    + " WITH CHECK (length(body) < 10)");
+            try {
+                DatabaseError e = assertThrows(DatabaseError.class, () -> as(3, c -> {
+                    try (Statement update = c.createStatement()) {
+                        return update.executeUpdate("UPDATE app.notes SET body = 'a long body' WHERE id = 4");
+                    }
+                }));
+                Refused tooLong = Errors.refusal(e).orElseThrow();
+                assertEquals(Arrays.asList("notes", null, List.of(),
+                        "new row violates row-level security policy \"short_notes\" for table \"notes\""),
+                        Arrays.asList(tooLong.table(), tooLong.command(), tooLong.why(), tooLong.getMessage()));
+            } finally {
+                st.execute("DROP POLICY IF EXISTS short_notes ON app.notes");
+            }
+        }
+        // a name with a quote in it, in an upsert's words: the update's; in a MERGE's: no command
+        String upsert = "new row violates row-level security policy \"a\" b\" (USING expression) for table \"notes\"";
+        String merge = "target row violates row-level security policy \"only_mine\" (USING expression) for table \"notes\"";
+        assertEquals(Arrays.asList(upsert, "notes", "update", merge, "notes", null), Stream.of(upsert, merge)
+                .map(words -> Errors.refusal(german(words, "ExecWithCheckOptions")).orElseThrow())
+                .flatMap(r -> Arrays.asList(r.getMessage(), r.table(), r.command()).stream()).toList());
     }
 
     @Test

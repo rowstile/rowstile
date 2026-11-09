@@ -1,15 +1,15 @@
 // The site's links without building it (pages.mjs): where a link to a file on GitHub goes when the site is built from
 // a tag, a heading's anchor, the links to a heading that isn't there, the Markdown copies' links, and the menus
 // against the pages.   node site/pages_test.mjs
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createMarkdownRenderer } from "vitepress";
 
 // what site.yml gives the build when a blog tag publishes onto a site tag (read when pages.mjs is imported)
 process.env.SITE_CODE = "site-v4";
 process.env.SITE_CONTENT = "blog-v2";
-const { NOTE, PAGES, POSTS, REPO, checkMenus, deadAnchors, inSitemap, menuLinks, pageTitle, rewriteLinks, siteLink, slug,
-  structured, url, withoutNotes } = await import("./pages.mjs");
+const { DESCRIPTIONS, NOTE, PAGES, POSTS, REPO, checkCopy, checkDescriptions, checkMenus, checkSitemap, deadAnchors, describe,
+  inSitemap, menuLinks, pageTitle, rewriteLinks, siteLink, slug, structured, url, withoutNotes } = await import("./pages.mjs");
 const { KEY, KEY_FILE, payload } = await import("./indexnow.mjs");
 
 let failed = 0;
@@ -45,6 +45,23 @@ for (const [label, source, href, want] of [
   const got = siteLink(source, href);
   check(`a link at a tag: ${label}`, got === want, got);
 }
+// a link to what isn't in the repository fails the build, and so does one out of it
+for (const [label, href, said] of [
+  ["a file that isn't there", "nowhere.md", "docs/x.md: the link nowhere.md points to docs/nowhere.md, which isn't in the repository"],
+  ["a folder that isn't there", "../core/nowhere/#top", "docs/x.md: the link ../core/nowhere/#top points to core/nowhere, which isn't in the repository"],
+  ["out of the repository", "../../etc/passwd", "docs/x.md: the link ../../etc/passwd points to ../etc/passwd, which isn't in the repository"],
+  ["from its root, a file that isn't there", "/etc/passwd", "docs/x.md: the link /etc/passwd points to etc/passwd, which isn't in the repository"],
+]) {
+  check(`refused, a link: ${label}`, refused(() => siteLink("docs/x.md", href)) === said, refused(() => siteLink("docs/x.md", href)));
+}
+
+// an image: the file itself (raw), not GitHub's page about it
+const RAW = "https://raw.githubusercontent.com/rowstile/rowstile";
+check("an image at a tag: the file itself", siteLink("examples/messenger/README.md", "docs/group.png", true) ===
+  `${RAW}/site-v4/examples/messenger/docs/group.png`, siteLink("examples/messenger/README.md", "docs/group.png", true));
+check("... a link to it stays GitHub's page", siteLink("examples/messenger/README.md", "docs/group.png") ===
+  `${GH}/blob/site-v4/examples/messenger/docs/group.png`);
+check("... an image elsewhere stays where it is", siteLink("README.md", "https://api.scorecard.dev/b", true) === "https://api.scorecard.dev/b");
 
 // headings' anchors as GitHub makes them, which the links are written for
 for (const [heading, want] of [
@@ -89,12 +106,13 @@ const md = await createMarkdownRenderer(REPO);
 /** @param {string} text */
 const parse = (text) => md.parse(text, {});
 /** @param {string} text */
-const rewrite = (text) => rewriteLinks(parse, "docs/x.md", text, (href) => `/to/${href}`);
+const rewrite = (text) => rewriteLinks(parse, "docs/x.md", text, (href, image) => `/to/${image ? "image:" : ""}${href}`);
 const text = [
   "# A page",
   "",
   "See [the pooler](operations.md#behind-a-pooler), [a title](a.md \"its title\") and [brackets](<b c.md>).",
   "![the mark](mark.svg) and <https://example.com> and https://example.org stay.",
+  "A badge: [![its [words]](badge.svg)](https://example.com/b), and \\![a link](not-an-image.md).",
   "Code isn't a link: `[x](not-a-link.md)`, nor ``a ` [y](tick.md)``.",
   "",
   "```sql",
@@ -114,7 +132,8 @@ const out = (() => {
   }
 })();
 check("a copy's links: rewritten, a title kept", out.includes("[the pooler](/to/operations.md#behind-a-pooler), " +
-  '[a title](/to/a.md "its title") and [brackets](/to/b c.md).') && out.includes("![the mark](/to/mark.svg)"), out);
+  '[a title](/to/a.md "its title") and [brackets](/to/b c.md).') && out.includes("![the mark](/to/image:mark.svg)") &&
+  out.includes("A badge: [![its [words]](/to/image:badge.svg)](/to/https://example.com/b), and \\![a link](/to/not-an-image.md)."), out);
 check("... what is code or HTML kept as it is", ["`[x](not-a-link.md)`", "``a ` [y](tick.md)``", "SELECT '[x](in-a-fence.md)';",
   "    [x](indented.md)", "<div>[x](in-html.md)</div>", "<https://example.com>"].every((s) => out.includes(s)), out);
 check("... and the rest of the file too", out.split("\n").length === text.split("\n").length && out.startsWith("# A page\n"), out);
@@ -150,6 +169,15 @@ const notes = Object.keys(PAGES).flatMap((source) => withoutNotes(readFileSync(j
   .filter((line) => NOTE.test(line)).map((line) => `${source}: ${line}`));
 check("... and no page's copy keeps one", notes.length === 0, notes.join("\n"));
 
+// every stack's page and every SDK's README is a page (each TypeScript and .NET package's own README isn't: the
+// SDK's says what each holds)
+const shouldBe = [
+  ...readdirSync(join(REPO, "docs", "stacks")).filter((f) => f.endsWith(".md")).map((f) => `docs/stacks/${f}`),
+  ...readdirSync(join(REPO, "sdk")).filter((d) => existsSync(join(REPO, "sdk", d, "README.md"))).map((d) => `sdk/${d}/README.md`),
+  "sdk/java/rowstile-kotlin/README.md",
+];
+check("every stack's page and every SDK's README is a page", shouldBe.every((f) => f in PAGES), shouldBe.filter((f) => !(f in PAGES)));
+
 // the menus against the pages: every page is in one, every link of one goes to a page
 const everyPage = Object.values(PAGES).filter((a) => a !== "index.md" && !a.startsWith("problems/")).map(url);
 const menus = [{ text: "Guide", link: "/getting-started" }, { text: "Play", link: "/playground/" },
@@ -161,6 +189,33 @@ check("refused: pages no menu lists", refused(() => checkMenus(without)) ===
   "site/.vitepress/config.mts: no menu lists /signed-urls, /stacks/: add each to the sidebar", refused(() => checkMenus(without)));
 check("refused: a menu's link to no page", refused(() => checkMenus([...menuLinks(menus), "/reference/nothing"])) ===
   "site/.vitepress/config.mts: a menu links to /reference/nothing, which is no page");
+
+// a sentence for every page, and only for pages
+check("descriptions: one for each page passes", refused(() => checkDescriptions(DESCRIPTIONS, PAGES)) === "");
+check("refused: a description of what isn't a page", refused(() => checkDescriptions({ ...DESCRIPTIONS, "gone.md": "x", "old/a.md": "y" }, PAGES)) ===
+  "site/pages.mjs: DESCRIPTIONS names what isn't a page: gone.md, old/a.md");
+check("refused: a page with no description", refused(() => describe("operations-new.md", "x")) ===
+  "operations-new.md: no description in site/pages.mjs (DESCRIPTIONS)");
+check("... an error page's and a recipe's are made from their titles", describe("errors/AZ999.md", "AZ999: x").startsWith("AZ999: x: ") &&
+  describe("cookbook/new.md", "New").startsWith("New: a tested recipe"));
+
+// the sitemap VitePress wrote: every page but an error code's, and none of those
+/** @param {string[]} paths */
+const sitemapOf = (paths) => `<urlset>${paths.map((p) => `<url><loc>https://rowstile.dev${p}</loc></url>`).join("")}</urlset>`;
+const somePages = ["/", "/operations", "/errors/", "/errors/AZ201", "/errors/AZ202"];
+check("sitemap: every page but the error codes' passes", refused(() => checkSitemap(sitemapOf(["/", "/operations", "/errors/"]), somePages)) === "");
+check("... and the site's own pages", refused(() => checkSitemap(sitemapOf(Object.values(PAGES).map(url).filter(inSitemap)))) === "");
+check("refused: a sitemap without a page", refused(() => checkSitemap(sitemapOf(["/", "/errors/"]), somePages)) ===
+  "sitemap.xml doesn't list /operations");
+check("refused: a sitemap with an error code's page", refused(() => checkSitemap(sitemapOf(["/", "/operations", "/errors/", "/errors/AZ202"]),
+  somePages)) === "sitemap.xml lists what it leaves out: /errors/AZ202");
+check("refused: no page left out", refused(() => checkSitemap(sitemapOf(["/", "/operations"]), ["/", "/operations"])) ===
+  "inSitemap leaves out no page: the error codes' are");
+
+// a copy keeps no note: one written so that withoutNotes can't take it out fails the build
+check("a copy without notes passes", refused(() => checkCopy("docs/x.md", withoutNotes(noted))) === "");
+check("refused: a copy that keeps a note", refused(() => checkCopy("docs/x.md", withoutNotes('A promise. <!-- checked: tests/x.sh "a > b" -->\n'))) ===
+  'docs/x.md: its Markdown copy keeps a note: A promise. <!-- checked: tests/x.sh "a > b" -->');
 
 // a page's title says what rowstile is after its own words, once; the home page says it in one title
 check("title: the home page's, alone", same(pageTitle("index.md", "rowstile"),
@@ -197,10 +252,16 @@ check("IndexNow: the key is what it accepts (8 to 128 of a-z, A-Z, 0-9, -)", /^[
 
 // site.yml gives the build the tags it is built from (else its links go to main), and builds only what deploys
 const workflow = readFileSync(join(REPO, ".github", "workflows", "site.yml"), "utf8");
-check("site.yml builds with the tags source.mjs named", /- if: steps\.from\.outputs\.deploy == 'true'\n\s+env:\n\s+SITE_CODE: \$\{\{ steps\.from\.outputs\.code \}\}\n\s+SITE_CONTENT: \$\{\{ steps\.from\.outputs\.content \}\}\n\s+run: [^\n]*node build\.mjs/.test(workflow));
+check("site.yml builds with the tags source.mjs named", /- if: steps\.from\.outputs\.deploy == 'true'\n\s+env:\n\s+SITE_CODE: \$\{\{ steps\.from\.outputs\.code \}\}\n\s+SITE_CONTENT: \$\{\{ steps\.from\.outputs\.content \}\}\n\s+SITE_PINNED: \$\{\{ steps\.from\.outputs\.pinned \}\}\n\s+run: [^\n]*node build\.mjs/.test(workflow));
 
-check("site.yml sends IndexNow after the deploy, never failing it",
-  /\n  indexnow:\n    needs: deploy\n[\s\S]*- run: node site\/indexnow\.mjs\n\s+continue-on-error: true\n/.test(workflow));
+check("build.mjs writes what the site shows, which the next run reads (source.mjs)",
+  readFileSync(join(REPO, "site", "build.mjs"), "utf8").includes("writeFileSync(join(DIST, DEPLOYED), deployed(process.env));"));
+check("site.yml says why a tag deploys nothing, or deploys the newest site in its place",
+  /- if: steps\.from\.outputs\.why != ''\n\s+env:\n\s+WHY: \$\{\{ steps\.from\.outputs\.why \}\}\n\s+run: echo "::notice::\$GIVEN \(\$WHY\)"\n/.test(workflow));
+
+check("site.yml sends IndexNow after the deploy, the sitemap it built, never failing it",
+  /\n  indexnow:\n    needs: deploy\n[\s\S]*with: \{name: sitemap, path: "\$\{\{ runner\.temp \}\}\/sitemap"\}\n\s+- run: node site\/indexnow\.mjs "\$RUNNER_TEMP\/sitemap\/sitemap\.xml"\n\s+continue-on-error: true\n/.test(workflow) &&
+  /- if: steps\.from\.outputs\.deploy == 'true'\n\s+uses: actions\/upload-artifact@\w+ +# v[\d.]+\n\s+with: \{name: sitemap, path: site\/dist\/sitemap\.xml, retention-days: 1\}\n/.test(workflow));
 
 console.log(failed ? `pages: ${failed} failed` : "pages: all passed");
 process.exit(failed ? 1 : 0);

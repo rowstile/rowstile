@@ -13,6 +13,7 @@ robustness and clear errors, not an attack surface.
 """
 
 import argparse
+import glob
 import os
 import random
 import re
@@ -27,11 +28,11 @@ from authzlib.parse import PolicyError, Span, parse_policy  # noqa: E402
 
 # the policies mutated: every fixed policy of the suites, the docs app with its named tests, the hand-answered
 # policies (tests/hand/: tests, principals, caveats, masks, column rules, a link table's where with this., ...) and
-# the example apps' (cascade from, services)
+# every app's, found (the examples' and the conformance apps': cascade from, services, the sync index, ...)
 FIXED = "tests"
 HAND = "tests/hand"
 DOCS = ("example/docs.authz", "example/docs.test.authz")  # one policy: the second is the first's named tests
-APPS = ("../examples/filemanager/db/policy.authz", "../examples/messenger/db/policy.authz")
+APPS = ("../examples/*/db/policy.authz", "../integrations/*/db/policy.authz", "../integrations/*/database/policy.authz")
 
 
 def seeds(root: str) -> list[str]:
@@ -43,7 +44,8 @@ def seeds(root: str) -> list[str]:
 
     found = [f"{FIXED}/{f}" for f in os.listdir(os.path.join(root, FIXED)) if f.endswith(".authz")]
     found += [f"{HAND}/{f}" for f in os.listdir(os.path.join(root, HAND)) if f.endswith(".authz")]
-    return ["\n".join(read(p) for p in DOCS), *(read(p) for p in [*sorted(found), *APPS])]
+    apps = sorted(p for pattern in APPS for p in glob.glob(pattern, root_dir=root))
+    return ["\n".join(read(p) for p in DOCS), *(read(p) for p in [*sorted(found), *apps])]
 
 
 # the odd tokens put in: marks, odd characters, and every word of the language, as the parser names them (its lists,
@@ -122,6 +124,9 @@ def within(span: Span, lines: list[str], line: int) -> bool:
     )
 
 
+REFUSAL = re.compile(r"(?:\S+ )?line (\d+): .* \[AZ\d{3}\]$", re.S)
+
+
 def check(text: str) -> tuple[str, bool]:
     """Parse and compile a policy: what is wrong with how it went ("" when nothing), and whether it was refused.
     fuzz_coverage.py holds its inputs to this rule too."""
@@ -129,12 +134,13 @@ def check(text: str) -> tuple[str, bool]:
         Compiler(parse_policy(text, files={})).compile("fuzz")
         return "", False
     except PolicyError as e:
-        if not re.match(r"(line )?\d+|[^:]+:\d+", str(e)):
-            return f"refused without a line number: {e}", True
-        line = re.match(r"line (\d+):", str(e))
-        if line and not 0 < int(line.group(1)) <= len(text.split("\n")):  # rowstile dev shows that line
+        # as every refusal says it: its place (`line N:`, or `<file> line N:` for an included file's), and its code
+        line = REFUSAL.match(str(e))
+        if not line:
+            return f"refused without a line number, or without its code: {e}", True
+        if not 0 < int(line.group(1)) <= len(text.split("\n")):  # rowstile dev shows that line
             return f"refused at a line the policy doesn't have: {e}", True
-        if e.span and not within(e.span, text.removeprefix("\ufeff").split("\n"), int(line.group(1)) if line else 1):
+        if e.span and not within(e.span, text.removeprefix("\ufeff").split("\n"), int(line.group(1))):
             return f"refused about words that aren't in its text, {e.span}: {e}", True
         return "", True
     except Exception:

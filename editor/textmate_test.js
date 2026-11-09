@@ -23,7 +23,13 @@ const SQL_GRAMMAR = {
 
 /** @returns {Promise<string>} */
 async function sqlGrammar() {
-  const response = await fetch(SQL_GRAMMAR.url);
+  // GitHub answers 429 now and then to a runner it has had many requests from, and a 5xx some days: asked again
+  // after 5, 10, 20 and 40 seconds before the test fails
+  let response = await fetch(SQL_GRAMMAR.url);
+  for (let wait = 5; (response.status === 429 || response.status >= 500) && wait <= 40; wait *= 2) {
+    await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+    response = await fetch(SQL_GRAMMAR.url);
+  }
   if (!response.ok) throw new Error(`VS Code's SQL grammar: ${response.status} from ${SQL_GRAMMAR.url}`);
   const text = await response.text();
   if (crypto.createHash("sha256").update(text).digest("hex") !== SQL_GRAMMAR.sha256) {

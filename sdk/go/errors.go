@@ -101,9 +101,10 @@ func ErrorCode(err error) string {
 var callStatus = map[string]int{"AZ703": 401, "AZ708": 404, "AZ710": 400, "AZ713": 409, "AZ714": 401}
 
 // Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
-// without its schema
+// without its schema; it names the policy too when it is a restrictive one (the app's own: rowstile makes none),
+// quoting the name as it is
 var rlsGeneric = regexp.MustCompile(
-	`^(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"`)
+	`^(new|target) row violates row-level security policy (".*?" )?(\(USING expression\) )?for table "([^"]+)"`)
 
 // the function in Postgres that raises those refusals (the error's Routine): what tells one in another language
 const rowCheck = "ExecWithCheckOptions"
@@ -120,12 +121,18 @@ func refusal(err error, pg *pgconn.PgError) *Refused {
 	}
 	code := ErrorCode(pg)
 	if g := rlsGeneric.FindStringSubmatch(pg.Message); g != nil {
-		table := g[3] // Postgres sets no field for it
+		table := g[4] // Postgres sets no field for it
 		switch {
+		case g[2] != "": // a restrictive policy of the app's own (authz.lint() reports it): its words, and no more
+			command := "" // an upsert's is about the update of the row there already
+			if g[1] == "new" && g[3] != "" {
+				command = "update"
+			}
+			return &Refused{Message: pg.Message, Table: table, Command: command, Code: "AZ709", Why: []string{}, Err: err}
 		case g[1] == "target": // MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
 			return &Refused{Message: pg.Message + ": MERGE matched a row the update or delete rule doesn't let this " +
 				"user change", Table: table, Code: "AZ709", Err: err}
-		case g[2] != "": // an upsert whose existing row this user may not update, or not see
+		case g[3] != "": // an upsert whose existing row this user may not update, or not see
 			return &Refused{Message: pg.Message + ": the row is there already, and the update rule (or the select " +
 				"rule) doesn't let this user change it (ON CONFLICT DO UPDATE)", Table: table, Command: "update",
 				Code: "AZ709", Err: err}

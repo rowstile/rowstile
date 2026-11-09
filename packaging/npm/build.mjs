@@ -232,7 +232,8 @@ function platform(key) {
   write(join(dir, "README.md"), `# @rowstile/cli-${key}\n\nThe Python that the \`rowstile\` command runs on, for ${key}: ` +
     `CPython ${PYTHON} from python-build-standalone (${RELEASE}), without the parts the command never uses. ` +
     "Installed by `rowstile` as an optional dependency; not for use on its own.\n\n" +
-    "Python's licence is `python/lib/python3.13/LICENSE.txt` (`python/LICENSE.txt` on Windows); the licences of the " +
+    `Python's licence is \`python/lib/python${PYTHON.split(".").slice(0, 2).join(".")}/LICENSE.txt\` ` +
+    "(`python/LICENSE.txt` on Windows); the licences of the " +
     "libraries built into it (OpenSSL, SQLite, zlib, bzip2, xz, libffi and others) are in `python/licenses/`.\n");
   console.log(`built @rowstile/cli-${key} (${(size(dir) / 1e6).toFixed(1)} MB unpacked)`);
 }

@@ -7,9 +7,9 @@ kind says what comes of it:
   changed function are selected (the call data: CI's coverage run, `functions.tsv`); a changed view, trigger or
   policy counts by the functions it names; a suite whose calls the data misses, by the policy it applies
   (POLICY_APPLIED).
-- `other`: only another output changes: the cookbook's policies and tests, the four apps', docs.test.authz, the
-  docs app's diagram, clients and diffs, or a migration tests/migrate_test.py checks. The suites that use it and
-  those that ran its lines are selected.
+- `other`: only another output changes: the cookbook's policies and tests, every app's with its tests (examples/,
+  integrations/), docs.test.authz, the docs app's diagram, clients and diffs, or a migration tests/migrate_test.py
+  checks. The suites that use it and those that ran its lines are selected.
 - `python`: no compile runs it (the command's own code); the suites whose Python ran its lines are selected
   (coverage.py's contexts, one per step).
 - `same`: the compiler runs it and no output of any policy in the repository changes: equivalent for all of them
@@ -22,6 +22,7 @@ The selected suites run first, then every other one, each group most catches per
 from __future__ import annotations
 
 import concurrent.futures
+import glob
 import importlib.util
 import json
 import os
@@ -240,23 +241,61 @@ def to_ranges(lines: set[int]) -> list[list[int]]:
 
 @dataclass
 class Calls:
-    """Which suites called each of rowstile's functions, and ran each line of authzlib and cli."""
+    """Which suites called each of rowstile's functions, and ran each line of authzlib and cli, in this checkout's
+    line numbers. `unknown`: the lines the data can't speak for (changed since the commit it was measured at), and
+    `measured` False: none it can (no data, or its commit isn't in this checkout). No line of those is `unreached`."""
 
     functions: dict[str, set[str]]
     lines: dict[str, dict[str, list[list[int]]]]
     source: str
+    unknown: dict[str, list[list[int]]] = field(default_factory=dict)
+    measured: bool = True
 
     @staticmethod
-    def load(path: str | None) -> Calls:
+    def load(path: str | None, root: str | None = None) -> Calls:
+        """The call data (sweep.py calls); with root, its lines read at the checkout through `git diff` from the
+        commit the data names."""
         if not path or not os.path.exists(path):
-            return Calls({}, {}, "none: every suite in the order of the stats")
+            return Calls({}, {}, "none: every suite in the order of the stats", measured=False)
         with open(path, encoding="utf-8") as fh:
             d = json.load(fh)
         # a step no suite stands for (NOT_SWEPT, or one the data's run had and this checkout doesn't) selects nothing
         known = {s for s, _ in SUITES}
         functions = {k: set(v) & known for k, v in d["functions"].items()}
         lines = {f: {s: r for s, r in per.items() if s in known} for f, per in d["lines"].items()}
-        return Calls(functions, lines, d["source"])
+        calls = Calls(functions, lines, d["source"])
+        if root is not None:
+            calls.move_to(root, str(d.get("commit") or ""))
+        return calls
+
+    def move_to(self, root: str, commit: str) -> None:
+        """The lines as they are in the checkout at root: each moved by the changes since commit, those changed left
+        out (unknown). A commit git doesn't have there (or none named): nothing is known."""
+        p = subprocess.run(["git", "-C", root, "diff", "-U0", "--no-renames", commit, "--", "core/authzlib",
+                            "core/cli"], capture_output=True, text=True) if commit else None  # fmt: skip
+        if p is None or p.returncode != 0:
+            self.lines, self.measured = {}, False
+            self.source += f"; {'its commit, ' + commit[:7] + ',' if commit else 'no commit named,'} not found in this checkout: no line taken as unreached"  # fmt: skip
+            return
+        hunks: dict[str, list[tuple[int, int, int, int]]] = {}
+        old = new = ""
+        for row in p.stdout.splitlines():
+            if row.startswith("--- "):
+                old = row[len("--- a/core/") :] if row.startswith("--- a/core/") else ""
+            elif row.startswith("+++ "):
+                new = row[len("+++ b/core/") :] if row.startswith("+++ b/core/") else ""
+            else:
+                m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", row)
+                if m:
+                    a, b, c, n = int(m[1]), int(m[2] or 1), int(m[3]), int(m[4] or 1)
+                    hunks.setdefault(old, []).append((a, b, c, n))
+                    if new and n:
+                        self.unknown.setdefault(new, []).append([c, c + n - 1])
+        for f in set(self.lines) & set(hunks):
+            self.lines[f] = {s: to_ranges({x for x in (moved(hunks[f], n) for a, b in r for n in range(a, b + 1)) if x})
+                             for s, r in self.lines[f].items()}  # fmt: skip
+        if hunks:
+            self.source += f"; its lines moved to this checkout's, from {commit[:7]}"
 
     def ran(self, fname: str, line: int) -> set[str]:
         out = set()
@@ -265,9 +304,26 @@ class Calls:
                 out.add(suite)
         return out
 
+    def known(self, fname: str, line: int) -> bool:
+        """Whether the data says which suites ran this line (none, maybe), or can't."""
+        return self.measured and not any(a <= line <= b for a, b in self.unknown.get(fname, []))
 
-def refresh_calls(dirs: list[str], source: str, dest: str) -> list[str]:
-    """The call data from a run measured with coverage (core/ci.sh --coverage, or CI's coverage-pg16-<part>
+
+def moved(hunks: list[tuple[int, int, int, int]], line: int) -> int:
+    """Where an old line is after a diff's hunks (-a,b +c,n each, in order); 0: it changed."""
+    shift = 0
+    for a, b, _c, n in hunks:
+        start = a if b else a + 1  # -a,0 adds lines after line a
+        if line < start:
+            break
+        if line < start + b:
+            return 0
+        shift += n - b
+    return line + shift
+
+
+def refresh_calls(dirs: list[str], source: str, commit: str, dest: str) -> list[str]:
+    """The call data from a run measured with coverage at commit (core/ci.sh --coverage, or CI's coverage-pg16-<part>
     artifacts, a directory each): functions.tsv (each step's calls of rowstile's functions) and .coverage
     (coverage.py's data, one context per step). Says which steps it couldn't map to a suite."""
     functions: dict[str, set[str]] = {}
@@ -307,6 +363,7 @@ def refresh_calls(dirs: list[str], source: str, dest: str) -> list[str]:
         db.close()
     out = {
         "source": source,
+        "commit": commit,
         "functions": {k: sorted(v) for k, v in sorted(functions.items())},
         "lines": {f: {s: to_ranges(v) for s, v in sorted(per.items())} for f, per in sorted(lines.items())},
     }
@@ -437,14 +494,22 @@ def other_outputs(root: str) -> list[tuple[str, str, str | None, str]]:
             t = f"docs/cookbook/{name}/tests.authz"
             if os.path.isfile(os.path.join(root, t)):
                 out.append((f"cookbook {name} tests", p, t, "tests"))
-    for app in ("examples/filemanager", "examples/messenger", "integrations/fastapi", "integrations/nextjs"):
-        p = f"{app}/db/policy.authz"
-        if os.path.isfile(os.path.join(root, p)):
-            out.append((app, p, None, "sql"))
-            tdir = os.path.join(root, app, "db", "tests")
-            for t in sorted(os.listdir(tdir)) if os.path.isdir(tdir) else []:
-                out.append((f"{app} tests", p, f"{app}/db/tests/{t}", "tests"))
+    for p in app_policies(root):
+        app = os.path.dirname(os.path.dirname(p))
+        out.append((app, p, None, "sql"))
+        tdir = os.path.join(root, os.path.dirname(p), "tests")
+        for t in sorted(os.listdir(tdir)) if os.path.isdir(tdir) else []:
+            out.append((f"{app} tests {t}", p, f"{os.path.dirname(p)}/tests/{t}", "tests"))
     return out
+
+
+APPS = ("examples/*/db/policy.authz", "integrations/*/db/policy.authz", "integrations/*/database/policy.authz")
+
+
+def app_policies(root: str) -> list[str]:
+    """Every app's policy, from the checkout's root: the examples' and the conformance apps' (found, not listed: a
+    new app is in the sweep as soon as it is in the repository)."""
+    return sorted(p for pattern in APPS for p in glob.glob(pattern, root_dir=root))
 
 
 def migration_outputs(root: str) -> list[tuple[str, str, str | None, str]]:
@@ -627,6 +692,8 @@ class Planner:
         if not in_fixed and not in_groups:
             if ran:
                 return Plan("python", sorted(ran), [])
+            if not all(self.calls.known("authzlib/" + m.file, ln) for ln in lines):
+                return Plan("python", [], [], "no call data for its lines: every suite")
             return Plan("unreached", [], [], "no policy's compile and no suite ran its lines")
         if in_fixed:
             p = self.fixed(mutated_core, ran)

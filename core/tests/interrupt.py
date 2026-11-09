@@ -23,7 +23,8 @@ exact, the lock the first recorded; while the first runs, the app's reads never 
 writes, then the second again: what applying the new policy whole after the same writes leaves.
 
 Then the cuts the command doesn't make: the command itself (its compiled policy in one message), ended by the
-server while a statement of it waits for a lock another session holds, or stopped by statement_timeout there.
+server while a statement of it waits for a lock another session holds, or stopped by statement_timeout there; and
+`rowstile review --db`, its session ended by the server as soon as it signs in.
 
     PGHOST=... PGUSER=... python3 tests/interrupt.py            # a sample of the cuts (each push)
     PGHOST=... PGUSER=... python3 tests/interrupt.py --every    # after every statement (nightly)
@@ -599,7 +600,7 @@ def docs_cases() -> Docs:
     ms = database.migrations(NEW, {}, lock, "interrupt")
     assert len(ms) == 2, "the docs app's change builds a tree beside the one in use: two migrations"
 
-    def between(db: str) -> None:
+    def first_ran(db: str) -> None:  # (the database as it is between a migration's two)
         setup("apply", f.old)(db)
         got = migration(db, ms[0].sql, Plan())
         assert got.code == 0, f"setting up: the migration's first: {got.err}"
@@ -610,7 +611,7 @@ def docs_cases() -> Docs:
         Case("push", setup("push", f.old), run_cli("push", f.new)),
         Case("reapply --force", setup("apply", f.old, then=STALE), run_cli("reapply", "--force")),
         Case("a migration's first (builds beside)", setup("apply", f.old), run_sql(ms[0].sql), False, waits=False),
-        Case("a migration's second (swaps in)", between, run_sql(ms[1].sql), False),
+        Case("a migration's second (swaps in)", first_ran, run_sql(ms[1].sql), False),
     ]
     return Docs(f, ms, cases)
 

@@ -262,7 +262,7 @@ For one suite, start a container and run it inside:
   long as the container. Its `wal_level` is `logical`: `governance.sh` copies the audit trail to another database
   by a subscription (skipped, saying why, on a server without it). `difftest.py` asks a snapshot's questions in up to four sessions side by side
   (`DIFFTEST_SESSIONS=1`: one), each user's in one session, two users or more to a session.
-- Everything is LF (`.gitattributes`). New scripts are executable in git (`chmod +x`; `Executable` in
+- Everything is LF (`.gitattributes`), but Windows' batch files (`*.cmd`, CRLF when checked out). New scripts are executable in git (`chmod +x`; `Executable` in
   `unit_test.py` checks).
 - `tests/client_types.py` type-checks the generated TS client (CI's `javascript` job; needs `tsc`, no database);
   `tests/tools_test.py` runs the same check if `tsc` is there (skipped otherwise).
@@ -286,7 +286,8 @@ For one suite, start a container and run it inside:
   indirectly (a DO block) says what, `-- @object <kind> <key>`; a statement that makes nothing belongs to the
   object before it (or the one it names: `INSERT INTO`, `COMMENT ON`). Line numbers in messages at run time go
   through `line_sql`/`line_key` (the table `authz_gen.policy_lines`), never literally, so lines that move change
-  no function. `tests/migrate_test.py` checks that a migration leaves what applying whole leaves: a new kind of
+  no function: only that table's rows (an `objects` part), which a migration of their own writes again.
+  `tests/migrate_test.py` checks that a migration leaves what applying whole leaves (those rows too): a new kind of
   change gets a case there.
 - Runtime capabilities (what apps call) are `authz.*` functions; compiling, applying, previews and tests belong to
   `authzlib/database.py`, which the command calls.
