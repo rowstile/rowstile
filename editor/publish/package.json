@@ -5,5 +5,10 @@
   "devDependencies": {
     "@vscode/vsce": "3.9.2",
     "ovsx": "1.2.0"
+  },
+  "overrides": {
+    "@azure/msal-node": "^7.1.0",
+    "glob": "^14.0.4",
+    "minimatch": "^11.0.5"
   }
 }
