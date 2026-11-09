@@ -2,7 +2,7 @@ defmodule Rowstile.MixProject do
   use Mix.Project
 
   # the version rowstile's command and its other packages carry (packaging/version.py sets it)
-  @version "0.1.0-dev"
+  @version "0.1.0-beta.4"
   @source "https://github.com/rowstile/rowstile/tree/main/sdk/elixir"
 
   def project do
