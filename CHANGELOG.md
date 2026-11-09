@@ -9,6 +9,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+## 0.1.0-beta.4 (2026-11-09)
+
 ### Added
 
 - The Go module has versions: each release tags its commit `sdk/go/vX.Y.Z`, so `go get
@@ -154,8 +156,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `authz.ctx(key)` is NULL for a key the transaction didn't set, also on a connection where an earlier
   transaction set it (Postgres then reads it as `''`), and for a key set to `''`: a condition or a caveat that
   reads the request context answers the same on a pooled connection as on a new one.
+  ([GHSA-q9m7-hm63-2wmc](https://github.com/rowstile/rowstile/security/advisories/GHSA-q9m7-hm63-2wmc))
 - `rowstile lsp` sends, when it reads the table and column names, the password in `rowstile.toml`'s database
   string or `PGPASSWORD` in `.env` beside it, not the editor's own `PGPASSWORD`: the folder opened names the host.
+  ([GHSA-7pm7-3h78-3vv7](https://github.com/rowstile/rowstile/security/advisories/GHSA-7pm7-3h78-3vv7))
 - `rowstile lsp`: in a test file with a mistake, hover, go to definition and find references still answer on its
   other lines. An included file's outline is its own types, not the policy's. Find references reads a `--` inside
   a condition's string as text, and completion offers a condition's columns on its later lines too. After
@@ -167,6 +171,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The sync index, a preview: a PowerSync mirror (`mirrored`) is made again when the policy masks a column of its
   table since, so the masked column leaves the mirror and the sync engine's role can't read it; `authz.sync_verify()`
   says false, and `authz.lint()` reports an error, while a mirror holds a masked column.
+  ([GHSA-42v7-x658-h6vv](https://github.com/rowstile/rowstile/security/advisories/GHSA-42v7-x658-h6vv))
 - The sync index, a preview: `rowstile apply` changes a PowerSync mirror in place when its table's columns changed
   since (a column added, dropped, or of another type), so the `powersync` publication keeps it; before, apply said
   `unchanged`, and `rowstile reapply` made the mirror again out of the publication. `authz.lint()` warns of such a
@@ -188,6 +193,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `within`, `over` or `is`, is read as calling the app's code, as one written `app.f(id)` is: it runs with the
   policy's rights wherever it is checked, the change feed watches every column of its row, and the sync index
   refuses it (AZ806).
+  ([GHSA-m547-pwr6-2vfx](https://github.com/rowstile/rowstile/security/advisories/GHSA-m547-pwr6-2vfx))
 - A condition that limits inheritance can't read who asks or the session through `pg_has_role()`,
   `has_table_privilege()` and the other `has_*_privilege()`, `row_security_active()`, `inet_client_addr()` and
   the other `inet_*` functions, `current_schemas()`, `pg_my_temp_schema()`, `pg_trigger_depth()`, `nextval()`,
@@ -198,22 +204,27 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   without `--check`), `rowstile client`, `rowstile dev` and `rowstile migrate` refuse a path outside it, or a link
   out of it, and name it (exit 2). A monorepo's `../frontend/src/authz.ts` still works. `--out` and `--dir` are
   still the caller's.
+  ([GHSA-c27j-v832-rfwh](https://github.com/rowstile/rowstile/security/advisories/GHSA-c27j-v832-rfwh))
 - Each view the compiler makes for a relation or a permission has a name of its own: a relation's view of its
   sources other than columns is now `doc__r:ext`, apart from the view of an arrow to a permission named `ext`
   (`r.ext`, `doc__r__ext`), and an arrow followed to some of its types joins them with `__` (`__on_a__b`). The
   compiler fails rather than give one name to two views.
+  ([GHSA-8wgc-xvw3-m3gm](https://github.com/rowstile/rowstile/security/advisories/GHSA-8wgc-xvw3-m3gm))
 - The sync index, a preview: a share that starts or ends while a writer's transaction is open is worked out again
   by the first `authz.sync_tick()` after that transaction commits, even when a tick ran meanwhile. Before, the index
   kept what the writer worked out (a reader whose share had ended, or none for one that had begun) until something
   else changed that object. The index keeps each object's next share start or end in `authz_sync.due`; applying
   works the index out once again to fill it.
+  ([GHSA-r9mx-55hw-gf9q](https://github.com/rowstile/rowstile/security/advisories/GHSA-r9mx-55hw-gf9q))
 - A caveat that calls a function or an operator of the app's runs with the policy's rights wherever its share
   is checked, as a condition does: a select on the table and its masked view say what `authz.can` and
   `authz.list` say.
+  ([GHSA-wf6p-c49j-575h](https://github.com/rowstile/rowstile/security/advisories/GHSA-wf6p-c49j-575h))
 - The Elixir SDK: `Rowstile.transact` inside a transaction it didn't begin (a `Repo.transaction` of the app's, a
   Postgrex transaction's connection) raises a `RuntimeError` before anything is sent, as the Python and PHP SDKs
   do, instead of signing that transaction in. `Rowstile.acting_as` says, in its docs, that inside a `transact` the
   statements still run as that transaction's principal.
+  ([GHSA-x4hg-m454-w962](https://github.com/rowstile/rowstile/security/advisories/GHSA-x4hg-m454-w962))
 - The Go SDK: `rowstile.LoginKey(ctx, tx, key)` and `rowstile.LoginJWT` sign a request in with an API key or a
   token inside `Tx`, and `Tx` follows whom the transaction is signed in as from then on: a nested `Tx` for the
   key's principal is a savepoint, and anyone else's is refused. A login made with SQL inside `Tx` left `Tx`
@@ -224,6 +235,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   is refused for anyone else with an `InvalidOperationException`, before anything is sent. In a `TransactionScope`
   the connection takes part in, the context's work is refused, as that transaction's sign-in can't be known
   ([ASP.NET Core and EF Core](docs/stacks/aspnetcore.md)).
+  ([GHSA-x4hg-m454-w962](https://github.com/rowstile/rowstile/security/advisories/GHSA-x4hg-m454-w962))
 - Every SDK's test helper keeps the copy's name within Postgres's 63 bytes: a longer one is shortened to its first
   54 bytes (fewer, not to cut a character in two), `_`, and the first 8 hex digits of the SHA-256 of the whole name.
   Postgres cut it before, so a long name could stand for the original, which the helper then dropped, or for
@@ -242,27 +254,33 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   up once the transactions before them end. `authz.changes_position()` says where the feed is, for a reader that
   starts; a position no entry has gets AZ712, as one trimmed does. `authz.trim_changes()` removes the oldest
   entries in that order.
+  ([GHSA-v7cp-x44m-qfg2](https://github.com/rowstile/rowstile/security/advisories/GHSA-v7cp-x44m-qfg2))
 - `rowstile apply` computes an inheritance table again, instead of keeping it, when its table or link table has
   other tables under it than at the last apply: a partition attached, detached, made or dropped, or a table that
   inherits made or dropped. The rows such a change brings or takes away, which no trigger saw, are then in the
   table, and an apply of the same policy no longer answers `unchanged` after a partition is detached. The
   migrations `rowstile migrate` writes do the same for each inheritance table they keep.
+  ([GHSA-84mf-ch68-55hg](https://github.com/rowstile/rowstile/security/advisories/GHSA-84mf-ch68-55hg))
 - `authz.explain` for another user (its fourth argument) says only what the one asking may see: its walk stops at an
   object or a team they can't see, as it does when they ask for themselves, and a share's maker, end, start and
   caveat show only where they may list that object's shares (`authz.list_shares`). It says `shared with them` and
   `they are member there` of that user, not `you`.
+  ([GHSA-rq22-3c72-68vg](https://github.com/rowstile/rowstile/security/advisories/GHSA-rq22-3c72-68vg))
 - `authz.set_role_permissions` refuses to add a permission the caller doesn't hold on each object the role is given
   on, as `authz.share` refuses to give the role there (AZ705): "you cannot give role reviewer on folder 2: you do
   not hold archive", or "on a folder you cannot see" for one they can't see. Taking a permission out still needs
   only `manage_roles`, and a role given to nobody may still be changed freely. A share of the role made meanwhile
   waits for the change, and weighs what the role gives then.
+  ([GHSA-34jx-5ch8-mgqw](https://github.com/rowstile/rowstile/security/advisories/GHSA-34jx-5ch8-mgqw))
 - `authz.break_glass` refuses, naming the share (AZ717), when the caller holds a share of that relation that starts
   later or holds only while a caveat does, instead of replacing it with one that held from now, without the caveat,
   until that share's end. The emergency access ends when its time does; a share that lets the caller in now is left
   as it is.
+  ([GHSA-c9xj-8fcj-qvgr](https://github.com/rowstile/rowstile/security/advisories/GHSA-c9xj-8fcj-qvgr))
 - Each migration `rowstile migrate` writes turns row-level security on for the partitions of each table with
   rules, and the tables that inherit from one, as each apply does: a partition made or attached since is read
   and written through its table from then on, also when the migration doesn't change that table's rules.
+  ([GHSA-fgwq-mp37-w8mf](https://github.com/rowstile/rowstile/security/advisories/GHSA-fgwq-mp37-w8mf))
 - `TRUNCATE ONLY` on a type's table that other tables inherit from keeps the shares, API keys and pending access
   requests of the rows stored in those tables. Before, it removed them all, as emptying the whole table does.
 - `TRUNCATE` run directly on a partition of a watched table, or on a table that inherits from one, removes the
@@ -355,6 +373,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   no permissions). A permission made of conditions on the row, such as the deny the docs teach (`can hidden =
   {hidden} or parent.hidden`), is held by everyone on the rows it marks, and these answers named those rows.
   A table without a select rule answers as before.
+  ([GHSA-mfxg-m24m-gfmg](https://github.com/rowstile/rowstile/security/advisories/GHSA-mfxg-m24m-gfmg))
 - `rowstile diff` waits for an apply, push or remove running at once, as they wait for each other, instead of the
   two meeting in the middle and one stopping with "deadlock detected". The docs now say that it holds the app's
   tables locked while it runs: run it on a copy or a staging database, not on production at its busiest.
