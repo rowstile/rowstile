@@ -18,7 +18,7 @@
     "@rowstile/postgres": "*",
     "@rowstile/prisma": "*",
     "@rowstile/react": "*",
-    "bullmq": "^6.4.2",
+    "bullmq": "^6.5.3",
     "drizzle-orm": "^0.45.4",
     "ioredis": "^5.11.1",
     "next": "^16.4.3",
