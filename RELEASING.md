@@ -11,10 +11,11 @@ the `rowstile` command, the Python package (`sdk/python`, on PyPI), the TypeScri
 release's tag), and the SDKs that are previews: Go (`sdk/go`), .NET (`sdk/dotnet`), Java and Kotlin
 (`sdk/java`), Ruby (`sdk/ruby`), Rust (`sdk/rust`), Elixir (`sdk/elixir`) and PHP (`sdk/php`). Those seven are
 on no registry yet: an app takes them from the repository, at a release's tag or from `main`, as each one's
-README says, and they carry the release's version. The Go module has no version of its own yet: Go's tools read
-a module in a folder from the tags `sdk/go/vX.Y.Z`, and a release makes none, so `go get` takes `main`'s newest
-commit. Putting one of them on a registry, or tagging the Go module, is a step this page gets once it is
-decided. `packaging/version.py` sets the version in every file but the
+README says, and they carry the release's version. Go's tools read a module in a folder from the tags
+`sdk/go/vX.Y.Z`: a release pushes one on its own commit, from 0.1.0-beta.4 on (the release workflow's `go-tag`
+job, once the GitHub release is made), so `go get` takes the newest release's. Go's module proxy keeps a version
+for ever: like `vX.Y.Z`, that tag is never moved. Putting one of the others on a registry is a step this page
+gets once it is decided. `packaging/version.py` sets the version in every file but the
 install lines that name the image's tag (the release pull request edits those), and a unit test fails if two
 files disagree. The lines that show how to use the review for CI name the newest release: a release sets them,
 and a `-dev` version leaves them, as no tag of it exists. The editor extensions (VS Code, Zed) have their own versions, raised
@@ -213,7 +214,11 @@ pages and the playground are all built from one commit of `main`. A **site tag**
   pushed on a commit older than another such tag's (a release made from an earlier commit, after a site tag)
   deploys nothing, and a release's tag off `main` (a patch to an older line) neither: the site never goes back
   by itself. To put it back on purpose, run it by hand: `gh workflow run site.yml -f tag=site-vN` deploys
-  that tag, whatever comes after it.
+  that tag, whatever comes after it, and it stays so until a newer tag deploys.
+- Each deploy writes what the site shows, `/deployed.json` (its tags, and whether it was put back by hand). A
+  run can be cancelled (GitHub keeps one run waiting, and a newer one takes its place) or fail, which leaves the
+  site behind its tags: the next run that would deploy nothing sees it there and deploys the newest site and
+  blog instead, and says so in its run. To catch up at once, run the newest tag by hand.
 - A **blog tag** publishes the articles and the comparison pages alone, when the rest of `main` shouldn't go
   out yet:
 
@@ -227,10 +232,14 @@ pages and the playground are all built from one commit of `main`. A **site tag**
   tag already holds deploys nothing, nor one older than another blog tag; a site or release tag deploys the
   newer blog tag's two folders with its own site, so an article never leaves it. A post that links to a page
   that site doesn't have fails the build, and so does a post or a comparison page its code can't make: nothing
-  is deployed, and the workflow's run says which. Then a site tag is what it needs.
+  is deployed, and the workflow's run says which. Then a site tag is what it needs. A blog tag may add a
+  comparison page, but removing or renaming one the site tag has takes a site tag: that site's own pages name
+  it (`docs/comparison.md` links each, `site/pages.mjs` describes it), and the workflow refuses the blog tag.
 - `site/source.mjs` holds the rule and `site/source_test.mjs` checks it; `node site/source.mjs site-vN` (or
   `blog-vN`) says whether a tag deploys, and what from. The site's links to files in the two folders go to the
-  blog tag.
+  blog tag. A post's or a comparison page's link to any other file goes to the site tag's, the files the site is
+  built from, which may be older than the post: to show code as the post read it, at a line, link it at a commit
+  (`https://github.com/rowstile/rowstile/blob/<commit>/core/...#L120`), which the site leaves as it is.
 - The release workflow doesn't run on a site or blog tag, which publish no package (`Delivery` in
   `core/tests/unit_test.py` checks that no pattern of its own matches one).
 - What the comparison pages say of other projects is quoted from their documentation, with the day it was

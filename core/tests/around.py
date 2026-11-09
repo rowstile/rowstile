@@ -74,17 +74,19 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import dataclasses
 import hashlib
 import hmac
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from itertools import combinations
 
@@ -107,7 +109,7 @@ OPEN = "around_open"  # a schema on that path, which someone else may create in
 NEW = "around_new"  # where the rows an insert is tried with wait: copies of rows there are, under keys of their own
 FIRST_NEW = 500000  # those keys start here, ten apart (a condition that reads the next row finds none)
 INSERTS = 6  # how many rows of each table an insert is tried with
-SLOW = "view definitions to plan"  # in the compiled policy: lint's warning that a permission or a rule is slow to plan
+SLOW = genpolicy.SLOW_TO_PLAN  # in the compiled policy: lint's warning that a permission or a rule is slow to plan
 SECRET = "around.py's secret, which signs its JWTs"  # authz.settings' jwt_secret, in a world's database
 TYPE_CLAIM = "kind"  # ... and its jwt_type_claim: what a token for a service says
 TOP = 1000000  # range partitions end here: ids never get that far, a partition made later starts here
@@ -346,10 +348,13 @@ def apart(a: str, b: str) -> bool:
     return any(a.startswith(f"{kind}: ") and b.startswith(f"{kind}: ") for kind in ONE_OF)
 
 
-def world_of(seed: int) -> tuple[Spec, World]:
-    """The seed's policy (genpolicy's, with its own names and keys, and more to write to) and its world."""
+def world_of(seed: int, icu: bool = True) -> tuple[Spec, World]:
+    """The seed's policy (genpolicy's, with its own names and keys, and more to write to) and its world, as this
+    server can make it: without ICU (icu false), a Turkish database is made with the C locale."""
     spec = with_write_rules(genpolicy.make(seed), seed)
     w = draw(seed, spec)
+    if w.database == "turkish" and not icu:
+        w = dataclasses.replace(w, database="C")
     return in_database(spec, w), w
 
 
@@ -361,14 +366,14 @@ def in_database(spec: Spec, w: World) -> Spec:
     return spec
 
 
-def covering(pool: int) -> tuple[list[int], set[tuple[str, str]], set[tuple[str, str]]]:
+def covering(pool: int, icu: bool = True) -> tuple[list[int], set[tuple[str, str]], set[tuple[str, str]]]:
     """Seeds of 1..pool chosen, greedily, so that every pair of FEATURES that meets in a world of the pool whose
     policy can be checked meets in one of them (the compiler takes it, and doesn't warn that its reads are slow
     to plan: run() gives those up); and the pairs that meet only in the other worlds, and those that meet in no
     world of the pool (apart() aside)."""
     from authzlib import Compiler, PolicyError, parse_policy
 
-    met = {seed: pairs(features(*world_of(seed))) for seed in range(1, pool + 1)}
+    met = {seed: pairs(features(*world_of(seed, icu))) for seed in range(1, pool + 1)}
     occurring = set().union(*met.values())
     chosen: list[int] = []
     covered: set[tuple[str, str]] = set()
@@ -379,7 +384,7 @@ def covering(pool: int) -> tuple[list[int], set[tuple[str, str]], set[tuple[str,
             break
         del left[best]
         try:
-            sql = Compiler(parse_policy(policy_text(*world_of(best)), "around.authz")).compile("around.authz")
+            sql = Compiler(parse_policy(policy_text(*world_of(best, icu)), "around.authz")).compile("around.authz")
         except PolicyError:
             continue
         if SLOW in sql:
@@ -755,6 +760,17 @@ def drop_roles() -> None:
         subprocess.run(["psql", "-X", "-q", "-d", "postgres", "-c", f"DROP ROLE IF EXISTS {role}"], capture_output=True)
 
 
+@contextlib.contextmanager
+def dropped_after(*dbs: DB) -> Iterator[None]:
+    """The run's databases and login roles are dropped when it ends, however it ends."""
+    try:
+        yield
+    finally:
+        for d in dbs:
+            subprocess.run(["dropdb", "--if-exists", d.name], capture_output=True)
+        drop_roles()
+
+
 def psql(db: DB, role: str | None, sql: str, stop: bool = True) -> tuple[int, str, str]:
     """As DB.run, logged in as a role (None: the owner the suite runs as)."""
     p = subprocess.run(
@@ -892,6 +908,7 @@ class AroundChecker(Checker):
     # (requests and reviews are tried in the owner's session, which is not what the worlds change: difftest's)
     workflows = False
     since: int = 2**62  # a transaction id from before the last change (none yet)
+    inserted: set[str]  # the shares the last change's own statements insert (share_problems names them so)
     excused: set[str]  # shares the changes wrote on rows they had removed (share_problems)
     spec: Spec  # the policy (its `shared if`s)
     last: Snapshot  # the last snapshot (login_problems reads it)
@@ -955,8 +972,8 @@ class AroundChecker(Checker):
         self.last = snap
         return snap
 
-    def check(self) -> list[str]:
-        return super().check() + login_problems(self)
+    def more_problems(self, snap: Snapshot) -> list[str]:
+        return login_problems(self)
 
 
 # what a login says when it refuses: a key (unknown, expired, revoked, or of someone who is no active row now),
@@ -966,12 +983,18 @@ REFUSALS = {"api key": ("invalid API key",), "jwt": ("the token names no active 
 
 def login_problems(checker: AroundChecker) -> list[str]:
     """Where the world signs in by token: a key or a JWT of someone who is a row now (one that passes its type's
-    where) signs them in, anyone else's is refused, by the login's own words."""
+    where) signs them in, anyone else's is refused, by the login's own words. Where no token is tried (a world that
+    doesn't sign in by one, nobody), the login says nothing."""
     w, snap = checker.world, checker.last
     problems = []
-    for u in checker.users if w.signs else []:
+    for u in checker.users:
         kind, pid = evaluate.principal_of(u, checker.types)
-        if not pid:
+        if not (w.signs and pid):
+            # (no token tried: nothing says it signed in, or refused)
+            if snap[(u, "login")] != "":
+                problems.append(
+                    f"user {u or '(nobody)'} signs in with no token, and the login says {snap[(u, 'login')]!r}"
+                )
             continue
         outcome, there = snap[(u, "login")], pid in snap[(u, "data", "valid", kind)]
         if (outcome == "ok") != there or (not there and outcome not in REFUSALS[w.signs]):
@@ -1228,21 +1251,33 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
     return problems
 
 
+# a share genpolicy's change inserts itself (grant()): its columns, and its values
+SHARE_INSERT = re.compile(r"^INSERT INTO authz\.shares \(([^)]*)\) VALUES \((.*)\) ON CONFLICT DO NOTHING;$", re.M)
+SHARE_KEY = "md5(ROW(g.object_type, g.object_id, g.relation, g.subject_type, g.subject_id, g.subject_relation)::text)"
+
+
+def inserted_shares(db: DB, sql: str) -> set[str]:
+    """The shares a change's own statements insert, named as share_problems names them (their values worked out by
+    the database: a link's is a hash)."""
+    found = [
+        f"SELECT {SHARE_KEY} FROM (VALUES ({values})) g({columns})" for columns, values in SHARE_INSERT.findall(sql)
+    ]
+    return {row[0] for row in db.rows("\nUNION\n".join(found) + ";")} if found else set()
+
+
 def share_problems(checker: AroundChecker) -> list[str]:
     """Shares on (or to) rows that are gone, or whose key changed: rowstile forgets them, so there must be none.
-    (A user that is no row may be named on purpose: genpolicy's GONE.) Except the ones the last change wrote
+    (A user that is no row may be named on purpose: genpolicy's GONE.) Except the ones the last change inserted
     itself: genpolicy inserts shares directly, and in one transaction may insert one for a row it has just
-    deleted or given another key. A share written since checker.since (a transaction id from before the
-    change) is that, and is excused for as long as it stays on no row."""
+    deleted or given another key. A share that one of the change's own INSERTs names (checker.inserted), written
+    since checker.since (a transaction id from before the change), is that, and is excused for as long as it stays
+    on no row. Not one the change, or a trigger, only updated: that one was there before."""
     found = []
     for t in checker.types.values():
         if t.name == "user":
             continue
         there = f"EXISTS (SELECT 1 FROM {qt(t.table)} r WHERE {idsql(t, 'r')} = "
-        share = (
-            "md5(ROW(g.object_type, g.object_id, g.relation, g.subject_type, g.subject_id, g.subject_relation)::text), "
-            "g.xmin::text FROM authz.shares g"
-        )
+        share = f"{SHARE_KEY}, g.xmin::text FROM authz.shares g"
         found.append(
             f"SELECT {lit(t.name)}, 'on', g.object_id, {share} "
             f"WHERE g.object_type = {lit(t.name)} AND NOT {there}g.object_id)"
@@ -1253,9 +1288,17 @@ def share_problems(checker: AroundChecker) -> list[str]:
         )
     rows = checker.db.rows("\nUNION ALL\n".join(found) + "\nORDER BY 1, 2, 3;") if found else []
     checker.excused &= {share for _, _, _, share, _ in rows}
-    checker.excused |= {share for _, _, _, share, xmin in rows if int(xmin) >= checker.since}
+    checker.excused |= {
+        share for _, _, _, share, xmin in rows if share in checker.inserted and written_since(int(xmin), checker.since)
+    }
     left = sorted({(name, side, i) for name, side, i, share, _ in rows if share not in checker.excused})
     return [f"shares {side} {name} {i}: no such row (it is gone, or its key changed)" for name, side, i in left]
+
+
+def written_since(xmin: int, since: int) -> bool:
+    """Whether a row's xmin (a 32-bit transaction id, which wraps around) is since's or later (a 64-bit one, as
+    txid_current() gives it: the epoch above), as Postgres compares them: modulo 2^32."""
+    return (xmin - since) % 2**32 < 2**31
 
 
 # ----------------------------------------------------------------------
@@ -1395,9 +1438,29 @@ def lint_errors(db: DB) -> list[str]:
     ]
 
 
+def granted(statement: str) -> tuple[str, str]:
+    """What authz.lint() says of a grant of GRANTS: how an error of its starts (the object; for the objects of a
+    schema, the schema and a dot), as SQL, and words it holds (who holds what)."""
+    m = re.fullmatch(r"GRANT (\w+) ON (?:ALL \w+ IN SCHEMA (\w+)|SCHEMA (\w+)|([\w.]+)) TO (\w+)", statement)
+    assert m, statement
+    what, inside, schema, relation, who = m.groups()
+    start = f"{inside}." if inside else f"{schema or relation}: "
+    return lit(start), f"{who} holds " + ("" if what == "ALL" else f"{what} on it")
+
+
+def lint_name(table: str) -> str:
+    """SQL for how lint's error on a table starts: its name as lint writes it, in a search path of pg_catalog alone
+    (with its schema)."""
+    return (
+        "(SELECT format('%I.%I: ', s.nspname, c.relname) FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace "
+        f"WHERE c.oid = {lit(table)}::regclass)"
+    )
+
+
 def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_path: str) -> list[str]:
-    """Something changes behind the policy's back: lint has to say so, and `rowstile apply` to put it right
-    (or to refuse, where it can't: someone may create in a schema of the search path)."""
+    """Something changes behind the policy's back: lint has to say so, by a new error that names what changed, and
+    `rowstile apply` to put it right (or to refuse, where it can't: someone may create in a schema of the search
+    path)."""
     w, db, n = checker.world, checker.db, checker.spec.spelling
     governed = list(dict.fromkeys(r.table for r in checker.rules))
     problems: list[str] = []
@@ -1407,10 +1470,14 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
         table, i = n.table(name), n.sql("id")
         undo = ""
         reported = partition = True
+        # what a new error of lint's says of it: how it starts (the object, as lint writes it: SQL, asked once it
+        # is there) and words it holds
         if kind == "grant":
             what = rnd.choice(GRANTS)
+            names, words = granted(what)
         elif kind == "rls off":
             what = f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY"
+            names, words = lint_name(table), "row-level security is off"
         elif kind == "child":
             how = w.layout.get(name, "plain")
             if how == "hash":
@@ -1420,6 +1487,7 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
             # nothing is open, and lint has nothing to report (apply still turns row-level security on there)
             reported = not partition or rnd.random() < 0.5
             child = n.table(f"{name}_{'top' if partition else 'newer'}")
+            names, words = lint_name(child), f"{checker.role} may use it directly"
             if partition:
                 _, top, end = cut(n)
                 what = f"CREATE TABLE {child} PARTITION OF {table} FOR VALUES FROM ({top}) TO ({end})"
@@ -1434,6 +1502,8 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
             schema = n.sql(SCHEMA) if w.unqualified else "public"
             who = rnd.choice(["app_user", OUTSIDER, "PUBLIC"])
             what, undo = f"GRANT CREATE ON SCHEMA {schema} TO {who}", f"REVOKE CREATE ON SCHEMA {schema} FROM {who}"
+            nspname = f"(SELECT nspname FROM pg_namespace WHERE oid = {lit(schema)}::regnamespace)"
+            names, words = f"{nspname} || ': is on the search path'", who
         db.run(what + ";")
         if kind == "child" and partition:
             # Postgres gave the partition its table's row triggers, and its rows are read and written through
@@ -1441,9 +1511,13 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
             # until then where the app role was given it)
             held = checker.check() + write_problems(checker, direct=False) + share_problems(checker)
             problems += [f"after `{what}`, before the policy is applied again: {x}" for x in held[:8]]
-        after = lint_errors(db)
-        if reported and len(after) <= len(before):
-            problems.append(f"after `{what}`, authz.lint() reports no new error")
+        start = db.rows(f"SELECT {names};")[0][0]
+        new = [e for e in lint_errors(db) if e not in before]
+        if reported and not any(e.startswith(start) and words in e for e in new):
+            problems.append(
+                f"after `{what}`, authz.lint() reports no new error on {start.rstrip(': ')} that says {words!r} "
+                f"(new: {'; '.join(e[:120] for e in new[:3]) or 'none'})"
+            )
         if kind == "creator":
             # nothing an apply can put right: applying again has to refuse, and lint to say so until it is undone
             code, word, out = command(db, "reapply")
@@ -1457,8 +1531,13 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
         if kind != "creator" and word != "applied":
             problems.append(f"after `{what}`, rowstile apply answers '{word}': it left it as it was")
         # (what the app role was given on the app's own table is the owner's to take back: the owner's default
-        # privileges can give it TRUNCATE on a table made now, which lint goes on reporting, rightly)
-        left = [e for e in lint_errors(db) if e not in before and "may TRUNCATE it" not in e]
+        # privileges can give it TRUNCATE on the table made now, which lint goes on reporting, rightly)
+        made = start if kind == "child" else None
+        left = [
+            e
+            for e in lint_errors(db)
+            if e not in before and not (made and e.startswith(made) and "may TRUNCATE it" in e)
+        ]
         problems += [f"after `{what}` and rowstile apply, authz.lint() still reports: {e[:200]}" for e in left[:3]]
         problems += privilege_problems(db, plain, f"after `{what}` and rowstile apply")
         code, word, out = command(db, "apply", policy_path)
@@ -1496,11 +1575,18 @@ def user_gone(checker: AroundChecker) -> list[str]:
 # ----------------------------------------------------------------------
 # One seed
 # ----------------------------------------------------------------------
+def failure(e: RuntimeError) -> str:
+    """A transaction that failed in the world's database, as a problem: what failed and the server's words (of the
+    script it ran, the first lines only)."""
+    return "\n      ".join(str(e).strip().splitlines()[:10])
+
+
 def run(
     spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, seconds: float = 900, slow: bool = False
 ) -> list[str]:
     """The problems found with this policy in this world (none: it passed). Refused and Slow (and slow) as in
-    genpolicy."""
+    genpolicy. A check whose transaction fails in this world (the app's, the stranger's, the owner's) is a problem
+    too: the seed fails with its world and is shrunk, as any other."""
     policy_path, schema_path = os.path.join(workdir, "around.authz"), os.path.join(workdir, "around_schema.sql")
     genpolicy.write_policy(policy_path, policy_text(spec, w), spec.include)
     with open(schema_path, "w", encoding="utf-8") as fh:
@@ -1545,21 +1631,27 @@ def run(
     plain = privileges(control)
     problems += privilege_problems(db, plain, "after the first apply")
     checker = AroundChecker(db, policy_path, gen)
-    checker.world, checker.excused, checker.spec = w, set(), spec
+    checker.world, checker.excused, checker.inserted, checker.spec = w, set(), set(), spec
     db.run(tokens_sql(checker))
-    problems += stranger_problems(checker) + unsigned_problems(checker)
+    try:
+        problems += stranger_problems(checker) + unsigned_problems(checker)
+    except RuntimeError as e:
+        problems.append(failure(e))
     if problems:
         return ["before any change:", *problems[:12]]
     for step in range(steps + 1):
         if time.monotonic() - started > seconds:
             raise Slow(f"over {seconds:.0f} s at step {step} of {steps}")
-        problems = checker.check() + write_problems(checker) + share_problems(checker)
-        if w.gone and step == steps // 3 and not problems:
-            problems = user_gone(checker)
-            problems += [] if problems else checker.check()
-        if step == steps // 2 and not problems:
-            problems = drift(checker, rnd, plain, policy_path)
-            problems += [] if problems else checker.check() + stranger_problems(checker)
+        try:
+            problems = checker.check() + write_problems(checker) + share_problems(checker)
+            if w.gone and step == steps // 3 and not problems:
+                problems = user_gone(checker)
+                problems += [] if problems else checker.check()
+            if step == steps // 2 and not problems:
+                problems = drift(checker, rnd, plain, policy_path)
+                problems += [] if problems else checker.check() + stranger_problems(checker)
+        except RuntimeError as e:
+            problems = [failure(e)]
         if problems:
             return [f"step {step}:", *problems[:12]]
         if step == steps:
@@ -1573,6 +1665,10 @@ def run(
         code, _, err = db.run(CHANGE + sql, check=False)
         if code != 0 and not gen.refused(err):
             return [f"step {step + 1}: unexpected error", f"  {sql}", f"  {err.strip()}"]
+        wrong = checker.wrong_refusal("", sql, err) if code != 0 else None
+        if wrong:
+            return [f"step {step + 1}: {wrong}"]
+        checker.inserted = inserted_shares(db, sql)
     return []
 
 
@@ -1612,7 +1708,7 @@ def main() -> None:
     db, control = DB(args.db), DB(args.db + "_plain")
     seeds: Sequence[int] = [args.only] if args.only is not None else range(args.seed, args.seed + args.policies)
     if args.pairs:
-        seeds, unmet, never = covering(args.pairs)
+        seeds, unmet, never = covering(args.pairs, icu)
         mine = f" (this run: share {share} of {shares})" if shares > 1 else ""
         print(
             f"pairs: {len(seeds)} worlds of 1..{args.pairs} meet every pair of features that meets there{mine}",
@@ -1625,7 +1721,7 @@ def main() -> None:
     judged: set[tuple[str, str]] = set()  # the pairs a world that passed had
     refused = failed = passed = 0
     slow: list[int] = []
-    with tempfile.TemporaryDirectory() as workdir:
+    with tempfile.TemporaryDirectory() as workdir, dropped_after(db, control):
 
         def fails(s: Spec, w: World) -> bool:
             try:
@@ -1634,9 +1730,7 @@ def main() -> None:
                 return False
 
         for seed in seeds:
-            spec, w = world_of(seed)
-            if w.database == "turkish" and not icu:
-                w = dataclasses.replace(w, database="C")
+            spec, w = world_of(seed, icu)
             if args.only is not None:
                 print(f"world: {described(spec, w)}\n\n{policy_text(spec, w)}")
             try:
@@ -1680,9 +1774,6 @@ def main() -> None:
                 for p in run(spec, w, db, control, args.steps, workdir, slow=args.slow):
                     print("   ", p)
             sys.stdout.flush()
-    for d in (db, control):
-        subprocess.run(["dropdb", "--if-exists", d.name], capture_output=True)
-    drop_roles()
     said = f"{seeds[0]}..{seeds[-1]}" if isinstance(seeds, range) and seeds.step == 1 else ", ".join(map(str, seeds))
     print(
         f"around seeds {said}: {passed} passed, {failed} failed, {refused} refused by the compiler"
@@ -1690,7 +1781,7 @@ def main() -> None:
         + ("" if icu else "; no ICU on this server: the Turkish databases were made with the C locale")
     )
     if args.pairs:  # the ledger: which pairs were in a world whose checks passed
-        wanted = set().union(*(pairs(features(*world_of(seed))) for seed in seeds)) if seeds else set()
+        wanted = set().union(*(pairs(features(*world_of(seed, icu))) for seed in seeds)) if seeds else set()
         missed = wanted - judged
         print(f"pairs judged: {len(judged & wanted)} of {len(wanted)}")
         if missed:

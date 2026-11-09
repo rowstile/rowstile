@@ -5,8 +5,9 @@
 # inheritance tables must match a rebuild (authz.verify()), and so must the sync index (authz.sync_verify(), a preview:
 # the docs app is applied with sync lines). Moves that would make a loop, and deletes of
 # folders that still hold something, are refused and count as done. So that a tree no write reached can't pass, each
-# level must leave folders created, moved, linked and deleted, and no more than half its transactions failed after
-# 50 tries (a tenth to a seventh on CI's runners, at 100 s a level).
+# level must change the tree, each kind of write (folders created, moved, linked and deleted) must happen over the
+# three levels together, and no level may have more than half its transactions failed after 50 tries (a tenth to a
+# seventh on CI's runners, at 100 s a level).
 # Every tree write takes the type-wide lock, so the writes go one at a time and each waits for the queue
 # ahead of it: as the random moves make the tree deep, a write can wait tens of seconds on a slow machine
 # (a move of a big subtree alone takes about a second). So the limit on a statement, 600 s, is there for a

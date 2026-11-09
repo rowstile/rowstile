@@ -80,7 +80,8 @@ public static class Errors
         string message = pg.MessageText;
         string? code = Code(error);
         // Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
-        // without its schema
+        // without its schema; it names the policy too when it is a restrictive one (the app's own: rowstile makes
+        // none), quoting the name as it is
         var generic = PostgresWordsRegex.Match(message);
         if (code is null && !generic.Success)
         {
@@ -94,7 +95,17 @@ public static class Errors
         }
         if (generic.Success)
         {
-            string table = generic.Groups[3].Value;
+            string table = generic.Groups[4].Value;
+            if (generic.Groups[2].Success)
+            {
+                // a restrictive policy of the app's own (authz.lint() reports it): its words name it, and say no
+                // more. An upsert's is about the update of the row there already
+                return new RefusedException(
+                    message,
+                    table,
+                    generic.Groups[1].Value == "new" && generic.Groups[3].Success ? "update" : null
+                );
+            }
             if (generic.Groups[1].Value == "target")
             {
                 // MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
@@ -103,7 +114,7 @@ public static class Errors
                     table
                 );
             }
-            if (generic.Groups[2].Success)
+            if (generic.Groups[3].Success)
             {
                 // an upsert (INSERT ... ON CONFLICT DO UPDATE) whose existing row this user may not update, or not see
                 return new RefusedException(
@@ -175,6 +186,6 @@ public static class Errors
     private static readonly Regex HelpCodeRegex = new(@"rowstile help (AZ\d{3})");
 
     private static readonly Regex PostgresWordsRegex = new(
-        @"^(new|target) row violates row-level security policy (\(USING expression\) )?for table ""([^""]+)"""
+        @"^(new|target) row violates row-level security policy ("".*?"" )?(\(USING expression\) )?for table ""([^""]+)"""
     );
 }

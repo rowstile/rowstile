@@ -313,6 +313,10 @@ final class SdkTest extends TestCase
         self::assertNotNull($refusal);
         self::assertSame(['AZ709', 'app.notes', ['a', 'HINT:  rowstile help AZ714', 'b']], [$refusal->rowstileCode, $refusal->table, $refusal->why]);
         self::assertSame('permission denied: user 2 may not insert this row into app.notes', $refusal->getMessage());
+        // a LINE is libpq's only with the caret under it: a DETAIL that quotes one keeps it
+        $quoted = Rowstile::refusal($text('42501', "ERROR:  permission denied: user 2 may not insert this row into app.notes\n"
+            ."DETAIL:  a\nLINE 2: b\nHINT:  rowstile help AZ709"));
+        self::assertSame(['permission denied: user 2 may not insert this row into app.notes', ['a', 'LINE 2: b']], [$quoted?->getMessage(), $quoted?->why]);
         $echo = Rowstile::refusal($text('42501', "ERROR:  you cannot share project 1\nHINT:  rowstile help AZ713\nHINT:  rowstile help AZ705"));
         self::assertSame(['AZ705', "you cannot share project 1\nHINT:  rowstile help AZ713"], [$echo?->rowstileCode, $echo?->getMessage()]);
         self::assertSame([null, null, 'AZ716', 'AZ811'], array_map(static fn (string $t): ?string => Rowstile::errorCode($text('P0001', $t)), [
@@ -357,6 +361,23 @@ final class SdkTest extends TestCase
         $share->errorInfo = ['42501', 7, "ERROR:  you cannot share project permission denied: user 1 may not insert this row into app.x\nHINT:  rowstile help AZ705"];
         $refused = Rowstile::refusal($share);
         self::assertSame([null, null, 'AZ705'], [$refused?->table, $refused?->command, $refused?->rowstileCode]);
+        // a restrictive policy of the app's own: Postgres names it (with a quote in its name here), and says no more;
+        // an upsert's is about the update of the row there already
+        $named = static function (string $words): array {
+            $e = new PDOException('x');
+            $e->errorInfo = ['42501', 7, "ERROR:  {$words}"];
+            $r = Rowstile::refusal($e);
+            return [$r?->getMessage(), $r?->table, $r?->command, $r?->why];
+        };
+        self::assertSame([
+            ['new row violates row-level security policy "short_notes" for table "notes"', 'notes', null, []],
+            ['new row violates row-level security policy "a" b" (USING expression) for table "notes"', 'notes', 'update', []],
+            ['target row violates row-level security policy "only_mine" (USING expression) for table "notes"', 'notes', null, []],
+        ], array_map($named, [
+            'new row violates row-level security policy "short_notes" for table "notes"',
+            'new row violates row-level security policy "a" b" (USING expression) for table "notes"',
+            'target row violates row-level security policy "only_mine" (USING expression) for table "notes"',
+        ]));
         // nobody has one spelling: no id, whatever the type
         self::assertSame([true, true, 'nobody'], [
             Principal::user('')->equals(Principal::nobody()), Principal::of('service', '')->equals(Principal::nobody()), Principal::of('bot', '')->name(),

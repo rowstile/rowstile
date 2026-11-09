@@ -10,6 +10,7 @@ PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
 T=$(mktemp -d)
+trap 'rm -rf "$T"; dropdb --if-exists "$DB" 2>/dev/null' EXIT  # (however it ends)
 # applies the policy text $1 with the rowstile command: a plain apply, which keeps the trees it may keep as they
 # are (with --force after it: and computes every one of them again, in place, which would hide a stale one)
 apply() { printf '%s\n' "$1" > "$T/p.authz"
@@ -115,7 +116,5 @@ apply "$(echo "$SYNCED" | sed 's/^  can break_glass = org.member$/  can break_gl
   ok "a new permission keeps the trees and the sync index's rows" || bad "the sync index kept"
 [ "$(PSQL -c 'SELECT authz.sync_verify()')" = t ] && ok "...and the index matches a rebuild" || bad "sync_verify after keeping"
 
-rm -r "$T"
-dropdb "$DB"
 echo "keep: $fails failure(s)"
 exit $((fails > 0))

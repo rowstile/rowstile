@@ -62,12 +62,18 @@ php_run vendor/bin/phpstan analyse --no-progress --memory-limit=1G >"$LOG/phpsta
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
 for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
+# a locale whose messages are German, for check 13's warning: made, then the server started again, since a process reads
+# the locales there are once
+docker exec "$NAME" localedef -i de_DE -c -f UTF-8 de_DE.UTF-8 && docker restart "$NAME" >/dev/null || exit 1
+for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
 # the migration role owns the databases: not a superuser, as on managed Postgres (CREATEDB: a test database per worker)
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
   -c "CREATE DATABASE conf_tests OWNER conf_owner" >/dev/null || exit 1
 export ROWSTILE_OWNER_URL="postgresql://conf_owner:owner@localhost:$PORT/conf"
 export ROWSTILE_TESTS_URL="postgresql://conf_owner:owner@localhost:$PORT/conf_tests"
+# the superuser, who may set the app role's lc_messages (check 13's warning)
+export ROWSTILE_SUPERUSER_URL="postgresql://postgres:postgres@localhost:$PORT/conf_tests"
 APP_PORT=$PORT
 if [ "${POOLER:-}" = pgbouncer ]; then          # the app through PgBouncer in transaction mode (../pooler.sh)
   source ../pooler.sh

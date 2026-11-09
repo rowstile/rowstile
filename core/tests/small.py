@@ -40,8 +40,9 @@ number fails: the language changed, and the counts are written again (--count).
 
 For each policy (the compiler refusing it: counted, by its code):
   1. Without a database: the reference evaluator (authzlib/evaluate.py) in every world of one and two rows of each
-     type (users 1 and 2, the second failing the user type's where if it has one; each row's columns, each link,
-     each share: every combination, up to WORLDS of them, drawn beyond that), and in some of three rows. The policy
+     type (users 1 and 2, the second failing the user type's where if it has one; each row's columns, false, true
+     or NULL where the table lets it be, each link, each share: every combination, up to WORLDS of them, drawn
+     beyond that), and in some of three rows. The policy
      written another way (its names swapped, every `or` and `and` the other way round) must get the same answers
      from it in every world: a reading that depends on names or order. Another evaluator, written apart, would be
      held to it here, in every world (READINGS).
@@ -86,7 +87,7 @@ from authzlib.evaluate import Name, State  # noqa: E402
 from authzlib.parse import Policy  # noqa: E402
 from authzlib.sqlutil import q, qt  # noqa: E402
 from difftest import DB, Checker, Gen, lit  # noqa: E402
-from genpolicy import Node, Obj, Rel, Spec, policy_text, schema_text  # noqa: E402
+from genpolicy import SLOW_TO_PLAN, Node, Obj, Rel, Spec, atoms, policy_text, schema_text  # noqa: E402
 
 # ----------------------------------------------------------------------
 # The core language, listed
@@ -157,10 +158,6 @@ def expressions(atoms: Sequence[str], n: int) -> Iterator[Node]:
                 yield ("and", [x, ("not", [("or", [a, b])])])
 
 
-def atoms(n: Node) -> list[str]:
-    return [n] if isinstance(n, str) else [a for x in n[1] for a in atoms(x)]
-
-
 def parts(total: int, n: int) -> Iterator[tuple[int, ...]]:
     """total split into n parts of 1 to MAX_PARTS, in order."""
     if n == 0:
@@ -215,20 +212,20 @@ def perms(o: Obj, sizes: tuple[int, ...], earlier: Sequence[Obj]) -> Iterator[Ob
     ]
     for exprs in itertools.product(*choices):
         o2 = dataclasses.replace(o, perms=dict(zip(names, exprs, strict=True)))
-        if used(o2, last=int(o.name[1:]) == MAX_TYPES):
+        if used(o2, member_used=int(o.name[1:]) < MAX_TYPES):  # (a later type may name the group)
             yield o2
 
 
-def used(o: Obj, last: bool) -> bool:
+def used(o: Obj, member_used: bool) -> bool:
     """Whether every relation of a type is used (AZ208: in a permission; parent and up followed; a group's members
-    may be used by a later type instead, if one may come), it has a permission if it has shares (shared by it) and
-    its two permissions are joined (otherwise they are smaller policies side by side)."""
+    may be used by another type instead: member_used), it has a permission if it has shares (shared by it) and its
+    two permissions are joined (otherwise they are smaller policies side by side)."""
     named = {a for e in o.perms.values() for a in atoms(e)}
     for rel in o.rels:
         if rel.name in ("parent", "up"):
             if not any(a.startswith(f"{rel.name}.") for a in named):
                 return False
-        elif rel.name not in named and not (rel.name == "member" and not last):
+        elif rel.name not in named and not (rel.name == "member" and member_used):
             return False
     if not o.perms and any(rel.kind == "shared" for rel in o.rels):
         return False
@@ -246,20 +243,8 @@ def well_formed(spec: Spec) -> bool:
     groups = {
         g for o in spec.objs for rel in o.rels for s in rel.subjects if "#" in s and (g := s.split("#")[0]) != o.name
     }
-    for o in spec.objs:
-        used = {a for e in o.perms.values() for a in atoms(e)}
-        for rel in o.rels:
-            if rel.name in ("parent", "up"):
-                if not any(a.startswith(f"{rel.name}.") for a in used):
-                    return False
-            elif rel.name not in used and not (rel.name == "member" and o.name in groups):
-                return False
-        if not o.perms and any(rel.kind == "shared" for rel in o.rels):
-            return False
-        if len(o.perms) == 2 and not (
-            {"p1", "parent.p1"} & set(atoms(o.perms["p2"])) or "parent.p2" in atoms(o.perms["p1"])
-        ):
-            return False
+    if not all(used(o, member_used=o.name in groups) for o in spec.objs):
+        return False
     if len(spec.objs) == 2:
         t1, t2 = spec.objs
         if not any(s.split("#")[0] == t1.name for rel in t2.rels for s in rel.subjects):
@@ -428,6 +413,7 @@ PRINCIPALS = (*USERS, "")  # who is asked: each user, and nobody
 TOKENS = ("k1", "k2")
 HOLDS: dict[str, tuple[str, ...]] = {"1": ("k1",), "2": (), "": ("k2",)}
 WORLDS = 400  # worlds of one size tried at most: every combination up to that many, else as many drawn
+NULLS = ("b1", "b2")  # the columns conditions read that genpolicy's tables let be NULL (schema_text): b3 is not
 DEEP = 60  # worlds of three rows of each type, drawn
 Fact: TypeAlias = "tuple[str, str, str, str, Scalar]"  # ('col', type, id, column, value) or ('pair', key, o, s, None)
 Option: TypeAlias = "tuple[Fact, ...]"
@@ -459,7 +445,10 @@ def dims(pol: Policy, n: int) -> tuple[dict[str, list[str]], list[list[Option]]]
         cols = sorted({col for c in conds if (node := simple(c)) is not None for col in columns_of(node)})
         for i in ids[t.name]:
             for col in cols:
-                out.append([(("col", t.name, i, col, False),), (("col", t.name, i, col, True),)])
+                # false, NULL where the table lets it be (a condition that is NULL holds nothing: `not {b1}` does)
+                # and true: the last world of a size, every last option, has every column true
+                values: list[Scalar] = [False, *([None] if col in NULLS else []), True]
+                out.append([(("col", t.name, i, col, v),) for v in values])
         for r in t.relations.values():
             for k, src in enumerate(r.sources):
                 if src.kind == "column":
@@ -561,9 +550,6 @@ def worlds(pol: Policy, key: str) -> Iterator[evaluate.Data]:
 # Readings: what a policy grants in a world
 # ----------------------------------------------------------------------
 Answers: TypeAlias = "dict[tuple[str, str, str], frozenset[str]]"  # (principal, type, permission): the ids
-# An evaluator: given a policy's text, a function from a world (evaluate.Data) to its answers, for PRINCIPALS and
-# every permission. A third evaluator, written apart from evaluate.py, would be one of these.
-Evaluator: TypeAlias = "Callable[[str], Callable[[evaluate.Data], Answers]]"
 
 
 def reference(
@@ -640,7 +626,8 @@ def respelled_reading(spec: Spec) -> Callable[[evaluate.Data], Answers]:
 
 
 # The readings held to the reference evaluator in every world. A third evaluator, written apart from evaluate.py,
-# goes here: an Evaluator, read from the policy's text (`lambda spec: third(policy_text(spec))`)
+# goes here as reference() is written: from a policy's text, a function from a world (evaluate.Data) to its answers,
+# for PRINCIPALS and every permission (`lambda spec: third(policy_text(spec))`)
 READINGS: dict[str, Callable[[Spec], Callable[[evaluate.Data], Answers]]] = {
     "the reference evaluator, the policy written another way": respelled_reading,
 }
@@ -774,7 +761,8 @@ def mutants(spec: Spec, text: str) -> list[Mutant]:
 
 
 class Choice(NamedTuple):
-    worlds: list[evaluate.Data]  # the worlds chosen, which tell apart every part told apart in any world
+    # the worlds chosen, which tell apart every part told apart in any world; and two no part asked for (choose)
+    worlds: list[evaluate.Data]
     tried: int  # the worlds the evaluator answered in
     told: int  # the parts made wrong that some world tells apart
     parts: int  # the parts made wrong
@@ -783,7 +771,9 @@ class Choice(NamedTuple):
 
 def choose(spec: Spec, text: str, key: str) -> Choice:
     """The evaluator in every world (worlds()), each other reading held to it there (READINGS), and the fewest
-    worlds that tell apart each part made wrong (mutants()) that any world tells apart."""
+    worlds that tell apart each part made wrong (mutants()) that any world tells apart. And two more, for what the
+    database may get wrong in ways no part made wrong in the reference looks like: the world where the policy grants
+    most, and one drawn."""
     pol = parse_policy(text, "small.authz")
     base = reference(text)
     others = {name: make(spec) for name, make in READINGS.items()}
@@ -792,9 +782,13 @@ def choose(spec: Spec, text: str, key: str) -> Choice:
     found: list[tuple[evaluate.Data, Answers]] = []
     problems: list[str] = []
     tried = held = 0
-    fullest: evaluate.Data | None = None  # (where the policy grants most: checked when no world tells a part apart)
+    fullest: evaluate.Data | None = None  # where the policy grants most
+    drawn: evaluate.Data | None = None  # any world, each as likely (one kept, replaced by the n-th with 1/n)
+    rng = random.Random(f"small/{key}/drawn")
     for w in worlds(pol, key):
         tried += 1
+        if rng.random() * tried < 1:
+            drawn = w
         a = base(w)
         if fullest is None or sum(map(len, a.values())) > held:
             fullest, held = w, sum(map(len, a.values()))
@@ -819,8 +813,9 @@ def choose(spec: Spec, text: str, key: str) -> Choice:
         best = max(range(len(found)), key=lambda i: len(kills[i] & left))
         chosen.append(found[best][0])
         left -= kills[best]
-    if not chosen and fullest is not None:
-        chosen.append(fullest)
+    for w in (fullest, drawn):
+        if w is not None and not any(w is x for x in chosen):
+            chosen.append(w)
     return Choice(chosen, tried, len(apart), len(every), problems)
 
 
@@ -873,7 +868,7 @@ def load_sql(pol: Policy, data: evaluate.Data, principals: bool = True, rows_dec
             continue
         values: dict[str, dict[str, str]] = {i: {} for i in data.ids[t.name]}
         for i, cols in data.columns.get(t.name, {}).items():
-            values[i] |= {c: sql_value(v) for c, v in cols.items()}
+            values[i] |= {c: sql_value(v) for c, v in cols.items() if c != t.pk}  # (the key: the row's id)
         for r in t.relations.values():
             for k, src in enumerate(r.sources):
                 for st, sr in src.subjects:
@@ -882,6 +877,8 @@ def load_sql(pol: Policy, data: evaluate.Data, principals: bool = True, rows_dec
                         if not isinstance(src.column, str):
                             raise Unloadable("a key of several columns")
                         for o, s in pairs:
+                            if src.column == t.pk:
+                                continue  # (a relation that reads the row's own key: it names the row, its id)
                             values[o][src.column] = ident(st, s)
                             if src.type_col:
                                 values[o][src.type_col] = lit(st)
@@ -1033,6 +1030,17 @@ class Item(NamedTuple):
 
 
 def check_batch(db: DB, items: Sequence[Item], workdir: str, before: bool) -> dict[str, list[str]]:
+    """batch_checks, where SQL Postgres refuses (the schema, the rows, the compiled policy: psql's error) or a rule
+    whose row-level security policy or trigger is missing (Checker) fails every item of the batch, and the run goes
+    on."""
+    try:
+        return batch_checks(db, items, workdir, before)
+    except (RuntimeError, SystemExit) as e:
+        stopped = ["the checks could not go on:", *str(e).strip().splitlines()[:12]]
+        return {it.number: stopped for it in items}
+
+
+def batch_checks(db: DB, items: Sequence[Item], workdir: str, before: bool) -> dict[str, list[str]]:
     """The items' policies applied as one (each its types renamed: s0t1, s1t1, ...), each its worlds loaded side by
     side, before the policy is applied or after; then difftest's checks, and the data read back against the worlds.
     The problems found, by item (by every item where a problem names none)."""
@@ -1098,10 +1106,11 @@ def check_batch(db: DB, items: Sequence[Item], workdir: str, before: bool) -> di
 
 
 def revalid(pol: Policy, data: evaluate.Data) -> evaluate.Data:
-    """The world with a column made NULL (evaluate.smallest) false (the set's columns are booleans its tables keep
-    from being NULL), and the rows each type's where keeps read again from the columns."""
+    """The world with a column made NULL (evaluate.smallest) false where its table keeps it from being NULL (not
+    NULLS), and the rows each type's where keeps read again from the columns."""
     columns = {
-        t: {i: {c: bool(v) for c, v in row.items()} for i, row in rows.items()} for t, rows in data.columns.items()
+        t: {i: {c: v if c in NULLS else bool(v) for c, v in row.items()} for i, row in rows.items()}
+        for t, rows in data.columns.items()
     }
     data = dataclasses.replace(data, columns={**columns, "user": users(pol).columns["user"]})  # (the users are fixed)
     valid = {}
@@ -1136,8 +1145,9 @@ def smallest_failing(db: DB, workdir: str, it: Item, before: bool) -> list[str]:
 
 
 # ----------------------------------------------------------------------
-# What the compiler refuses of the whole set a run checks (--size N: `--count N` says it), by code. A compiler that
-# refused more of the set, valid policies among them, would leave fewer checked and nothing else would say so
+# What the compiler refuses of the whole set a run checks (--size N: `--count N` says it), by code, and how many lint
+# calls slow to plan ("slow to plan", set aside: none). A compiler that refused more of the set, valid policies among
+# them, or planned more of it slowly, would leave fewer checked and nothing else would say so
 REFUSED: dict[int, dict[str, int]] = {
     3: {"AZ302": 10, "AZ303": 19, "AZ306": 8},
     4: {"AZ302": 127, "AZ303": 129, "AZ304": 88, "AZ306": 186},
@@ -1176,7 +1186,7 @@ def judge(spec: Spec, number: str, tally: Tally, say: Callable[[str], None]) -> 
     except PolicyError as e:
         tally.refused[e.code or "?"] += 1
         return None
-    if "view definitions to plan" in sql:
+    if SLOW_TO_PLAN in sql:
         tally.slow += 1
         return None
     choice = choose(spec, text, canonical(spec))
@@ -1329,6 +1339,8 @@ def main() -> None:
     refused = dict(sorted(tally.refused.items()))
     whole = REFUSED.get(args.size) if n == 1 and args.only is None else None
     if whole is not None:
+        # (and those lint calls slow to plan, set aside unchecked: none, in the whole set)
+        refused |= {"slow to plan": tally.slow} if tally.slow else {}
         refusals = refused == whole
         print(
             f"{'ok' if refusals else 'FAIL'} what the compiler refuses: {refused}"

@@ -109,9 +109,10 @@ admin "a changed owner column is recorded, with what it was and why" "relate|fol
   "SELECT action || '|' || object_type || '|' || object_id || '|' || relation || '|' || subject_id || '|' || (detail->>'was') || '|' || reason
    FROM authz.audit ORDER BY id DESC LIMIT 1"
 PSQL -c "UPDATE app.folders SET owner_id = 1 WHERE id = 4" >/dev/null
-admin "an unrelated column change adds nothing" "0" \
-  "WITH b AS (SELECT max(id) m FROM authz.audit), u AS (UPDATE app.folders SET name = 'Design' WHERE id = 4 RETURNING 1)
-   SELECT count(*) FROM authz.audit, b WHERE id > b.m"
+# (counted after the UPDATE, in a statement of its own: one in the same statement would not see what it recorded)
+B=$(PSQL -c "SELECT coalesce(max(id), 0) FROM authz.audit")
+PSQL -c "UPDATE app.folders SET name = 'Design' WHERE id = 4" >/dev/null
+admin "an unrelated column change adds nothing" "0" "SELECT count(*) FROM authz.audit WHERE id > $B"
 PSQL -c "UPDATE app.folders SET id = 40, owner_id = 3 WHERE id = 4" >/dev/null
 admin "an owner change in the same UPDATE as a new key is recorded" "relate|40|owner|3" \
   "SELECT action || '|' || object_id || '|' || relation || '|' || subject_id FROM authz.audit
@@ -301,13 +302,21 @@ as 5 -c "SELECT authz.unshare('folder', 2, 'viewer', 'user', 4)" >/dev/null
 PSQL -c "DELETE FROM app.files WHERE id > 4000" >/dev/null
 
 # shares that end, or begin, with time: no write says so, authz.announce_timed_shares() does when it runs
+# waits on the server's clock until the share of file $1 to user $2 has ended
+ended() {
+  PSQL -c "SELECT pg_sleep_until(max(expires_at)) FROM authz.shares WHERE object_type = 'file' AND object_id = '$1' AND subject_id = '$2'" >/dev/null
+}
 PSQL -c "SELECT authz.announce_timed_shares()" >/dev/null   # (what ended before now, once)
-PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
-         VALUES ('file', '13', 'viewer', 'user', '6', clock_timestamp() + interval '1 second')" \
-     -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at)
-         VALUES ('folder', '6', 'viewer', 'user', '6', clock_timestamp() + interval '1 second')" >/dev/null
-check "frank sees offer-letter.pdf, shared with him for a second" "t" "SET authz.user_id = 6; SELECT authz.can('file', 13, 'view')"
-sleep 1.2
+# (made in the transaction that asks: its now() is when it began, so the share is still his however long it takes;
+# then the suite waits on the server's clock until both times have come)
+check "frank sees offer-letter.pdf, shared with him for a second" "t" \
+  "RESET ROLE; INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
+     VALUES ('file', '13', 'viewer', 'user', '6', now() + interval '1 second');
+   INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at)
+     VALUES ('folder', '6', 'viewer', 'user', '6', now() + interval '1 second');
+   SET ROLE app_user; SET authz.user_id = 6; SELECT authz.can('file', 13, 'view')"
+PSQL -c "SELECT pg_sleep_until(max(coalesce(expires_at, starts_at))) FROM authz.shares WHERE subject_id = '6'
+         AND (object_type, object_id) IN (('file', '13'), ('folder', '6'))" >/dev/null
 POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 check "... and no longer, a second later" "f" "SET authz.user_id = 6; SELECT authz.can('file', 13, 'view')"
 admin "... which the feed doesn't hear of by itself" "nothing" \
@@ -328,26 +337,27 @@ got=$(PSQL -c "BEGIN" -c "INSERT INTO authz.shares (object_type, object_id, rela
 PSQL -c "INSERT INTO authz.settings VALUES ('timed_shares_to', '2100-01-01T00:00:00Z') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value" \
      -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
          VALUES ('file', '11', 'viewer', 'user', '6', clock_timestamp() + interval '0.5 seconds')" >/dev/null
-sleep 0.7
+ended 11 6
 POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 same_as() { if [ "$2" = "$3" ]; then echo "ok    $1"; else echo "FAIL  $1: expected '$3', got '$2'"; fails=$((fails + 1)); fi; }
 same_as "a share that ends after the clock was set back is announced when it ends" \
   "$(PSQL -c "SELECT authz.announce_timed_shares()" -c "$(fed $POS share_ended)" | tr '\n' '|')" "1|file 11|"
 # a run while a writer adds a share to an object it announces: the run waits for the writer, and the share's end is
-# announced when it comes (the run reads the shares again once the writer is done)
+# announced when it comes (the run reads the shares again once the writer is done; the writer's share lasts long
+# enough that the run, however late, reads it before it ends)
 PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
          VALUES ('file', '14', 'viewer', 'user', '6', clock_timestamp() + interval '0.3 seconds')" >/dev/null
-sleep 0.5
+ended 14 6
 race
 PGAPPNAME=authz_gov_a psql -X -q -d "$DB" -c "BEGIN" \
   -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
-      VALUES ('file', '14', 'viewer', 'user', '7', clock_timestamp() + interval '2 seconds')" -c "$HOLD" -c "COMMIT" >/dev/null 2>&1 &
+      VALUES ('file', '14', 'viewer', 'user', '7', clock_timestamp() + interval '5 seconds')" -c "$HOLD" -c "COMMIT" >/dev/null 2>&1 &
 held authz_gov_a
 PGAPPNAME=authz_gov_b psql -X -q -At -d "$DB" -c "SELECT authz.announce_timed_shares()" > "$T/tick.out" 2>&1 &
 blocked authz_gov_b
 go; wait
 same_as "a run that waited for a writer announces the share that ended" "$(cat "$T/tick.out")" 1
-sleep 2
+ended 14 7
 POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 same_as "... and the next one, after it, the writer's share that ended since" \
   "$(PSQL -c "SELECT authz.announce_timed_shares()" -c "$(fed $POS share_ended)" | tr '\n' '|')" "1|file 14|"
@@ -667,8 +677,8 @@ REQ=$(as 3 -c "SELECT authz.request_access('folder', 5, 'viewer', 'need the offe
 check "carol sees her own request" "t" "SET authz.user_id = 3; SELECT mine FROM authz.pending_requests() WHERE id = $REQ"
 check "erin (who may share Secrets) sees it to decide" "1" "SET authz.user_id = 5; SELECT count(*) FROM authz.pending_requests() WHERE id = $REQ"
 check "alice (who may not) does not" "0" "SET authz.user_id = 1; SELECT count(*) FROM authz.pending_requests() WHERE id = $REQ"
-expect_code "alice cannot decide it" "42501: you cannot decide request 1" -c "SET authz.user_id = 1" -c "SELECT authz.decide_request($REQ, true)"
-expect_code "alice cannot deny it either" "42501: you cannot decide request 1" -c "SET authz.user_id = 1" -c "SELECT authz.decide_request($REQ, false)"
+expect_code "alice cannot decide it" "42501: you cannot decide request $REQ\$" -c "SET authz.user_id = 1" -c "SELECT authz.decide_request($REQ, true)"
+expect_code "alice cannot deny it either" "42501: you cannot decide request $REQ\$" -c "SET authz.user_id = 1" -c "SELECT authz.decide_request($REQ, false)"
 expect_code "carol cannot approve her own request" "42501: you cannot decide your own request" -c "SET authz.user_id = 3" -c "SELECT authz.decide_request($REQ, true)"
 expect_code "nobody signed in is told to sign in, not that the request is theirs" "42501: sign in to decide a request" \
   -c "SELECT authz.decide_request($REQ, true)"
@@ -821,9 +831,19 @@ as 5 -c "SELECT authz.unshare('folder', 3, 'viewer', 'user', 2)" -c "SELECT auth
 expect_code "a closed review cannot be changed" "42501: you cannot decide in review $REV" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV, 1, false)"
 # a review's deadline (closes_at, by default two weeks after it starts): decisions after it are refused; closing it
 # still applies those made in time
-LATE=$(as 5 -c "SELECT authz.start_review('folder', '5', now() + interval '1 second')")
-as 5 -c "SELECT authz.review_decide($LATE, (SELECT min(item) FROM authz.review_items($LATE)), true)" >/dev/null
-sleep 1.2
+# (started and decided in one transaction, whose now() is when it began: the decision is in time however long it
+# takes; then the suite waits on the server's clock until the deadline has come)
+LATE=$(PSQL -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+SET LOCAL ROLE app_user;
+SET LOCAL authz.user_id = '5';
+SELECT authz.start_review('folder', '5', now() + interval '1 second') AS late \gset
+SELECT authz.review_decide(:late, (SELECT min(item) FROM authz.review_items(:late)), true) \g /dev/null
+COMMIT;
+\echo :late
+SQL
+)
+PSQL -c "SELECT pg_sleep_until(closes_at) FROM authz.reviews WHERE id = '$LATE'" >/dev/null
 expect_code "a decision after the review's deadline is refused, naming it" "42501: review $LATE closed for decisions at" \
   -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($LATE, (SELECT min(item) FROM authz.review_items($LATE)), false)"
 said=$(PSQL -c "SET ROLE app_user" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($LATE, 1, false)" 2>&1 | grep '^HINT:  ')
@@ -1017,9 +1037,9 @@ admin "lint has no note on a relation named like a type that doesn't sign in" "0
 sed -e 's/^  owner  : user   = owner_id$/  user   : user   = owner_id\n  owner  : user   = owner_id/' \
   -e 's/^  can share = owner or folder.share$/  can share = owner or user or folder.share/' example/docs.authz > $T/gov_shadow.authz
 python3 compile_policy.py $T/gov_shadow.authz > $T/gov_shadow.sql && reapply $T/gov_shadow.sql
-L=$(grep -n '^  user   : user   = owner_id$' $T/gov_shadow.authz | cut -d: -f1)
+LINE=$(grep -n '^  user   : user   = owner_id$' $T/gov_shadow.authz | cut -d: -f1)
 admin "lint notes a relation named like a type that signs in, with its line" \
-  "info|file.user|is named like the type user (line $L), which signs in: alone in a rule it reads like any user, and it is this row's. A name that says what the relation is (author, owner) reads better" \
+  "info|file.user|is named like the type user (line $LINE), which signs in: alone in a rule it reads like any user, and it is this row's. A name that says what the relation is (author, owner) reads better" \
   "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE problem LIKE 'is named like the type%'"
 reapply $T/governance.sql
 rm -f $T/gov_shadow.authz $T/gov_shadow.sql
@@ -1185,9 +1205,9 @@ python3 compile_policy.py $T/nodes.authz > $T/nodes.sql && reapply $T/nodes.sql
 admin "lint finds both columns of a (type, id) pair that grant a relation an editor may change" \
   "app.gov_nodes.node_above,app.gov_nodes.node_kind,app.gov_nodes.owner_id" \
   "SELECT string_agg(object, ',' ORDER BY object) FROM authz.lint() WHERE object LIKE 'app.gov_nodes.%' AND problem LIKE 'grants %'"
-L=$(grep -n '^  above : node, folder' $T/nodes.authz | cut -d: -f1)
+LINE=$(grep -n '^  above : node, folder' $T/nodes.authz | cut -d: -f1)
 admin "... and the move by its id, which nothing checks the destination of" \
-  "warning|moves a row under another (above, line $L), and nothing checks where it moves to, so anyone who may update a row may put it inside something they may not change: add a rule such as \"update node_above after : above.edit\"" \
+  "warning|moves a row under another (above, line $LINE), and nothing checks where it moves to, so anyone who may update a row may put it inside something they may not change: add a rule such as \"update node_above after : above.edit\"" \
   "SELECT severity || '|' || problem FROM authz.lint() WHERE object = 'app.gov_nodes.node_above' AND problem LIKE 'moves %'"
 printf '  update after : edit\n' >> $T/nodes.authz
 python3 compile_policy.py $T/nodes.authz > $T/nodes.sql && reapply $T/nodes.sql
@@ -1208,9 +1228,9 @@ PSQL -c "CREATE TABLE app.gov_crowds (id bigint PRIMARY KEY, a boolean, b boolea
   printf 'type note = app.gov_notes\n  crowd : crowd = crowd_id\n  can read = crowd.p6\n'; } > $T/crowds.authz
 python3 compile_policy.py $T/crowds.authz > $T/crowds.sql &&
 reapply $T/crowds.sql
-L=$(grep -n '^  can read = crowd.p6$' $T/crowds.authz | cut -d: -f1)
+LINE=$(grep -n '^  can read = crowd.p6$' $T/crowds.authz | cut -d: -f1)
 admin "lint finds a permission no rule reads that is slow to plan, and says its line and how many views" \
-  "warning|note.read|names permissions that name others more than once (line $L), and Postgres writes each one out again every time: 191 view definitions to plan each check of it (authz.list, authz.can, a rule that names it) before a row is read, which can take a tenth of a second and more, up to a second or two. Name each permission once on the way" \
+  "warning|note.read|names permissions that name others more than once (line $LINE), and Postgres writes each one out again every time: 191 view definitions to plan each check of it (authz.list, authz.can, a rule that names it) before a row is read, which can take a tenth of a second and more, up to a second or two. Name each permission once on the way" \
   "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE object = 'note.read'"
 admin "... and of the permissions it names, the one that names many (64), not those before it (32 and fewer)" "crowd.p6" \
   "SELECT string_agg(object, ',' ORDER BY object) FROM authz.lint() WHERE object LIKE 'crowd.%' AND problem LIKE '%view definitions to plan%'"
@@ -1226,8 +1246,9 @@ admin "lint finds a lookup an index with a condition doesn't serve" "1" \
   "SELECT count(*) FROM authz.lint() WHERE object = 'app.team_members.user_id' AND problem LIKE 'no index starts with this column%'"
 PSQL -c "DROP INDEX app.team_members_some" -c "INSERT INTO app.team_members VALUES (11, 1)" >/dev/null
 psql -X -q -d "$DB" -c "CREATE UNIQUE INDEX CONCURRENTLY team_members_user_id_idx ON app.team_members (user_id)" >/dev/null 2>&1
-admin "... and one a failed build left unfinished doesn't" "1" \
-  "SELECT count(*) FROM authz.lint() WHERE object = 'app.team_members.user_id' AND problem LIKE 'no index starts with this column%'"
+admin "... and one a failed build left unfinished doesn't" "unfinished|1" \
+  "SELECT (SELECT CASE WHEN indisvalid THEN 'valid' ELSE 'unfinished' END FROM pg_index WHERE indexrelid = to_regclass('app.team_members_user_id_idx'))
+          || '|' || count(*) FROM authz.lint() WHERE object = 'app.team_members.user_id' AND problem LIKE 'no index starts with this column%'"
 PSQL -c "DROP INDEX app.team_members_user_id_idx" -c "DELETE FROM app.team_members WHERE (team_id, user_id) = (11, 1)" \
      -c "CREATE INDEX team_members_user_id_idx ON app.team_members (user_id)" >/dev/null
 # the audit trail's guard back for ordinary sessions only, as ENABLE TRIGGER ALL leaves it (a data-only pg_restore

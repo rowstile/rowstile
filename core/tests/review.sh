@@ -12,6 +12,15 @@ bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
 PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 command -v git >/dev/null || { echo "skip  git is not installed"; exit 0; }
 T=$(mktemp -d)
+. tests/races.sh
+# what the run made, dropped however it ends: its sessions in the background, its databases, its role, its folder
+cleanup() {
+  stop_sessions
+  rm -rf "$T"
+  for d in "$DB" "${DB}_bare" authz_review_plain; do dropdb --if-exists "$d" 2>/dev/null; done
+  psql -X -q -d postgres -c "DROP ROLE IF EXISTS authz_review_plain_app" >/dev/null 2>&1
+}
+trap cleanup EXIT
 P="$T/p"
 mkdir -p "$P/db/tests"
 sed '/^test$/,$d' example/docs.authz > "$P/db/policy.authz"
@@ -122,17 +131,21 @@ case "$out" in *Traceback*) bad "a review database without the app's tables give
     [ $rc -eq 0 ] && ok "a review database without the app's tables: Access says why it isn't computed, exit 0" || bad "review on a bare database: exit" "$rc";;
   *) bad "review on a bare database" "$out";; esac
 dropdb --if-exists "${DB}_bare"
-# the server ends the review's session while it works (here while it waits on a table another session holds)
-( PSQL -c "BEGIN" -c "LOCK TABLE app.folders IN ACCESS EXCLUSIVE MODE" -c "SELECT pg_sleep(6)" -c "COMMIT" >/dev/null 2>&1 ) &
+# the server ends the review's session while it works (here while it waits on a table another session holds, until
+# the suite says go: however long the review takes to reach it)
+race
+( PGAPPNAME=authz_review_locker psql -X -q -d "$DB" -c "BEGIN" -c "LOCK TABLE app.folders IN ACCESS EXCLUSIVE MODE" \
+    -c "$HOLD" -c "COMMIT" >/dev/null 2>&1 ) &
 locker=$!
-for _ in $(seq 40); do [ "$(PSQL -c "SELECT count(*) FROM pg_locks WHERE relation = 'app.folders'::regclass AND mode = 'AccessExclusiveLock' AND granted")" = 1 ] && break; sleep 0.25; done
+held authz_review_locker
 ( CLI --db "dbname=$DB" review --base main > "$T/review.out" 2>&1; echo $? > "$T/review.rc" ) &
 reviewer=$!
-for _ in $(seq 40); do w=$(PSQL -c "SELECT pid FROM pg_stat_activity WHERE datname = '$DB' AND application_name = 'rowstile' AND wait_event_type = 'Lock' LIMIT 1"); [ -n "$w" ] && break; sleep 0.25; done
+w=""
+until_waits rowstile Lock &&
+  w=$(PSQL -c "SELECT pid FROM pg_stat_activity WHERE datname = '$DB' AND application_name = 'rowstile' AND wait_event_type = 'Lock' LIMIT 1")
 [ -n "$w" ] && PSQL -c "SELECT pg_terminate_backend($w)" >/dev/null
 wait "$reviewer"
-PSQL -c "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE datname = '$DB' AND query = 'SELECT pg_sleep(6)'" >/dev/null
-wait "$locker"
+go; wait "$locker"
 case "$(cat "$T/review.out")" in "lost the database: "*) [ "$(cat "$T/review.rc")" = 2 ] && ok "the server ending the review's session: lost the database, exit 2" ||
   bad "review losing its database: exit" "$(cat "$T/review.rc")";; *) bad "review losing its database" "$(cat "$T/review.out")";; esac
 
@@ -401,6 +414,4 @@ case "$out" in *"may not switch to the app role $R (SET ROLE), and this looks at
   *) bad "review as a plain owner" "$out";; esac
 dropdb --if-exists "$N"; psql -X -q -d postgres -c "DROP ROLE IF EXISTS $R" >/dev/null 2>&1
 
-rm -rf "$T"
-dropdb --if-exists "$DB" 2>/dev/null
 [ $fails -eq 0 ] && echo "review: all passed" || { echo "review: $fails failed"; exit 1; }

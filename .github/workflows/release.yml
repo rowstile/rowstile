@@ -283,12 +283,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {persist-credentials: false}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e   # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2   # v10.3.3
         with: {version: "0.12.21"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with: {node-version: "24"}
-      # uv writes a .gitignore into the folder it builds into: not a file to download (0.1.0-alpha.1 had it)
-      - run: uv build --out-dir dist sdk/python && rm -f dist/.gitignore && uvx twine@7.0.0 check --strict dist/*
+      # uv writes a .gitignore into the folder it builds into: not a file to download (0.1.0-alpha.1 had it). The
+      # build's own packages (hatchling and what it needs) by their hashes (sdk/python/build-requirements.txt)
+      - run: |
+          uv build --build-constraint sdk/python/build-requirements.txt --require-hashes --out-dir dist sdk/python
+          rm -f dist/.gitignore && uvx twine@7.0.0 check --strict dist/*
       # the extension starts the language server with vscode-languageclient: the .vsix carries it (package.json's
       # files lists node_modules; vsce keeps the production dependencies only). vsce is the one editor/publish's
       # lock file holds, as the vscode job's
@@ -339,6 +342,32 @@ jobs:
           # GitHub makes a release that isn't a pre-release its Latest unless told: not a patch to an older line
           make_latest: ${{ needs.check.outputs.npm-tag == 'latest' }}
           fail_on_unmatched_files: true
+
+  # the Go module's version: Go reads a module in a folder from the tags sdk/go/vX.Y.Z, so the release's commit gets
+  # one, once the GitHub release is made (`go get github.com/rowstile/rowstile/sdk/go` then takes the newest).
+  # Go's module proxy keeps a version for ever: like v*, the tag is never moved (the tags' ruleset). Run again, it
+  # leaves a tag that is there
+  go-tag:
+    needs: [check, github-release]
+    if: needs.check.outputs.publish == 'public'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {contents: write}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: |
+          tag="sdk/go/v$VERSION"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" > /dev/null 2>&1; then
+            echo "$tag is there"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" > /dev/null
+            echo "pushed $tag on $GITHUB_SHA"
+          fi
+          # the proxy fetches a version the first time it is asked for: asked now, a user's first go get is quick
+          curl -fsS --retry 5 "https://proxy.golang.org/github.com/rowstile/rowstile/sdk/go/@v/v$VERSION.info" ||
+            echo "the module proxy doesn't have v$VERSION yet: it fetches it on the first go get"
 
   # the VS Code extension release-files packaged, the file the GitHub release attaches, on the Marketplace and Open
   # VSX when its own version (editor/package.json, raised when the extension changes) isn't there yet. Their tokens

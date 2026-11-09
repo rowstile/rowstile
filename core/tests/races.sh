@@ -15,15 +15,20 @@ race() {
 HOLD="DO \$hold\$ BEGIN FOR i IN 1..1200 LOOP EXIT WHEN pg_sequence_last_value('public.race_go') IS NOT NULL;
   PERFORM pg_sleep(0.05); END LOOP; END \$hold\$"
 go() { psql -X -q -d "${RACE_DB:-$DB}" -c "SELECT nextval('public.race_go')" >/dev/null; }
-# $1 the session's name, $2 what it waits on (a wait_event or a wait_event_type): until it does, a minute at most;
-# else a failure of the suite's (its count of fails), which says what it waited for
-waits_on() {
+# $1 the session's name, $2 what it waits on (a wait_event or a wait_event_type): whether it does within a minute,
+# said by the status alone (for a check that says itself what it waited for)
+until_waits() {
   local _
   for _ in $(seq 240); do
     [ "$(psql -X -q -At -d "${RACE_DB:-$DB}" -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
           AND application_name = '$1' AND '$2' IN (wait_event, wait_event_type)")" -ge 1 ] 2>/dev/null && return 0
     sleep 0.25
   done
+  return 1
+}
+# the same, and if it doesn't, a failure of the suite's (its count of fails), which says what it waited for
+waits_on() {
+  until_waits "$1" "$2" && return 0
   echo "FAIL  the session $1 didn't wait on $2 within a minute"
   fails=$((fails + 1))
   return 1

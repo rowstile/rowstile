@@ -3,14 +3,15 @@
   "projectTitle": "rowstile",
   "description": "Access rules for Postgres: a policy file compiled into row-level security and shipped as migrations. SDKs for Python and TypeScript; previews for Go, .NET, Ruby, Java and Kotlin, Rust, Elixir and PHP.",
   "folders": ["docs", "sdk"],
-  "excludeFolders": ["**/node_modules"],
+  "excludeFolders": ["**/node_modules", "docs/blog/*/"],
   "excludeFiles": [
     "CLAUDE.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "RELEASING.md",
     "CONTEXT-MAP.md",
-    "command-files.txt"
+    "command-files.txt",
+    "build-requirements.txt"
   ],
   "rules": [
     "The policy is one .authz file named by rowstile.toml, with its tests beside it. Everything that gives access is written there: app code checks nothing by hand.",

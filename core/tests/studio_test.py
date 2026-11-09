@@ -85,6 +85,24 @@ def command(dsn: str, *args: str) -> tuple[int, str]:
     return r.returncode, r.stdout + r.stderr
 
 
+def why(db: str, *question: str) -> tuple[int, str, list[str], list[str]]:
+    """rowstile why on db: its exit code, what it printed, the ways it says would grant the permission (the
+    indented lines after "would be granted by:", stripped), and the lines after them that aren't ways."""
+    rc, said = cli(db, "why", *question)
+    lines = said.splitlines()
+    after = lines[lines.index("would be granted by:") + 1 :] if "would be granted by:" in lines else []
+    return rc, said, [x.strip() for x in after if x.startswith("  ")], [x for x in after if not x.startswith("  ")]
+
+
+def run_named(db: str, text: str) -> tuple[int, str]:
+    """rowstile test on db, of a test file that holds text (a named test Studio wrote, say): its exit code, and
+    what it printed."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return cli(db, "test", os.path.join(tmp, "made.authz"))
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -163,7 +181,7 @@ class Client:
             self.base + path, data=data, headers=headers, method="POST" if body is not None else "GET"
         )
         try:
-            with urllib.request.urlopen(req) as r:
+            with urllib.request.urlopen(req, timeout=120) as r:
                 raw = r.read()
                 return r.status, json.loads(raw) if path.startswith("/api/") else raw.decode()
         except urllib.error.HTTPError as e:
@@ -236,8 +254,10 @@ def waiting(db: str, s: studio.Studio, path: str, body: object, lock: str, then:
             time.sleep(0.25)
         asked.join(30)
         locker.execute("ROLLBACK")
-        asked.join()
+        asked.join(120)
     locker.close()
+    if asked.is_alive():  # (a request that never came back: the suite says so, it doesn't wait on it for ever)
+        raise SystemExit(f"FAIL  a request to {path} waited behind the lock and never came back")
     return (*got[0], logged.getvalue())
 
 
@@ -441,11 +461,8 @@ def main() -> None:
     shares = lambda: psql(db, "SELECT count(*) FROM authz.shares")
 
     print("-- rowstile why")
-    rc, out = cli(db, "why", "--as", "user:3", "folder", "3", "edit")
+    rc, out, ways, _ = why(db, "--as", "user:3", "folder", "3", "edit")
     lines = out.splitlines()
-    ways = (
-        [x.strip() for x in lines[lines.index("would be granted by:") + 1 :]] if "would be granted by:" in lines else []
-    )
     check("no, and why not", rc == 0 and lines[0] == "no: user:3 does not hold edit on folder 3", out)
     check(
         "the smallest change first: a share on the folder itself",
@@ -468,28 +485,15 @@ def main() -> None:
         db,
         "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', '3', 'viewer', 'user', '3')",
     )
-    _, out = cli(db, "why", "--as", "user:3", "folder", "3", "edit")
+    _, out, ways, _ = why(db, "--as", "user:3", "folder", "3", "edit")
     psql(db, f"DELETE FROM authz.shares WHERE {mine} AND relation = 'viewer'")
-    lines = out.splitlines()
-    ways = (
-        [x.strip() for x in lines[lines.index("would be granted by:") + 1 :]] if "would be granted by:" in lines else []
-    )
     check(
         "... and beside a share of hers of another relation there, the editor's share still comes first",
         ways and ways[0].startswith("share editor on folder 3 with user 3"),
         out,
     )
 
-    def granted_by(*question: str) -> tuple[list[str], str]:
-        _, said = cli(db, "why", *question)
-        after = said.splitlines()
-        return (
-            [x.strip() for x in after[after.index("would be granted by:") + 1 :]]
-            if "would be granted by:" in after
-            else []
-        ), said
-
-    asked, out = granted_by("--as", "user:6", "folder", "2", "view")
+    _, out, asked, _ = why(db, "--as", "user:6", "folder", "2", "view")
     check(
         "the way that gives the least comes first: a viewer (and the file in the folder), before an editor",
         asked
@@ -508,7 +512,7 @@ def main() -> None:
         "edit on 3 files for user:6)  [line 45]" in asked,
         out,
     )
-    asked, out = granted_by("--as", "user:3", "folder", "3", "share")
+    _, out, asked, _ = why(db, "--as", "user:3", "folder", "3", "share")
     ways_of_share, said_of_share = asked, out
     owner = next((w for w in asked if w.startswith("set owner_id of folder 3 to 3")), "")
     check(
@@ -516,7 +520,7 @@ def main() -> None:
         "(also gives edit" in owner and "(takes share on it from 1 person)" in owner,
         out,
     )
-    asked, out = granted_by("--as", "user:6", "folder", "2", "share")
+    _, out, asked, _ = why(db, "--as", "user:6", "folder", "2", "share")
     check(
         "a relation with a where: the row, with the column the condition asks",
         any(w.startswith("add user 6 to app.org_members for org 1, with role = 'admin'") for w in asked),
@@ -534,7 +538,7 @@ def main() -> None:
         "and view on 3 files for user:3)  [line 32]" in ways_of_share,
         said_of_share,
     )
-    asked, out = granted_by("--as", "user:2", "folder", "5", "edit")
+    _, out, asked, _ = why(db, "--as", "user:2", "folder", "5", "edit")
     check(
         "... for a group's link too",
         any(w.startswith("set access = 'edit' on team 11's row of app.folder_team_access for folder 5") for w in asked),
@@ -609,7 +613,6 @@ def main() -> None:
     try:
         status, page = c.call("/")
         check("the page, without the token (it carries no data)", status == 200 and "rowstile Studio" in page, status)
-        check("the API needs the token", Client(ro, token="wrong").call("/api/overview")[0] == 401)
         # a page left open from Studio's run before holds that run's token: the answer says what happened
         check(
             "a token from an earlier start of Studio: 401, saying Studio was started again and which address to open",
@@ -638,9 +641,11 @@ def main() -> None:
             ),
             Client(ro, token="").call("/api/overview"),
         )
+        status, e = c.call("/api/overview", host="evil.example:4983")
         check(
-            "... and a request for localhost (not a DNS name pointed here)",
-            c.call("/api/overview", host="evil.example:4983")[0] == 403,
+            "... and a request for localhost (not a DNS name pointed here), saying so",
+            status == 403 and isinstance(e, dict) and e.get("detail") == "Studio answers on localhost only",
+            (status, e),
         )
         check(
             "... a page opened at localhost by hand is answered too",
@@ -815,10 +820,7 @@ def main() -> None:
             in t["named"],
             t["named"],
         )
-        with tempfile.TemporaryDirectory() as tmp:
-            with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
-                fh.write(t["named"])
-            rc, out = cli(db, "test", os.path.join(tmp, "made.authz"))
+        rc, out = run_named(db, t["named"])
         made = out.split("user 3 cannot edit folder 3", 1)[-1].split("invariants", 1)[0]
         check(
             "... and the test runs as it is: its rows are made, its check passes",
@@ -1309,10 +1311,7 @@ def main() -> None:
             status == 200 and made == row and '"inherit": false' in row and '"tags": ["plans", "q3 review"]' in row,
             (made, row),
         )
-        with tempfile.TemporaryDirectory() as tmp:
-            with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
-                fh.write(t.get("named", ""))
-            _, out = cli(db, "test", os.path.join(tmp, "made.authz"))
+        _, out = run_named(db, t.get("named", ""))
         ran = out.split("user 3 cannot edit folder 5", 1)[-1].split("invariants", 1)[0]
         check(
             "... and the test runs as it is",
@@ -1335,13 +1334,14 @@ def main() -> None:
     check("... and Ctrl-C stops it", stopped(p) == 0)
     p, line, at = serving(db, "--write")
     status, o = Client(at).call("/api/overview")
-    stopped(p)
+    code = stopped(p)
     check(
-        "with --write it says it can write, and does",
+        "with --write it says it can write, and does (and Ctrl-C stops it)",
         line.endswith(f"/?token={at.token}  (can write: shares and requests; Ctrl-C stops it)\n")
         and status == 200
-        and o["writable"] is True,
-        (line, status, o),
+        and o["writable"] is True
+        and code == 0,
+        (line, status, o, code),
     )
     with socket.socket() as held:
         held.bind(("127.0.0.1", 0))
@@ -1605,13 +1605,7 @@ def main() -> None:
         )
         # why on a policy with a container of two types and custom roles: the ways through the project the doc
         # sits in, and its own author; a custom role is no way rowstile why offers (roles are made at run time)
-        _, said = cli(masks, "why", "--as", f"user:{carol}", "doc", plain, "edit")
-        lines = said.splitlines()
-        ways = (
-            [x.strip() for x in lines[lines.index("would be granted by:") + 1 :]]
-            if "would be granted by:" in lines
-            else []
-        )
+        _, said, ways, _ = why(masks, "--as", f"user:{carol}", "doc", plain, "edit")
         check(
             "why through a container of two types: the project's lead, or the doc's author",
             any(w.startswith(f"set lead_id of project 1 to {carol}") for w in ways)
@@ -1684,10 +1678,7 @@ def main() -> None:
             status, t = Client(ks).call(f"/api/test?as=user:2&{ask}&expect=cannot")
             rc, out = -1, ""
             if status == 200:
-                with tempfile.TemporaryDirectory() as tmp:
-                    with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
-                        fh.write(f'test "on the data there"\n  {t["check"]}\n\n{t["named"]}')
-                    rc, out = cli(keys, "test", os.path.join(tmp, "made.authz"))
+                rc, out = run_named(keys, f'test "on the data there"\n  {t["check"]}\n\n{t["named"]}')
             check(
                 f"a test on {label}: no copy of the row, and the check and the test run as written",
                 status == 200
@@ -1731,10 +1722,7 @@ def main() -> None:
         and '"locked": true' in row,
         (status, t, made, row),
     )
-    with tempfile.TemporaryDirectory() as tmp:
-        with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
-            fh.write(named)
-        _, out = cli(caps, "test", os.path.join(tmp, "made.authz"))
+    _, out = run_named(caps, named)
     ran = out.split("user 2 cannot edit note 2", 1)[-1].split("invariants", 1)[0]
     check(
         "... and the test runs as it is",
@@ -1815,9 +1803,7 @@ def main() -> None:
             s.stop()
         rc, out = -1, ""
         if status == 200:
-            with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
-                fh.write(f'test "on the data there"\n  {t["check"]}\n\n{t["named"]}')
-            rc, out = cli(plain, "test", os.path.join(tmp, "made.authz"))
+            rc, out = run_named(plain, f'test "on the data there"\n  {t["check"]}\n\n{t["named"]}')
         check(
             "a test as someone whose id isn't one word: quoted, and the check and the test run as written",
             status == 200
@@ -1858,11 +1844,7 @@ def main() -> None:
         "INSERT INTO cx.regions (id, chief_id) VALUES (2, 2); INSERT INTO cx.projects (id, lead_id) VALUES (1, 2); "
         "INSERT INTO cx.backings VALUES (1, 'region', 2)",
     )
-    rc, said = cli(cross, "why", "--as", "user:1", "project", "1", "fund")
-    after = said.splitlines()
-    ways = (
-        [x.strip() for x in after[after.index("would be granted by:") + 1 :]] if "would be granted by:" in after else []
-    )
+    rc, said, ways, _ = why(cross, "--as", "user:1", "project", "1", "fund")
     check(
         "the backer of the type its row names: the region's chief, and nothing of the folder of the same id",
         rc == 0
@@ -2046,10 +2028,7 @@ def grid(db: str) -> None:
             status == 200 and made == row and '"nul": null' in row and '"num": 5' in row,
             (status, t, made, row),
         )
-        with tempfile.TemporaryDirectory() as tmp:
-            with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
-                fh.write(named)
-            _, out = cli(db, "test", os.path.join(tmp, "made.authz"))
+        _, out = run_named(db, named)
         ran = out.split("user 1 cannot see fact 1", 1)[-1].split("invariants", 1)[0]
         check(
             "... and the test runs as it is",
@@ -2066,10 +2045,7 @@ def grid(db: str) -> None:
             and '  -- "mac" is the copied row\'s: give the copy a key of its own' in named,
             (status, t),
         )
-        with tempfile.TemporaryDirectory() as tmp:
-            with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
-                fh.write(named.replace("VALUES ('08:00:2b:01:02:03'", "VALUES ('08:00:2b:01:02:04'"))
-            _, out = cli(db, "test", os.path.join(tmp, "made.authz"))
+        _, out = run_named(db, named.replace("VALUES ('08:00:2b:01:02:03'", "VALUES ('08:00:2b:01:02:04'"))
         ran = out.split("user 1 cannot see device 08:00:2b:01:02:03", 1)[-1].split("invariants", 1)[0]
         check(
             "... and with a key of its own, the test runs",
@@ -2400,14 +2376,7 @@ def corners(db: str) -> None:
     )
     before = psql(db, data)
 
-    def why(*question: str) -> tuple[int, str, list[str], list[str]]:
-        """The exit code, what it printed, the ways that grant it, and the lines after them."""
-        rc, said = cli(db, "why", *question)
-        lines = said.splitlines()
-        ways = lines[lines.index("would be granted by:") + 1 :] if "would be granted by:" in lines else []
-        return rc, said, [x.strip() for x in ways if x.startswith("  ")], [x for x in ways if not x.startswith("  ")]
-
-    rc, said, ways, _ = why("--as", "user:2", "doc", "5", "view")
+    rc, said, ways, _ = why(db, "--as", "user:2", "doc", "5", "view")
     check(
         "a group whose membership is a permission: a share with each group the person belongs to, the one above "
         "through the one below too",
@@ -2416,7 +2385,7 @@ def corners(db: str) -> None:
         and "share viewer on doc 5 with grp#belong 1  [line 17]" in ways,
         said,
     )
-    rc, said, ways, _ = why("--as", "user:3", "grp", "2", "belong")
+    rc, said, ways, _ = why(db, "--as", "user:3", "grp", "2", "belong")
     check(
         "a table that names its rows' type: the row it adds names the person's",
         rc == 0
@@ -2424,14 +2393,14 @@ def corners(db: str) -> None:
         == ["add user 3 to cn.group_members for grp 2 (also gives belong on 1 more grp for user:3)  [line 9]"],
         said,
     )
-    rc, said, ways, _ = why("--as", "user:3", "doc", "3", "view")
+    rc, said, ways, _ = why(db, "--as", "user:3", "doc", "3", "view")
     check(
         "a share that expired: made again, as authz.share makes it, first",
         rc == 0
         and ways[:1] == ["share viewer on doc 3 with user 3 (also gives view on 2 more docs for user:3)  [line 17]"],
         said,
     )
-    rc, said, ways, _ = why("--as", "user:4", "doc", "5", "view")
+    rc, said, ways, _ = why(db, "--as", "user:4", "doc", "5", "view")
     check(
         "a share the relation's `shared if` refuses (dee isn't active) is no way, as authz.share would refuse it",
         rc == 0
@@ -2452,7 +2421,7 @@ def corners(db: str) -> None:
         ],
         said,
     )
-    rc, said, _, after = why("--as", "user:3", "doc", "5", "view")
+    rc, said, _, after = why(db, "--as", "user:3", "doc", "5", "view")
     check(
         "a row the table refuses (a column no change fills): said, with the database's reason; for the doc and the "
         "three above it, and no higher",
@@ -2465,7 +2434,7 @@ def corners(db: str) -> None:
         ],
         said,
     )
-    rc, said, ways, _ = why("--as", "user:3", "shelf", "2", "use")
+    rc, said, ways, _ = why(db, "--as", "user:3", "shelf", "2", "use")
     check(
         "a permission only a row the table refuses would give: no change that could be tried grants it, and why",
         rc == 0
@@ -2477,7 +2446,7 @@ def corners(db: str) -> None:
         ),
         said,
     )
-    rc, said, ways, _ = why("--as", "bot:1", "doc", "2", "view")
+    rc, said, ways, _ = why(db, "--as", "bot:1", "doc", "2", "view")
     check(
         "as a service that signs in: why not, as the database explains it to the service, and a share with it",
         rc == 0
@@ -2485,7 +2454,7 @@ def corners(db: str) -> None:
         and ways[:1] == ["share viewer on doc 2 with bot 1 (also gives view on 1 more doc for bot:1)  [line 17]"],
         said,
     )
-    rc, said, ways, after = why("--as", "user:2", "project", "(1,5)", "edit")
+    rc, said, ways, after = why(db, "--as", "user:2", "project", "(1,5)", "edit")
     check(
         "a key of two columns: a row of the link table, and the column, each from the key's fields",
         rc == 0
@@ -2514,7 +2483,7 @@ def corners(db: str) -> None:
         after == [],
         said,
     )
-    rc, said, ways, after = why("--as", "user:3", "club", "1", "enter")
+    rc, said, ways, after = why(db, "--as", "user:3", "club", "1", "enter")
     check(
         "... nor a row of cn.users for cy, whose own row names her club: the note says changing it would move her",
         rc == 0
@@ -2525,7 +2494,7 @@ def corners(db: str) -> None:
         ),
         said,
     )
-    rc, said, ways, after = why("--as", "user:3", "page", "2", "read")
+    rc, said, ways, after = why(db, "--as", "user:3", "page", "2", "read")
     check(
         "a deny above it, on a page shared with every user: no change grants it, and the note says what may stop it",
         rc == 0
@@ -2535,7 +2504,7 @@ def corners(db: str) -> None:
         ),
         said,
     )
-    rc, said, ways, after = why("--as", "user:1", "doc", "6", "archive")
+    rc, said, ways, after = why(db, "--as", "user:1", "doc", "6", "archive")
     check(
         "a condition: no change grants it, and the note names it",
         rc == 0
@@ -2546,7 +2515,7 @@ def corners(db: str) -> None:
         said,
     )
     # a `shared if` that reads who shares: judged as authz.share judges it, as someone who may share the room (ann)
-    rc, said, ways, _ = why("--as", "user:2", "room", "1", "enter")
+    rc, said, ways, _ = why(db, "--as", "user:2", "room", "1", "enter")
     made = psql(
         db,
         "BEGIN; SELECT authz.act_as('user', '1'); SELECT authz.share('room', '1', 'guest', 'user', '2'); "
@@ -2571,7 +2540,7 @@ def corners(db: str) -> None:
     )
     # a column naming org 1's admins: moving the desk to org 2 replaces them (ann), not every row of cn.org_members
     # (eve's, a member's, whose sit and chair a condition gives: not the people the change unlinks)
-    rc, said, ways, _ = why("--as", "user:2", "desk", "1", "keep")
+    rc, said, ways, _ = why(db, "--as", "user:2", "desk", "1", "keep")
     check(
         "a column naming a group a where narrows: what it takes from others is from the group's people only",
         rc == 0
@@ -2580,7 +2549,7 @@ def corners(db: str) -> None:
         in ways,
         said,
     )
-    rc, said, ways, _ = why("--as", "user:2", "chair", "1", "rest")
+    rc, said, ways, _ = why(db, "--as", "user:2", "chair", "1", "rest")
     check(
         "what a way takes from others on other objects: the type asked about first, then the policy's order",
         rc == 0
@@ -2590,7 +2559,7 @@ def corners(db: str) -> None:
         in ways,
         said,
     )
-    rc, said, ways, _ = why("--as", "user:2", "room", "2", "enter")
+    rc, said, ways, _ = why(db, "--as", "user:2", "room", "2", "enter")
     check(
         "two ways that each give one other permission: the one that gives this one to fewer people first",
         rc == 0
@@ -2603,7 +2572,7 @@ def corners(db: str) -> None:
         said,
     )
     # the same, where the relation names the team first: the order the ways were found in is not the answer
-    rc, said, ways, _ = why("--as", "user:2", "hall", "1", "enter")
+    rc, said, ways, _ = why(db, "--as", "user:2", "hall", "1", "enter")
     check(
         "two ways alike but for whom else they reach: the one that reaches nobody else first, whatever the order found",
         rc == 0
@@ -2616,13 +2585,13 @@ def corners(db: str) -> None:
     )
     # a change that changes nothing (a column holding what it would set, a link's row that is there) is no way, alone
     # or beside another: not tried, and not refused
-    rc, said, ways, after = why("--as", "user:1", "room", "1", "present")
+    rc, said, ways, after = why(db, "--as", "user:1", "room", "1", "present")
     check(
         "the owner who needs the mic: the mic alone, not the owner she is already beside it",
         rc == 0 and ways == ["add user 1 to cn.room_mics for room 1  [line 52]"] and after == [],
         said,
     )
-    rc, said, ways, after = why("--as", "user:2", "room", "1", "present")
+    rc, said, ways, after = why(db, "--as", "user:2", "room", "1", "present")
     check(
         "the mic's holder who needs the room: the owner alone, and no row of cn.room_mics he has already (refused as "
         "a duplicate)",
@@ -2636,7 +2605,7 @@ def corners(db: str) -> None:
         said,
     )
     # tables and columns named in capitals: a row added, and a row there whose column the link's where reads changed
-    rc, said, ways, after = why("--as", "user:1", "stage", "1", "perform")
+    rc, said, ways, after = why(db, "--as", "user:1", "stage", "1", "perform")
     check(
         "a link table named in capitals: the row it adds, its columns quoted, with the column its where asks",
         rc == 0
@@ -2648,7 +2617,7 @@ def corners(db: str) -> None:
         and after == [],
         said,
     )
-    rc, said, ways, after = why("--as", "user:2", "stage", "1", "perform")
+    rc, said, ways, after = why(db, "--as", "user:2", "stage", "1", "perform")
     check(
         "... and the row there (bo's mic, off): its column set, beside the owner; one change before two, though the "
         "share gives more",
@@ -2662,7 +2631,7 @@ def corners(db: str) -> None:
         and after == [],
         said,
     )
-    rc, said, ways, after = why("--as", "user:3", "doc", "7", "view")
+    rc, said, ways, after = why(db, "--as", "user:3", "doc", "7", "view")
     check(
         "groups inside groups: joining one three deep at most (4, 5 and 6, not 7, inside 6), the fewest others first",
         rc == 0
@@ -2681,13 +2650,13 @@ def corners(db: str) -> None:
     )
     # what no change makes count: an object or a person that isn't there (as authz.share says of a subject), or a row
     # the type's where leaves out. Said, and nothing tried
-    rc, said, ways, _ = why("--as", "user:3", "doc", "999", "view")
+    rc, said, ways, _ = why(db, "--as", "user:3", "doc", "999", "view")
     check(
         "an object that isn't there: no, why not, and that there is no such doc; nothing tried",
         rc == 0 and said.endswith("view = edit or viewer or reader or parent.view  (line 21)\nthere is no doc 999\n"),
         said,
     )
-    rc, said, ways, _ = why("--as", "user:3", "doc", "five", "view")
+    rc, said, ways, _ = why(db, "--as", "user:3", "doc", "five", "view")
     check(
         "an id its key can't hold: no, and there is no such doc",
         rc == 0
@@ -2697,20 +2666,20 @@ def corners(db: str) -> None:
         said,
     )
     for who, there_is_no in (("user:999", "user 999"), ("user:abc", "user abc"), ("bot:9", "bot 9")):
-        rc, said, ways, _ = why("--as", who, "doc", "5", "view")
+        rc, said, ways, _ = why(db, "--as", who, "doc", "5", "view")
         check(
             f"as someone who isn't there ({who}): there is no {there_is_no}; nothing tried",
             rc == 0 and said.endswith(f"(line 21)\nthere is no {there_is_no}\n"),
             said,
         )
-    rc, said, ways, _ = why("--as", "user:999", "doc", "999", "view")
+    rc, said, ways, _ = why(db, "--as", "user:999", "doc", "999", "view")
     check(
         "... and neither of them there: both said",
         rc == 0 and said.endswith("(line 21)\nthere is no user 999\nthere is no doc 999\n"),
         said,
     )
     for shelf, which in (("1", "a closed shelf"), ("3", "a shelf not known to be open: the where is NULL")):
-        rc, said, ways, _ = why("--as", "user:3", "shelf", shelf, "use")
+        rc, said, ways, _ = why(db, "--as", "user:3", "shelf", shelf, "use")
         check(
             f"a row the type's where leaves out ({which}) holds nothing: said, and nothing tried",
             rc == 0
@@ -2722,7 +2691,7 @@ def corners(db: str) -> None:
         )
     # a change that grants it, where counting what else it gives fails (weigh can't be listed: crate 2's condition
     # divides by zero): not offered as a way, since what else it gives wasn't counted, only said as not tried
-    rc, said, ways, _ = why("--as", "user:2", "crate", "1", "open")
+    rc, said, ways, _ = why(db, "--as", "user:2", "crate", "1", "open")
     check(
         "a change whose other effects can't be counted is said once, as not tried, never as a way that grants it",
         rc == 0

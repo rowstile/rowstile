@@ -120,10 +120,18 @@ def linked_column(src: Source) -> str | None:
     return src.column if src.subjects[0][1] is None else None
 
 
+def own_key(t: Type) -> str | None:
+    """The type's key column, which a condition reads as the row's id (`{id = 2}`); None for a key of several."""
+    return t.pk
+
+
 def rows_with_links(t: Type, data: Data) -> dict[str, dict[str, Scalar]]:
     """Each row of t's column values for simple conditions, a column a relation reads being its link's id (so a
-    smaller world, with a link taken away, has the column NULL)."""
+    smaller world, with a link taken away, has the column NULL), and the key column the row's own id."""
     rows = {i: dict(v) for i, v in data.columns.get(t.name, {}).items()}
+    if (pk := own_key(t)) is not None:
+        for i in data.ids.get(t.name, []):
+            rows.setdefault(i, {})[pk] = i
     for r in t.relations.values():
         for i, src in enumerate(r.sources):
             col = linked_column(src)
@@ -550,7 +558,9 @@ def ids_named(pols: Sequence[Policy]) -> dict[str, list[str]]:
     alike = alike_in(pols)
     hows: dict[str, list[tuple[str, Scalar]]] = {}
     for p in pols:
-        linked = {
+        # (and the type's own key: `{id = 2}` names its row 2)
+        linked = {(t.name, pk): t.name for t in p.types.values() if (pk := own_key(t)) is not None}
+        linked |= {
             (t.name, col): src.subjects[0][0]
             for t in p.types.values()
             for r in t.relations.values()
@@ -778,8 +788,8 @@ class World:
         }
         linked = self.linked(pol)
         for (tname, col), values in self.domains(pol).items():
-            if tname not in pol.types:
-                continue
+            if tname not in pol.types or ((tname, col) not in linked and col == own_key(pol.types[tname])):
+                continue  # (the row's key is its id: rows_with_links)
             ids = self.ids(tname)
             if (tname, col) in linked:
                 st, rname = linked[(tname, col)]
@@ -817,7 +827,8 @@ class World:
                 continue
             wanted.setdefault(tname, []).append((node, self.conds[squeeze_sql(cond)]))
         for tname, nodes in sorted(wanted.items(), key=lambda kv: kv[0]):
-            links = {col for t, col in linked if t == tname}
+            pk = own_key(pol.types[tname])
+            links = {col for t, col in linked if t == tname} | ({pk} if pk else set())
             for group in groups(nodes, links):
                 read = {col for node, _ in group for col in columns_of(node)}
                 cols, by_link = sorted(read - links), sorted(read & links)
@@ -847,7 +858,8 @@ class World:
                 choices = list(itertools.product(*[domains[(tname, col)] for col in cols]))
                 alike = best_of({}, choices) if not by_link else []
                 for i in out[tname]:
-                    best = alike or best_of({c: out[tname][i][c] for c in by_link}, choices)
+                    row = {**({pk: i} if pk else {}), **out[tname][i]}
+                    best = alike or best_of({c: row.get(c) for c in by_link}, choices)
                     values = self.pick(("corner", tname, i, *cols), lambda rng, best=best: rng.choice(best))
                     out[tname][i].update(zip(cols, values, strict=True))
 
@@ -889,7 +901,10 @@ class World:
             # the where is a condition like any other: the same text gives the same rows in a rule or a permission
             where = self.facts(pol, t.where) if t.where else None
             if t.where and where is not None and not uses_uid(where):
-                out.valid[t.name] = [i for i in ids if truth(where, out.columns[t.name][i], None) is True]
+                pk = own_key(t)
+                out.valid[t.name] = [
+                    i for i in ids if truth(where, {**({pk: i} if pk else {}), **out.columns[t.name][i]}, None) is True
+                ]
             else:
                 out.valid[t.name] = self.holds(t.name, t.where, ids, 0.85) if t.where else ids
             for r in t.relations.values():
@@ -1508,9 +1523,11 @@ class Listing:
             else:
                 plain.append((node, True))
         users = self.possible_ids("user")
-        # a relation's column is the row's link (Listed.data): the classes are of the other columns, each class an
-        # answer of the conditions for every link the row may have (to a row of the type it names, or none)
-        links = {col for tname, col in self.linked if tname == t.name}
+        # a relation's column is the row's link (Listed.data), the key column its id: the classes are of the other
+        # columns, each class an answer of the conditions for every link the row may have (to a row of the type it
+        # names, or none) and every id
+        pk = own_key(t)
+        links = {col for tname, col in self.linked if tname == t.name} | ({pk} if pk else set())
         parts: list[list[tuple[tuple[str, Scalar], ...]]] = []
         for group in groups(plain, links):
             read = {col for node, _ in group for col in columns_of(node)}
@@ -1519,7 +1536,14 @@ class Listing:
                 continue  # (a condition on links alone: they vary)
             given = [
                 dict(zip(by_link, vs, strict=True))
-                for vs in itertools.product(*[[*self.possible_ids(self.linked_to[(t.name, c)]), None] for c in by_link])
+                for vs in itertools.product(
+                    *[
+                        [*self.possible_ids(self.linked_to[(t.name, c)]), None]
+                        if (t.name, c) in self.linked_to
+                        else self.possible_ids(t.name)
+                        for c in by_link
+                    ]
+                )
             ]
             uids: list[str | None] = [*users, None] if any(uses_uid(node) for node, _ in group) else [None]
             self.holds_users |= len(uids) > 1

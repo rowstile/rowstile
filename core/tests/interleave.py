@@ -2,7 +2,7 @@
 """interleave: every order of the steps of two tree writes, each session at each isolation level.
 
     python3 tests/interleave.py [--levels "read committed,repeatable read,serializable"] [--db authz_interleave]
-                                [--worlds docs,cross,parts,boxes] [--pairs create-move]
+                                [--worlds docs,cross,parts,boxes,docs_by,docs_after] [--pairs create-move]
 
 Two sessions each run one transaction on a small subtree: a read, which takes the snapshot (of a table no write
 touches, so that what SERIALIZABLE notices is the writes' own doing; the BEGIN goes with it: a BEGIN takes no
@@ -42,8 +42,8 @@ nothing the next run could choose differently, or the run says so).
 
 After each schedule, as the owner:
   - every error was the write's own refusal that the other write can cause (a loop, a parent gone, a share on a
-    row gone, each by its words), or 40001 or 40P01, to retry, in a session that isn't in READ COMMITTED: READ
-    COMMITTED never needs a retry;
+    row gone, each by its words), once that write committed (its COMMIT sent before the refusal came), or 40001
+    or 40P01, to retry, in a session that isn't in READ COMMITTED: READ COMMITTED never needs a retry;
   - authz.verify(): the inheritance tables match a rebuild (and the conditions noted for them, where they read
     other rows, are what the rows say now); in docs, authz.sync_verify() too: the sync index (a preview) does;
   - no row sits inside itself through its parents;
@@ -569,6 +569,7 @@ class Outcome(NamedTuple):
     tag: str  # the last statement's, in the server's words (COMMIT, ROLLBACK, INSERT 0 1)
     code: str  # the error's SQLSTATE, or ''
     message: str
+    at: float = 0.0  # when the answer came (time.monotonic())
 
 
 class Session:
@@ -597,7 +598,7 @@ class Session:
                 out = Outcome("", e.code, e.message)
             except (pgwire.ProtocolError, OSError) as e:
                 out = Outcome("", "08006", f"the connection broke: {e}")
-            self.outcome = out
+            self.outcome = out._replace(at=time.monotonic())
             self.done.set()
 
     def send(self, statements: list[str]) -> None:
@@ -634,6 +635,7 @@ class Run:
     points: list[list[int]] = field(default_factory=list)  # the sessions that could go, at each such point
     events: list[str] = field(default_factory=list)
     outcomes: dict[tuple[int, str], Outcome] = field(default_factory=dict)
+    sent: dict[tuple[int, str], float] = field(default_factory=dict)  # when each step was sent (time.monotonic())
     waited: bool = False
     waiting: set[int] = field(default_factory=set)  # the sessions whose step waits for a lock
     order: list[int] = field(default_factory=list)  # the session of each step, in the order sent
@@ -761,6 +763,7 @@ class Scheduler:
                 current[s.n] = step
                 run.order.append(s.n)
                 run.events.append(f"{s.n} {step}")
+                run.sent[(s.n, step)] = time.monotonic()
                 s.send(statements)
                 if not s.done.wait(0.005):
                     self.settle(run, current)
@@ -786,9 +789,12 @@ class Scheduler:
             o, other = ops[n - 1], ops[2 - n]
             if out.code in RETRY and levels[n - 1] != "read committed":
                 continue
+            # the other write causes a refusal only once it is there to see: committed, its COMMIT sent before the
+            # refusal came (Postgres shows no write before its commit)
+            seen = (3 - n) in run.committed and run.sent[(3 - n, "commit")] < out.at
             met = [
                 r
-                for r in (o.refusals if step == "write" and o is not None and other is not None else ())
+                for r in (o.refusals if step == "write" and o is not None and other is not None and seen else ())
                 if r.code == out.code and r.words in out.message and other is not None and other.kind in r.by
             ]
             if met:
@@ -974,7 +980,11 @@ def main() -> None:
     for x in worlds:
         if x not in WORLDS:
             ap.error(f"no world {x!r}: {', '.join(WORLDS)}")
-    wanted = {tuple(p.split("-")) for p in args.pairs.split(",") if p}
+    wanted = {tuple(p.strip().split("-")) for p in args.pairs.split(",") if p.strip()}
+    known = {p for name in worlds for p in WORLDS[name].pairs()}
+    for p in sorted(wanted):
+        if p not in known and p[::-1] not in known:
+            ap.error(f"no pair {'-'.join(p)!r} in the worlds {', '.join(worlds)}: each is two of a world's kinds")
     started = time.monotonic()
     fails = 0
     for name in worlds:

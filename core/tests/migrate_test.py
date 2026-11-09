@@ -3,9 +3,10 @@
 
 For each change to a policy: one database gets the old policy, then the migration the lock file of the
 old policy gives; another gets the old policy, then the new one, each applied whole. Everything rowstile made in them must be the
-same: functions (with their privileges), views, triggers, row-level security policies, the catalog
-tables and the inheritance tables' rows. Then the migration back, which must give the old policy again. Each
-change needs a migration but lines that only move: there the database must already be what applying whole makes.
+same: functions (with their privileges), views, triggers, row-level security policies, the columns of rowstile's
+tables, the catalog tables, the inheritance tables' rows and where each line the messages name is
+(authz_gen.policy_lines). Then the migration back, which must give the old policy again. Each change needs a
+migration; lines that only move need one that writes where they are now, and nothing else.
 
 And what a new version of rowstile changes alone, the policy the same (RELEASES): the database and the lock made as an
 older version would have made them; the migration must bring what this version makes.
@@ -56,7 +57,7 @@ SCHEMAS = {
 
 REORDERED_COLUMN_RULES = "column rules written in another order"  # (whose migration must make no trigger again)
 LOST_RULES = "a table with no rules any more"  # (whose migration warns that row-level security stays on)
-LINES_MOVE = "lines that only move"  # (the one change that needs no migration: the database stays as it is)
+LINES_MOVE = "lines that only move"  # (whose migration writes authz_gen.policy_lines again, and makes nothing)
 TREE_GOES = "a link that stops passing view on (a tree removed)"  # (an index of the app's has its index's name)
 # (name, schema, old policy, new policy): a kind of change each, both ways. The kinds held so far: a permission, a
 # relation (shared, shared if, from a table with a where), a type (its line, moved, added as a principal, removed),
@@ -653,7 +654,7 @@ SELECT 'column ' || c.oid::regclass::text || '.' || a.attname || ' ' || format_t
        || ' ' || coalesce(a.attacl::text, '')
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_attribute a ON a.attrelid = c.oid
 WHERE c.relkind IN ('r', 'p', 'v', 'c') AND a.attnum > 0 AND NOT a.attisdropped
-  AND (n.nspname IN ('authz_int', 'authz_gen') OR a.attacl IS NOT NULL)
+  AND (n.nspname IN ('authz', 'authz_int', 'authz_gen', 'authz_sync') OR a.attacl IS NOT NULL)
 UNION ALL
 SELECT 'index ' || i.indexrelid::regclass::text || E'\n' || pg_get_indexdef(i.indexrelid)
 FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -671,7 +672,7 @@ SELECT format('SELECT %L || E''\n'' || coalesce(string_agg(x, E''\n'' ORDER BY x
               'rows ' || c.oid::regclass::text,
               CASE WHEN c.relname = 'trees' THEN 't.name || '' '' || t.hash' ELSE 't::text' END, c.oid::regclass)
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname IN ('authz_int', 'authz_sync') AND c.relkind = 'r' AND c.relname NOT IN ('locks', 'session_key', 'row_marks')
+WHERE n.nspname IN ('authz_int', 'authz_gen', 'authz_sync') AND c.relkind = 'r' AND c.relname NOT IN ('locks', 'session_key', 'row_marks')
 ORDER BY 1;
 """
 # (row_marks holds a row for each row shared on or to, written as shares, keys and requests are made: a migration keeps
@@ -853,14 +854,16 @@ def main() -> None:
                 failed += 1
                 print(f"FAIL  {label}: the migration makes a column rule's trigger again")
                 continue
-            # lines that only move are the one change that needs no migration (the database stays as it is, and is
-            # what applying the new policy whole makes all the same); every other one needs one
-            if (len(ms) == 1 and ms[0].empty) != (name == LINES_MOVE):
+            # every change needs a migration: lines that only move too (the messages name the lines where they are)
+            if len(ms) == 1 and ms[0].empty:
                 failed += 1
-                print(
-                    f"FAIL  {label}: {'no migration' if ms[0].empty else 'a migration'}, where the change needs "
-                    f"{'one' if ms[0].empty else 'none'}"
-                )
+                print(f"FAIL  {label}: no migration, where the change needs one")
+                continue
+            # and theirs writes where they are, and makes nothing
+            made = re.findall(r"(?m)^\s*(?:CREATE|DROP|ALTER)\b.*", ms[-1].sql) if name == LINES_MOVE else []
+            if made or (name == LINES_MOVE and "DELETE FROM authz_gen.policy_lines;" not in ms[-1].sql):
+                failed += 1
+                print(f"FAIL  {label}: the migration of lines that moved makes more than their rows: {made[:3]}")
                 continue
             if not check(label, name, schema, ms, b, OLD_PATHS if name == OTHER_PATHS else ""):
                 failed += 1

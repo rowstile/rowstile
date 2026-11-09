@@ -76,23 +76,23 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   doesn't name gets nothing, and that `authz.lint()` reports what changed and `rowstile apply` puts it right.
   A few on every run; in the full run each night the two dozen or so worlds, of a thousand seeds, in which every
   two of those features meet (words for keys in the Turkish database among them); sixty with new seeds every night.
-- **Every small policy**: a random draw can wait long for the one small policy, and the one small world, that a
-  mistake needs. [`tests/small.py`](../core/tests/small.py) lists every policy of the core language up to a size
-  instead, each once (two that differ in their names alone, or in the order of an `or`'s or an `and`'s parts, are
-  one): the user type with or without a `where`; one object type, or two, the second naming the first; relations
-  from each kind of source (a column, a link table or shares; to users, to `user:*`, to `anyone`, to a link, to a
-  group's members; a `parent` from a column, from a link table, or from a pair of columns or a link table naming
-  two types; an `up` from a column, a link table or shares); one or two permissions a type, each of up to three
-  parts joined by `or`, `and` and `and not`, or one of `signed_in`, `anyone` and `nobody` alone: inheritance, and
-  denies. Up to six sources, parts and `where`s there are 94,599, and 35,832 of seven with a deny (the whole of
-  size seven is out of reach). For each, the reference evaluator answers in every world of
-  one and two rows of each type (up to 400 of each), and in some of three; in each, the same policy written
-  another way (its names swapped, its parts turned round) must get the same answers. Then each part of the policy
-  is made wrong in turn (held by nobody or by anyone, an `and` for an `or`, a `not` left out, a link read the other
-  way round, inheritance one step deep), and the few worlds that tell every such part apart are loaded as rows (two
-  or three a policy): forty policies applied as one, and difftest's checks hold every answer of the database's to
-  the evaluator's. Each push checks those up to size three and the denies of four (122); each night, a fourteenth
-  of them all; every two weeks, the whole list.
+- **Every small policy**: a random draw can wait long for the one small policy, and the one small world, that a mistake
+  needs. [`tests/small.py`](../core/tests/small.py) lists every policy of the core language up to a size instead, each
+  once (two that differ in their names alone, or in the order of an `or`'s or an `and`'s parts, are one): the user type
+  with or without a `where`; one object type, or two, the second naming the first; relations from each kind of source (a
+  column, a link table or shares; to users, to `user:*`, to `anyone`, to a link, to a group's members; a `parent` from a
+  column, from a link table, or from a pair of columns or a link table naming two types; an `up` from a column, a link
+  table or shares); one or two permissions a type, each of up to three parts joined by `or`, `and` and `and not`, or one
+  of `signed_in`, `anyone` and `nobody` alone: inheritance, and denies. Up to six sources, parts and `where`s there are
+  94,599, and 35,832 of seven with a deny (the whole of size seven is out of reach). For each, the reference evaluator
+  answers in every world of one and two rows of each type (up to 400 of each; a column false, true or NULL where its
+  table lets it be), and in some of three; in each, the same policy written another way (its names swapped, its parts
+  turned round) must get the same answers. Then each part of the policy is made wrong in turn (held by nobody or by
+  anyone, an `and` for an `or`, a `not` left out, a link read the other way round, inheritance one step deep), and the
+  few worlds that tell every such part apart are loaded as rows (two or three a policy), with the world where the policy
+  grants most and one drawn (the database's own mistakes need not look like a part made wrong): forty policies applied
+  as one, and difftest's checks hold every answer of the database's to the evaluator's. Each push checks those up to
+  size three and the denies of four (122); each night, a fourteenth of them all; every two weeks, the whole list.
 - **Answers worked out by hand**: each paragraph of [the language's reference](reference/language.md) that says
   who may do what, given a policy and rows, carries an anchor readers don't see, and each anchor has
   a case whose answers were worked out from that paragraph, by hand, and written down before anything ran.
@@ -293,7 +293,7 @@ has no check against another answer, or when a refusal isn't asked for by its wo
 Every feature that grants or revokes access is in tier 1. Requests for access, breaking the glass and access reviews
 are tried by one user in each snapshot of the random changes, each attempt undone, and held to the reference
 evaluator: what each call says, the requests it shows, the shares it makes or revokes, and the lines it writes in
-the audit trail. <!-- checked: tests/difftest.py "the decisions say"; tests/difftest.py "authz.decide_request("; tests/unit_test.py "test_a_feature_that_grants_outside_tier_one_is_named_on_the_page" -->
+the audit trail. <!-- checked: tests/difftest.py "the decisions say"; tests/difftest.py "authz.decide_request("; tests/unit_test.py "test_a_feature_that_grants_or_revokes_is_tier_one" -->
 Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `python3 core/tests/features.py
 --matrix` prints each feature against each suite.
 
@@ -309,7 +309,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | Share links: `link`, `authz.create_link`, `authz.list_links`, `authz.revoke_link` | 1 | [app-code](reference/app-code.md) | `multi_scenario.sql`, `adversarial.sh` | `difftest.py`, `genpolicy.py` |
 | Custom roles at run time: `authz.create_role`, `authz.set_role_permissions`, `authz.delete_role`, `authz.roles_of` | 1 | [app-code](reference/app-code.md) | `multi_scenario.sql` | `difftest.py`, `genpolicy.py`, hand answers |
 | Signing in: `authz.act_as`, `authz.login_key`, `authz.login_jwt`, `authz.view_as`, `authz.principal`, `authz.connection_check`, `authz.session_limited`, `authz.sign_out`; signed sessions, one principal a transaction | 1 | [identity](reference/identity.md) | `sessions.sh`, `identity.sh`, `principals.sh`, `integrations/fastapi` | `around.py` |
-| API keys: `authz.create_api_key`, `authz.list_api_keys`, `authz.revoke_api_key` | 1 | [identity](reference/identity.md) | `identity.sh`, `principals.sh`, `children.sh` | `around.py`, `difftest.py` |
+| API keys: `authz.create_api_key`, `authz.list_api_keys`, `authz.revoke_api_key` | 1 | [identity](reference/identity.md) | `identity.sh`, `principals.sh`, `children.sh` | `around.py` |
 | Group sync from an identity provider: `authz.sync_members` | 1 | [app-code](reference/app-code.md) | `identity.sh` | `difftest.py` |
 | Requests for access and breaking the glass: `authz.request_access`, `authz.decide_request`, `authz.cancel_request`, `authz.pending_requests`, `authz.break_glass` | 1 | [governance](reference/governance.md) | `governance.sh`, `concurrency.sh` | `difftest.py`, hand answers |
 | Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review` | 1 | [governance](reference/governance.md) | `governance.sh`, `principals.sh` | `difftest.py` |
@@ -319,7 +319,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The sync index worked out after commit by a worker, a preview: `sync after commit`, `authz.sync_work`, `authz.sync_behind` | 1 | [sync](reference/sync.md) | `sync.sh`, `policy_errors.py`, `interleave.py`, `integrations/electric` | `difftest.py` |
 | Electric on the sync index, a preview: `rowstile client electric`'s shapes, and `electricShape`, the route in front of Electric | 1 | [sync](reference/sync.md) | `unit_test.py`, `cli.sh`, `integrations/electric` | `integrations/electric` |
 | Zero on the sync index, a preview: `rowstile client zero`'s tables, relationships and filters, for the app's Zero schema and its query endpoint | 1 | [sync](reference/sync.md) | `unit_test.py`, `cli.sh`, `integrations/zero` | `integrations/zero` |
-| The change feed: `authz.changes_since`, `authz.changes_position`, `authz.trim_changes`, `authz.announce_timed_shares` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` |  |
+| The change feed: `authz.changes_since`, `authz.changes_position`, `authz.trim_changes`, `authz.announce_timed_shares` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` | `difftest.py` |
 | The audit trail: `authz.audit`, `authz.trim_audit` | 1 | [governance](reference/governance.md) | `governance.sh` | `difftest.py` |
 | Checking the database: `authz.lint`, `authz.check_invariants` | 2 | [governance](reference/governance.md) | `governance.sh`, `adversarial.sh`, `apply.sh` | `around.py` |
 | What apps see of a refusal: each code's SQLSTATE and HTTP answer, the reason in the error | 1 | [app-code](reference/app-code.md) | `unit_test.py`, `reference.sh`, `adversarial.sh`, `integrations/fastapi`, `integrations/nextjs` | `around.py` |

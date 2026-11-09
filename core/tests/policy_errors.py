@@ -1465,6 +1465,8 @@ APPLY = [
 QUOTED_FILE = "o'brien 50%.authz"
 
 # policies that must apply cleanly although their names are awkward (a whole policy if it starts with its app role)
+# after an apply: the trees as a rebuild makes them (authz.verify() says so: a false answer fails the apply)
+VERIFIED = "\nDO $$ BEGIN IF NOT authz.verify() THEN RAISE EXCEPTION 'authz.verify() is false'; END IF; END $$;\n"
 APPLY_OK = [
     (
         "names longer than Postgres allows (63 bytes) are shortened consistently",
@@ -1887,6 +1889,7 @@ def main() -> None:
     db = sys.argv[sys.argv.index("--db") + 1] if "--db" in sys.argv else "authz_errors"
     os.chdir(os.path.dirname(HERE))
     fails = 0
+    cases = 0  # each check, as it runs: the total says every one printed
     for what, extra, want, line, code in COMPILE:
         try:
             compile_policy(BASE + extra)
@@ -1895,6 +1898,7 @@ def main() -> None:
             got = str(e)
         ok = want in got and got.startswith(f"line {line}:") and coded(got, code)
         fails += not ok
+        cases += 1
         print(f"{'ok  ' if ok else 'FAIL'}  {what}: {got}")
     for what, text, want, line, code in WHOLE:
         try:
@@ -1904,6 +1908,7 @@ def main() -> None:
             got = str(e)
         ok = want in got and got.startswith(f"line {line}:") and coded(got, code)
         fails += not ok
+        cases += 1
         print(f"{'ok  ' if ok else 'FAIL'}  {what}: {got}")
 
     try:
@@ -1913,6 +1918,7 @@ def main() -> None:
         got = str(e)
     ok = got.startswith("line 12: doc has no permission 'edit'") and coded(got, "AZ203")
     fails += not ok
+    cases += 1
     print(f"{'ok  ' if ok else 'FAIL'}  a test of a permission that doesn't exist: {got}")
 
     for what, extra, want, line, code in TESTS:
@@ -1923,6 +1929,7 @@ def main() -> None:
             got = str(e)
         ok = want in got and got.startswith(f"line {line}:") and coded(got, code)
         fails += not ok
+        cases += 1
         print(f"{'ok  ' if ok else 'FAIL'}  named tests: {what}: {got}")
     for what, line in (
         ("a type", "type x = alt.x"),
@@ -1940,6 +1947,7 @@ def main() -> None:
             got = str(e)
         ok = got.startswith("more.authz: a test file holds only named tests") and coded(got, "AZ106")
         fails += not ok
+        cases += 1
         print(f"{'ok  ' if ok else 'FAIL'}  named tests: a test file with {what} in it: {got}")
     try:
         c = Compiler(parse_policy(BASE))
@@ -1950,6 +1958,7 @@ def main() -> None:
         got = str(e)
     ok = got.startswith("more.authz line 2: doc has no permission 'view'") and coded(got, "AZ203")
     fails += not ok
+    cases += 1
     print(f"{'ok  ' if ok else 'FAIL'}  named tests: a mistake in a test file names the file: {got}")
 
     for what, main_text, files, want, code in INCLUDES:
@@ -1960,6 +1969,7 @@ def main() -> None:
             got = str(e)
         ok = got.startswith(want) and coded(got, code)
         fails += not ok
+        cases += 1
         print(f"{'ok  ' if ok else 'FAIL'}  included files: {what}: {got}")
     try:
         compile_policy('include "sub/a.authz"\n', files={"sub/a.authz": 'include "b.authz"\n', "sub/b.authz": BASE})
@@ -1967,6 +1977,7 @@ def main() -> None:
     except PolicyError as e:
         got = str(e)
     fails += bool(got)
+    cases += 1
     print(f"{'ok  ' if not got else 'FAIL'}  included files: nested includes compile{': ' + got if got else ''}")
 
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
@@ -1988,6 +1999,7 @@ def main() -> None:
         # every mistake the message lists carries the case's code
         ok = p.returncode != 0 and want in p.stderr and set(re.findall(r"\[(AZ\d{3})\]", p.stderr)) == {code}
         fails += not ok
+        cases += 1
         print(f"{'ok  ' if ok else 'FAIL'}  applying {what}: {err.split('ERROR:', 1)[-1].strip()}")
     for what, extra, env, *after in APPLY_OK:
         reset(db)
@@ -1995,7 +2007,7 @@ def main() -> None:
             sql = compile_policy(extra if extra.startswith("app role ") else BASE + extra)
             p = subprocess.run(
                 ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db],
-                input=sql + "\nSELECT authz.verify();\n" + "".join(after),
+                input=sql + VERIFIED + "".join(after),
                 capture_output=True,
                 text=True,
                 env={**os.environ, **env},
@@ -2005,6 +2017,7 @@ def main() -> None:
         except PolicyError as e:
             ok, err = False, str(e)
         fails += not ok
+        cases += 1
         print(f"{'ok  ' if ok else 'FAIL'}  {what}{': ' + err if err else ''}")
     # a whole policy in an included file named with a quote and a percent sign: it applies, and its named test runs,
     # its line said as written
@@ -2027,6 +2040,7 @@ def main() -> None:
     got = p.stdout.strip().splitlines()[-1] if p.returncode == 0 else p.stderr.strip()
     ok = got == f"{QUOTED_FILE} line 15: true"
     fails += not ok
+    cases += 1
     print(f"{'ok  ' if ok else 'FAIL'}  a policy in {QUOTED_FILE} applies, and its named test runs: {got}")
     # a relation that is no table gets a notice instead of the trigger, which names it as written, a % in it too (no
     # policy names such a table: trigger_if_table is called alone)
@@ -2047,6 +2061,7 @@ def main() -> None:
         and got == 'NOTICE:  "alt"."50%off" is not a table: changes to it are not audited or fed (audit)'
     )
     fails += not ok
+    cases += 1
     print(f"{'ok  ' if ok else 'FAIL'}  a relation named with a % that is no table: a notice says so: {got}")
     # a shared relation with expiring shares can't later become a link for inheritance
     v1 = compile_policy(BASE + "  shortcut : doc shared\n  can view = owner or shortcut.owner\n")
@@ -2081,6 +2096,7 @@ def main() -> None:
         )
         ok = p.returncode != 0 and want in p.stderr and "[AZ605]" in p.stderr
         fails += not ok
+        cases += 1
         err = next((ln for ln in p.stderr.splitlines() if "ERROR" in ln), "(applied without error)")
         print(
             f"{'ok  ' if ok else 'FAIL'}  turning {what} shares into inheritance links: "
@@ -2112,25 +2128,13 @@ def main() -> None:
         hint = next((ln.split("HINT:", 1)[1].strip() for ln in p.stderr.splitlines() if "HINT:" in ln), "")
         ok = (err, hint) == ((link, "rowstile help AZ605") if want else ("", ""))
         fails += not ok
+        cases += 1
         print(
             f"{'ok  ' if ok else 'FAIL'}  inheritance links: {what}: {err or '(no error)'}{f' (HINT: {hint})' * bool(hint)}"
         )
 
     subprocess.run(["dropdb", db], capture_output=True)
-    total = (
-        len(COMPILE)
-        + len(WHOLE)
-        + 1
-        + len(TESTS)
-        + 2
-        + len(INCLUDES)
-        + 1
-        + 2 * len(APPLY)
-        + len(APPLY_OK)
-        + 4
-        + len(LINKS)
-    )
-    print(f"policy errors: {total - fails} of {total} cases behave as expected")
+    print(f"policy errors: {cases - fails} of {cases} cases behave as expected")
     sys.exit(1 if fails else 0)
 
 

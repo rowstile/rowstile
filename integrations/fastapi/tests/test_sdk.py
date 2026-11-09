@@ -788,6 +788,35 @@ def test_postgres_own_refusals_name_the_rule() -> None:
     )
 
 
+# a restrictive policy of the app's own (authz.lint() reports it): its refusal is a refusal too, in Postgres's words,
+# which name the policy and no rule of rowstile's; an upsert's is about the update of the row there already
+def test_a_restrictive_policy_of_the_apps_own_refuses() -> None:
+    with psycopg.connect(libpq(OWNER), autocommit=True) as owner:
+        owner.execute(
+            "CREATE POLICY short_notes ON app.notes AS RESTRICTIVE FOR UPDATE TO conf_app USING (true) "
+            "WITH CHECK (length(body) < 10)"
+        )
+        try:
+            with psycopg.connect(libpq(SYNC)) as conn:
+                with pytest.raises(psycopg.errors.InsufficientPrivilege) as e, pgp.transaction(conn, 3):
+                    conn.execute("UPDATE app.notes SET body = 'a long body' WHERE id = 4")
+                long = rowstile.refusal(e.value)
+        finally:
+            owner.execute("DROP POLICY IF EXISTS short_notes ON app.notes")
+    words = 'new row violates row-level security policy "short_notes" for table "notes"'
+    assert long and (long.table, long.command, long.why, long.message) == ("notes", None, [], words), vars(long)
+
+    class Diag:  # what psycopg reads of an upsert's, a quote in the policy's name
+        sqlstate, source_function = "42501", "ExecWithCheckOptions"
+        message_primary = 'new row violates row-level security policy "a" b" (USING expression) for table "notes"'
+
+    class Upsert(Exception):
+        diag = Diag()
+
+    upsert = rowstile.refusal(Upsert())
+    assert upsert and (upsert.table, upsert.command, upsert.message) == ("notes", "update", Diag.message_primary)
+
+
 async def test_an_update_the_rules_allow_that_matched_nothing_is_409(app: FastAPI) -> None:
     @app.patch("/versioned/{note_id}")
     async def edit(note_id: int) -> None:

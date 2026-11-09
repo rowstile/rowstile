@@ -403,6 +403,23 @@ defmodule Conformance.SdkTest do
              Rowstile.translate(german.("ExecWithCheckOptions"))
 
     assert Rowstile.translate(german.("aclcheck_error")) == german.("aclcheck_error")
+
+    # a restrictive policy of the app's own: Postgres names it (with a quote in its name here), and
+    # says no more; an upsert's is about the update of the row there already
+    for {named, command} <- [
+          {~s|new row violates row-level security policy "short_notes" for table "notes"|, nil},
+          {~s|new row violates row-level security policy "a" b" (USING expression) for table "notes"|,
+           "update"},
+          {~s|target row violates row-level security policy "only_mine" (USING expression) for table "notes"|,
+           nil}
+        ] do
+      error = %Postgrex.Error{
+        postgres: %{pg_code: "42501", message: named, routine: "ExecWithCheckOptions"}
+      }
+
+      assert %Rowstile.Refused{message: ^named, table: "notes", command: ^command, why: []} =
+               Rowstile.translate(error)
+    end
   end
 
   test "nobody has one spelling: no id, whatever the type" do

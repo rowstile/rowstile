@@ -9,6 +9,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const tty = require("node:tty");
 
 const PLATFORMS = ["linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl", "darwin-x64", "darwin-arm64",
   "win32-x64"];
@@ -118,7 +119,7 @@ if (chosen) {
   if (!("version" in v) || !recent(v.version)) {
     console.error(`rowstile: ROWSTILE_PYTHON is ${chosen}, which ${"version" in v ? `is Python ${v.version}` : v.why}: ` +
       "name a Python 3.11 or later, or unset it to run on the Python that came with the package");
-    process.exit(1);
+    process.exit(2);
   }
 }
 const own = chosen ? null : bundled();
@@ -127,7 +128,7 @@ if (long && !onPath()) {
   console.error(`rowstile: this project's path is too long for Windows to load the Python that came with the package ` +
     `(${long.length} characters to ${path.basename(long)}; Windows loads up to 259). Move the project to a shorter path, ` +
     "or turn long paths on in Windows (LongPathsEnabled), or install Python 3.11 or later: rowstile then runs on that one");
-  process.exit(1);
+  process.exit(2);
 }
 // a Python on PATH, when the bundled one can't be loaded from here
 const python = chosen || (long ? null : own) || onPath();
@@ -136,23 +137,27 @@ if (!python) {
     `The package for this platform (@rowstile/cli-${key}) isn't installed` +
     (PLATFORMS.includes(key) ? " (optional dependencies turned off?)" : `, and there is none for ${key}`)) +
     "; install Python 3.11 or later, or set ROWSTILE_PYTHON to one");
-  process.exit(1);
+  process.exit(2);
 }
 // -E -s: whichever Python it is ignores PYTHON* variables and the user's site-packages; -X utf8: one encoding
 // everywhere
 const child = spawn(python, ["-E", "-s", "-X", "utf8", command, ...process.argv.slice(2)], { stdio: "inherit" });
 // A signal sent to this process is passed on to the command. From a terminal, Ctrl-C and a hang-up reach the
-// command by themselves (it is in this process's group): passing those on would give it each one twice.
+// command by themselves (it is in this process's group): passing those on would give it each one twice. A terminal
+// is there when any of the three streams is one (`npx rowstile ... < file` still runs in it). (A runner that signals
+// the whole group with no terminal gives the command the signal twice: from here it looks like one sent to this
+// process alone.) Asked of the descriptors: process.stdin would open a stream on the command's input.
 const SIGNALS = /** @type {NodeJS.Signals[]} */ (["SIGINT", "SIGTERM", "SIGHUP"]);
+const terminal = [0, 1, 2].some((fd) => tty.isatty(fd));
 for (const signal of SIGNALS) {
   process.on(signal, () => {
-    if (signal === "SIGTERM" || !process.stdin.isTTY) child.kill(signal);
+    if (signal === "SIGTERM" || !terminal) child.kill(signal);
   });
 }
 child.on("error", (e) => {
   console.error(`rowstile: could not run ${python}: ${e.message}` +
     (chosen ? "" : "; install Python 3.11 or later, or set ROWSTILE_PYTHON to one"));
-  process.exit(1);
+  process.exit(2);
 });
 child.on("exit", (code, signal) => {
   if (!signal) process.exit(code ?? 1);
