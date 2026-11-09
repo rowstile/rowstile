@@ -39,6 +39,6 @@ err := rowstile.Tx(ctx, pool, func(ctx context.Context, tx pgx.Tx) error {
 - `rowstiletest`: a copy of the migrated test database for each test package, and `Refused` and `NotFound`
   assertions.
 
-The guide: [Go](https://rowstile.dev/stacks/go). Its versions will be the repository's tags `sdk/go/vX.Y.Z`, and
-no release has made one yet: `go get` takes the newest commit of `main`. To match a release, name the commit its
-tag `vX.Y.Z` is on (`go get github.com/rowstile/rowstile/sdk/go@<commit>`).
+The guide: [Go](https://rowstile.dev/stacks/go). Its versions are the repository's tags `sdk/go/vX.Y.Z`, which
+each release pushes from 0.1.0-beta.4 on: `go get` takes the newest release's, `@v0.1.0-beta.4` names one, and
+`@main` takes the newest commit of `main`.

@@ -14,16 +14,16 @@ supported stack passes ([`integrations/go/test.sh`](../../integrations/go/test.s
 ## Install
 
 ```sh
-go get github.com/rowstile/rowstile/sdk/go    # a preview: no tag yet, so main's newest commit
+go get github.com/rowstile/rowstile/sdk/go    # the newest release's (a preview)
 pip install --pre rowstile                    # the command (or npm install rowstile@next, or its image)
 rowstile init                                 # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 The SDK needs pgx v5 and nothing else, and Go 1.25 or newer (its `go.mod`; the suite runs on Go 1.26). Its
 package is `rowstile` (`import rowstile "github.com/rowstile/rowstile/sdk/go"`), and its test helpers are
-`rowstiletest`. Its versions will be the repository's tags `sdk/go/vX.Y.Z`, and no release has made one yet: `go
-get` takes the newest commit of `main`, which may be ahead of the command and the database you have. To match a
-release, name the commit its tag `vX.Y.Z` is on: `go get github.com/rowstile/rowstile/sdk/go@<commit>`.
+`rowstiletest`. Its versions are the repository's tags `sdk/go/vX.Y.Z`, which each release pushes from 0.1.0-beta.4
+on: `go get` takes the newest release's, the one that matches the command and the database you have from that
+release, and `@v0.1.0-beta.4` names one. `@main` takes the newest commit of `main`, which may be ahead of them.
 
 `init` finds goose's migrations, and writes `rowstile.toml` for them; the line that says where the policy's names
 go (`[clients]`) is yours to add. The conformance app's, with its own name for the variable that holds the

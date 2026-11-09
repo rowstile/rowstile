@@ -11,10 +11,11 @@ the `rowstile` command, the Python package (`sdk/python`, on PyPI), the TypeScri
 release's tag), and the SDKs that are previews: Go (`sdk/go`), .NET (`sdk/dotnet`), Java and Kotlin
 (`sdk/java`), Ruby (`sdk/ruby`), Rust (`sdk/rust`), Elixir (`sdk/elixir`) and PHP (`sdk/php`). Those seven are
 on no registry yet: an app takes them from the repository, at a release's tag or from `main`, as each one's
-README says, and they carry the release's version. The Go module has no version of its own yet: Go's tools read
-a module in a folder from the tags `sdk/go/vX.Y.Z`, and a release makes none, so `go get` takes `main`'s newest
-commit. Putting one of them on a registry, or tagging the Go module, is a step this page gets once it is
-decided. `packaging/version.py` sets the version in every file but the
+README says, and they carry the release's version. Go's tools read a module in a folder from the tags
+`sdk/go/vX.Y.Z`: a release pushes one on its own commit, from 0.1.0-beta.4 on (the release workflow's `go-tag`
+job, once the GitHub release is made), so `go get` takes the newest release's. Go's module proxy keeps a version
+for ever: like `vX.Y.Z`, that tag is never moved. Putting one of the others on a registry is a step this page
+gets once it is decided. `packaging/version.py` sets the version in every file but the
 install lines that name the image's tag (the release pull request edits those), and a unit test fails if two
 files disagree. The lines that show how to use the review for CI name the newest release: a release sets them,
 and a `-dev` version leaves them, as no tag of it exists. The editor extensions (VS Code, Zed) have their own versions, raised
