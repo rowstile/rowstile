@@ -226,6 +226,19 @@ final class ChecksTest extends TestCase
         self::assertStringContainsString('an owner skips row-level security', Artisan::output());
         self::assertSame(0, Artisan::call('rowstile:check'));
         self::assertStringContainsString('rowstile: the connection is under row-level security', Artisan::output());
+        // a server whose messages are in another language: no reason to refuse, but said, since PHP reads Postgres's
+        // own refusals by their words (a connection of its own, straight to Postgres: the setting is read when it opens)
+        $super = Databases::connect(self::env('ROWSTILE_SUPERUSER_URL'), $this->database());
+        $role = "ALTER ROLE conf_app IN DATABASE \"{$this->database()}\"";
+        $super->exec("{$role} SET lc_messages = 'de_DE.UTF-8'");
+        try {
+            $direct = str_replace('//conf_owner:owner@', '//conf_app:app@', self::env('ROWSTILE_TESTS_URL'));
+            config(['database.connections.german' => ['driver' => 'pgsql', 'url' => Databases::withDatabase($direct, $this->database())]]);
+            self::assertSame(0, Artisan::call('rowstile:check', ['--database' => 'german']));
+            self::assertStringContainsString("lc_messages is de_DE.UTF-8): Postgres's own row-level security refusals", Artisan::output());
+        } finally {
+            $super->exec("{$role} RESET lc_messages");
+        }
     }
 
     #[TestDox("13: the app does not start on the owner's connection")]

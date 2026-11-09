@@ -1055,8 +1055,8 @@ with tempfile.TemporaryDirectory() as d:
         outline == [] and cleared == [{"uri": tu, "diagnostics": []}],
         [outline, cleared],
     )
-    # a policy split in two, both open (rowstile.toml names none here): its part closed with the mistake it has as
-    # saved stays marked, as the policy's check found it there
+    # a policy split in two, both open (rowstile.toml names none here, so the part is also checked as a policy of its
+    # own while open): its part closed with the mistake it has as saved stays marked, as the policy's check finds it
     whole = 'app role app_user\ninclude "part.authz"\ntype user = app.users\n'
     part = "type thing = app.things\n  can see = nosuch\n"
     for name, body in (("whole.authz", whole), ("part.authz", part)):
@@ -1066,8 +1066,14 @@ with tempfile.TemporaryDirectory() as d:
     part_editor = Editor(c, os.path.join(d, "part.authz"), part)
     flushed(c, policy_editor.u)
     c.notify("textDocument/didClose", {"textDocument": {"uri": part_editor.u}})
-    diags = flushed(c, policy_editor.u)[0]
-    ok("a file closed whose mistake an open file's check finds there: left marked", diags == {}, diags)
+    marked = flushed(c, policy_editor.u)[0].get(part_editor.u)
+    ok(
+        "a file closed whose mistake an open file's check finds there: left marked, with what that check finds (not "
+        "what it had read alone)",
+        [(m["range"]["start"], m["message"]) for m in marked or []]
+        == [({"line": 1, "character": 12}, "thing has no relation or permission 'nosuch' (it has: see)")],
+        marked,
+    )
     said = c.close()
     ok("with no database in rowstile.toml it tries none (not the PG* variables): nothing in its log", said == "", said)
 
@@ -1357,15 +1363,21 @@ with tempfile.TemporaryDirectory() as d:
 
 def made_database() -> str | None:
     """A database to complete from: the docs app with its policy applied, and tables named as an app may name
-    them. None where there is no Postgres to make one in (no createdb, or no server)."""
+    them. None where there is no Postgres to make one in: no createdb, or no server and no PG* variable naming one
+    (PGHOST, PGPORT, PGUSER, ...).
+    Any other reason it can't be made (no CREATEDB, a database left with sessions in it, a server named that is
+    down) stops the suite: a run given a server checks its part with a database."""
     db = "authz_lsp"
     try:
         subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
-        made = subprocess.run(["createdb", db], capture_output=True)
+        made = subprocess.run(["createdb", db], capture_output=True, text=True)
     except OSError:
         return None
     if made.returncode:
-        return None
+        named = [k for k in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE") if k in os.environ]
+        if not named and "connection to server" in made.stderr and "FATAL" not in made.stderr:
+            return None
+        raise SystemExit(f"createdb {db} failed ({', '.join(named) or 'no PG* variable'} set): {made.stderr}")
     # dropped when the suite ends, however it ends (a check that raises, a step that fails)
     atexit.register(subprocess.run, ["dropdb", "--if-exists", db], capture_output=True)
     env = dict(os.environ, PGOPTIONS="-c client_min_messages=error")
@@ -1504,7 +1516,7 @@ else:
         c.request("initialize", {"capabilities": {}})
         e = Editor(c, path, typed)
         first = e.offered(typed, "type extra = app.", len("type extra = app."))
-        # rowstile.toml naming it another way (a URL): tried again at once, and failing the same way, not said again
+        # rowstile.toml naming it another way (a URL): failing the same way, not said again
         with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
             fh.write(f'policy = "policy.authz"\ndatabase = "postgresql:///{later}"\n')
         first += e.offered(typed, "type extra = app.", len("type extra = app."))
@@ -1531,6 +1543,12 @@ else:
         with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
             fh.write(f'policy = "policy.authz"\ndatabase = "dbname={db}"\n')
         other = e.offered(typed, "type extra = app.", len("type extra = app."))
+        # a database that fails, then rowstile.toml naming one that works: tried at once, not after the wait the
+        # failure began (5 seconds)
+        for name in ("authz_lsp_nosuch", db):
+            with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
+                fh.write(f'policy = "policy.authz"\ndatabase = "dbname={name}"\n')
+            again = e.offered(typed, "type extra = app.", len("type extra = app."))
         said = c.close()
         ok(
             "a database not there at the first completion: its tables some seconds later, in the same server",
@@ -1543,8 +1561,18 @@ else:
             other,
         )
         ok(
+            "... and rowstile.toml changed while a read of its database waits to be tried again: the new one read at "
+            "once",
+            sorted(again) == app,
+            again,
+        )
+        ok(
             "... its log said why the reads failed, once for the same reason twice",
-            said == f'rowstile lsp: no table or column names to complete: 3D000: database "{later}" does not exist\n',
+            said
+            == "".join(
+                f'rowstile lsp: no table or column names to complete: 3D000: database "{name}" does not exist\n'
+                for name in (later, "authz_lsp_nosuch")
+            ),
             said,
         )
         subprocess.run(["dropdb", "--if-exists", later], capture_output=True)

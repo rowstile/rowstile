@@ -78,11 +78,15 @@ def absent(said: subprocess.CompletedProcess[str]) -> bool:
     return said.returncode != 0 and "E404" in said.stderr + said.stdout
 
 
+class Unread(Exception):
+    """The registry didn't answer (a timeout, E429, a 5xx): `npm view`'s words."""
+
+
 def published(name: str) -> tuple[dict[str, str], list[str]]:
-    """A package's tags and versions, as the registry has them."""
+    """A package's tags and versions, as the registry has them (Unread if it didn't answer)."""
     out = npm("view", name, "dist-tags", "versions", "--json")
     if out.returncode != 0:
-        raise SystemExit(f"npm_latest.py: npm view {name}: {out.stderr.strip() or out.stdout.strip()}")
+        raise Unread(f"npm view {name}: {out.stderr.strip() or out.stdout.strip()}")
     said = json.loads(out.stdout)
     versions = said.get("versions", [])
     return dict(said.get("dist-tags", {})), [versions] if isinstance(versions, str) else list(versions)
@@ -96,9 +100,14 @@ def shown(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[dict[str, str], list[str]] | None:
-    """A package's tags and versions once the registry shows `expect` under `next`; None if it doesn't by `until`."""
+    """A package's tags and versions once the registry shows `expect` under `next`; None if it doesn't by `until`.
+    A read the registry doesn't answer is as one that shows it not yet: asked again (one of many, over minutes)."""
     while True:
-        tags, versions = read(name)
+        try:
+            tags, versions = read(name)
+        except Unread as e:
+            print(f"{name}: {e} (asked again)")
+            tags, versions = {}, []
         if tags.get("next") == expect:
             return tags, versions
         if clock() >= until:
@@ -137,7 +146,10 @@ def main(argv: list[str]) -> None:
             new.append(name)
             print(f"{name}: not on npm yet, nothing to move")
             continue
-        found = published(name) if expect is None else shown(name, expect, until)
+        try:
+            found = published(name) if expect is None else shown(name, expect, until)
+        except Unread as e:
+            raise SystemExit(f"npm_latest.py: {e}") from None
         if found is None:
             late.append(name)
             print(f"{name}: not moved, the registry doesn't show {expect} under next yet")

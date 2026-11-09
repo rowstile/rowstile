@@ -268,7 +268,9 @@ if [ -n "${PGSUPERUSER:-}" ]; then
   sed 's/^app role app_user$/app role authz_apply_mine/' "$T/docs.authz" > "$T/mine.authz"
   run apply "$T/mine.authz"; [ $rc -eq 0 ] || bad "applying for authz_apply_mine" "$out"
   SU -c "GRANT \"$APPLIER\" TO authz_apply_mine"
-  [ "$(PSQL -c "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE object = 'authz_apply_mine'")" = "error|authz_apply_mine|is the policy's owner $APPLIER, or a member of it: who is signed in is believed without a signature, and it may read rowstile's tables and turn row-level security off. The app role must be a role of its own: not the tables' owner or the policy's, nor a member of either" ] &&
+  # (its row on being the owner's member: roles are the server's, and another suite's beside this one, which the owner
+  # is a member of, may give it another, about that role)
+  [ "$(PSQL -c "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE object = 'authz_apply_mine' AND problem LIKE 'is the policy''s owner %'")" = "error|authz_apply_mine|is the policy's owner $APPLIER, or a member of it: who is signed in is believed without a signature, and it may read rowstile's tables and turn row-level security off. The app role must be a role of its own: not the tables' owner or the policy's, nor a member of either" ] &&
     ok "lint reports an app role that is a member of the policy's owner: an error" || bad "lint, a member of the owner" "$(PSQL -c "SELECT * FROM authz.lint()")"
   run apply "$T/mine.authz" --force
   [ $rc -ne 0 ] && case "$out" in *"the app role authz_apply_mine is the role that applies the policy ($APPLIER), or a member of it: the rules would not hold for it [AZ624]"*) true;; *) false;; esac &&

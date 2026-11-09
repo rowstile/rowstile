@@ -808,7 +808,11 @@ def main() -> None:
         events is not None and events["ms"] is not None and events["warnings"] == [],
         events,
     )
-    count = "SELECT count(*), sum(length(name)) FROM app.folders"
+    # what an update bench left would change though it writes each column back as it was: the rows' xmin
+    count = (
+        "SELECT (SELECT string_agg(id || ':' || xmin, ',' ORDER BY id) FROM app.folders), "
+        "(SELECT string_agg(id || ':' || xmin, ',' ORDER BY id) FROM app.files)"
+    )
     before = psql(db, "-c", count)
     b = work(lambda d: perf.bench(d, database.policy_compiler(*database.applied(d)), people=3, rounds=3))
     paths = {x["path"]: x for x in b["paths"]}

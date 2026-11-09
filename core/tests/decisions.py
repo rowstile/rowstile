@@ -1036,7 +1036,7 @@ class Decisions:
     def idle(self, key: Key) -> list[Key]:
         """For a recursion's depth or loop, when it holds nothing for anyone asked in the last snapshot: the shares
         that would give someone something of it to begin with, as share parts' keys (state ''): those of the
-        relations its permissions name. None while it holds something for someone."""
+        relations its permissions name. An empty list while it holds something for someone."""
         rec = self.recursions[int(key[1])]
         if any(a.state[name] for a in self.last.values() for name in rec.names):
             return []

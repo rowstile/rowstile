@@ -2,7 +2,9 @@
 # governance.sh, identity.sh and principals.sh).
 # An error is read as "SQLSTATE: message" (psql's VERBOSITY=verbose). An expectation gives the SQLSTATE and the
 # start of the message ("42501: permission denied: ..."): the words say which check refused, where the code alone
-# can't (two guards that answer 42501 look the same). An expectation of the code alone matches nothing.
+# can't (two guards that answer 42501 look the same). An expectation of the code alone matches nothing. One that ends
+# with a $ is the whole message ("42501: you cannot decide request 7$"), where the start of one would match another
+# too (request 70's).
 
 # psql's output, run with VERBOSITY=verbose -> "SQLSTATE: message" of its last error, or its last line
 error_of() {
@@ -14,6 +16,7 @@ error_of() {
 # $1 label, $2 expected, $3 got: whether they agree
 agrees() {
   local want=$2 got=$3
+  if [[ "$want" =~ ^[0-9A-Z]{5}:\ .*\$$ ]]; then [ "$got" = "${want%\$}" ]; return; fi
   if [[ "$want" =~ ^[0-9A-Z]{5}:\  ]]; then [[ "$got" == "$want"* ]]; return; fi
   [ "$got" = "$want" ]
 }

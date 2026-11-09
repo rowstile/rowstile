@@ -10,7 +10,8 @@ next migration holds only what changed:
 - a view that changed, or reads something that is made again: emptied in place first (the same columns, reading
   nothing), then defined again with CREATE OR REPLACE VIEW, so what the app built on it (a view over a masked
   view) stays
-- a table whose columns are the same: its rows written again
+- a table whose columns are the same: its rows written again (lines that only moved: where each one is, which
+  the messages name, authz_gen.policy_lines)
 - anything else that changed or went: dropped first, with everything that needs it, then made again
 - an inheritance tree whose definition is the same keeps its rows: only its functions that changed (a message, an
   error code) are replaced in place; one whose definition changed is rebuilt
@@ -366,21 +367,22 @@ BEGIN
 END $authz_tx$;"""
 
 DROP_ORDER = ["policy", "trigger", "atomic", "view", "function", "index", "table", "type"]
-# where the policy's lines are, for messages: a change to it alone (lines that moved) needs no migration
-SOFT = "table authz_gen.policy_lines"
+# where each thing the runtime's messages name is written: lines that moved write its rows again, alone
+LINES = "table authz_gen.policy_lines"
 LOCKS = "authz_int.locks"  # the type-wide lock rows every tree write takes (trees.lock_sql)
 
 
 def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", lines: bool = False) -> Migration:
     """The migration from the lock `old` to the compiled policy `c`. compiled_sql is the whole policy
-    (compile(transaction=False)), used when there is no lock yet. With lines, lines that only moved are
-    a migration too (rowstile push: a development database's messages name the lines as they are)."""
+    (compile(transaction=False)), used when there is no lock yet. With lines, a policy whose lines changed in what
+    they make nothing different of (the lock's lines alone) is a migration too: rowstile push records the lock of the
+    policy it leaves, which the next push starts from."""
     new_lock = lock_of(c)
-    summary = describe(old, c)
     new_hash = digest(new_lock, 16)
     if not old.empty and old.text == new_lock:
         return Migration("", new_lock, [], [])
     if old.empty:
+        summary = describe(old, c)
         body = compiled_sql
         rebuilt = [it.name for it in c.items if isinstance(it, Tree)]
         return Migration(render(name, summary, None, body, c, new_hash), new_lock, summary, rebuilt)
@@ -449,12 +451,15 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
     steps = {
         it.name for it in c.items if isinstance(it, Step) and it.when != "always" and old.steps.get(it.name) != it.hash
     }
-    changed = drop or create or replace or restub or removed or rebuild or steps or refill - {SOFT}
+    # what changes besides where the policy's lines are
+    besides_lines = drop or create or replace or restub or removed or rebuild or steps or refill - {LINES}
     same_steps = old.always == always_hash(c)
-    if not lines and not changed and same_steps:
-        # only lines moved, or only the version of rowstile changed: that alone needs no migration; the next one
-        # writes the new lines (and version) too
+    if not lines and not besides_lines and not refill and same_steps:
+        # only the version of rowstile changed (or the lock's lines, in what makes nothing different): that alone needs
+        # no migration; the next one records it too. Lines that moved are one (refill): the messages name each rule's
+        # line as authz_gen.policy_lines holds it
         return Migration("", old.text, [], [])
+    summary = describe(old, c, moved=not besides_lines and LINES in refill)
     # what can't outlive a dropped object is dropped and made again with it
     gone = {unquoted(old.objects[k]["key"]) for k in removed} | {objs[k].name for k in drop}
     while True:
@@ -767,13 +772,16 @@ END $authz_guard$;""")
     return "\n\n".join(x for x in out if x.strip()) + "\n"
 
 
-def describe(old: Lock, c: Compiled) -> list[str]:
-    """What changed in the policy's lines, for the first comments of the migration."""
+def describe(old: Lock, c: Compiled, moved: bool = False) -> list[str]:
+    """What changed in the policy's lines, for the first comments of the migration. moved: only lines moved, and the
+    migration writes where each one is now."""
     if old.empty:
         return [f"the whole policy ({len(c.meaning)} lines)"]
     before, after = set(old.meaning), set(c.meaning)
     out = [f"- {x}" for x in old.meaning if x not in after] + [f"+ {x}" for x in c.meaning if x not in before]
-    if not out and old.version != __version__:
+    if not out and moved:
+        out = ["the same policy, its lines moved: where the messages say each one is, written again"]
+    elif not out and old.version != __version__:
         out = [f"rowstile {old.version} -> {__version__}: what the new version makes differently"]
     elif not out:
         out = ["the same policy; what rowstile makes of it changed"]

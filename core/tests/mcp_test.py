@@ -6,6 +6,7 @@ database: check, prove, push, test, why, review, lint.
     PGHOST=... PGUSER=... python3 tests/mcp_test.py [--db authz_mcp]     (--no-db: only what needs none)
 """
 
+import atexit
 import contextlib
 import json
 import os
@@ -534,7 +535,11 @@ def without_db(folder: str) -> None:
     with open(policy, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(good)
     r = c.tool("check", policy="db/nothing.authz")
-    check("a policy file that isn't there: a failed call", r["isError"] and r["structuredContent"]["exit_code"] == 2, r)
+    check(
+        "a policy file that isn't there: a failed call, which says so",
+        refused(r) == "db/nothing.authz: No such file or directory\n",
+        r,
+    )
     # what the command says of it reads like a mistake's line ("db: line 1: x.authz: No such file or directory"),
     # with no code: no mistake in a policy
     r = c.tool("check", policy="db: line 1: x.authz")
@@ -560,6 +565,8 @@ def with_db(folder: str, db: str) -> None:
     print("-- push, test, why, lint (a scratch database)")
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
     subprocess.run(["createdb", db], check=True)
+    # dropped when the suite ends, however it ends (a check that raises, a step that fails)
+    atexit.register(subprocess.run, ["dropdb", "--if-exists", db], capture_output=True)
     subprocess.run(
         ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", os.path.join(ROOT, "example", "app_schema.sql")],
         check=True,
@@ -635,6 +642,7 @@ def with_db(folder: str, db: str) -> None:
     other = db + "_unmarked"
     subprocess.run(["dropdb", "--if-exists", other], capture_output=True)
     subprocess.run(["createdb", other], check=True)
+    atexit.register(subprocess.run, ["dropdb", "--if-exists", other], capture_output=True)
     subprocess.run(
         [
             "psql",

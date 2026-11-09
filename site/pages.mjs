@@ -7,12 +7,16 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FOLDERS } from "./source.mjs";
+import { FOLDERS, ORIGIN } from "./source.mjs";
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const GITHUB = "https://github.com/rowstile/rowstile";
+/** The repository's files themselves, as GitHub serves them. */
+const RAW = "https://raw.githubusercontent.com/rowstile/rowstile";
 // Where a link to a file on GitHub points: the tag the site is built from, and the blog tag whose articles and
-// comparison pages it shows (site.yml sets both, from site/source.mjs). A build of a branch links to main.
+// comparison pages it shows, for a file in those two folders (site.yml sets both, from site/source.mjs). An article's
+// link to any other file goes to the site's tag, whose files are those checked out (RELEASING.md). A build of a
+// branch links to main.
 const CODE = process.env.SITE_CODE || "main";
 const CONTENT = process.env.SITE_CONTENT || CODE;
 
@@ -59,21 +63,29 @@ export function readPost(file, text) {
            author: byline[1].trim(), summary: plain(first) };
 }
 
+/** Posts, newest first, from their files, each listed in the blog's index. Two with one slug fail the build, and so
+ *  does one the index doesn't list. @param {Record<string, string>} files each post's text, by its file's name
+ *  @param {() => string} index the index's text (read only when there is a post) @returns {Post[]} */
+export function readPosts(files, index) {
+  const posts = Object.entries(files).map(([f, text]) => readPost(f, text))
+    .sort((a, b) => (a.date === b.date ? a.slug.localeCompare(b.slug) : a.date < b.date ? 1 : -1));
+  const listed = posts.length ? index() : "";
+  for (const p of posts) {
+    if (posts.some((q) => q !== p && q.slug === p.slug)) throw new Error(`docs/blog: two posts are named ${p.slug}`);
+    if (!listed.includes(`](${p.file})`)) throw new Error(`docs/blog/README.md doesn't list ${p.file}`);
+  }
+  return posts;
+}
+
 /** The blog's posts, newest first: docs/blog/<date>-<slug>.md, each listed in docs/blog/README.md (the index, on
  *  GitHub too). With no post there is no blog: no page, no feed, nothing in the navigation.
  *  @type {Post[]} */
 export const POSTS = (() => {
   const folder = join(REPO, "docs", "blog");
   if (!existsSync(folder)) return [];
-  const posts = readdirSync(folder).filter((f) => f.endsWith(".md") && f !== "README.md")
-    .map((f) => readPost(f, readFileSync(join(folder, f), "utf8")))
-    .sort((a, b) => (a.date === b.date ? a.slug.localeCompare(b.slug) : a.date < b.date ? 1 : -1));
-  const index = posts.length ? readFileSync(join(folder, "README.md"), "utf8") : "";
-  for (const p of posts) {
-    if (posts.some((q) => q !== p && q.slug === p.slug)) throw new Error(`docs/blog: two posts are named ${p.slug}`);
-    if (!index.includes(`](${p.file})`)) throw new Error(`docs/blog/README.md doesn't list ${p.file}`);
-  }
-  return posts;
+  const names = readdirSync(folder).filter((f) => f.endsWith(".md") && f !== "README.md");
+  return readPosts(Object.fromEntries(names.map((f) => [f, readFileSync(join(folder, f), "utf8")])),
+    () => readFileSync(join(folder, "README.md"), "utf8"));
 })();
 
 /** Repository path -> address in the site (the page's path, with .md). @type {Record<string, string>} */
@@ -128,6 +140,8 @@ export const PAGES = {
   "docs/stacks/sql.md": "stacks/sql.md",
   "sdk/python/README.md": "sdk/python.md",
   "sdk/typescript/README.md": "sdk/typescript.md",
+  "sdk/go/README.md": "sdk/go.md",
+  "sdk/dotnet/README.md": "sdk/dotnet.md",
   "sdk/ruby/README.md": "sdk/ruby.md",
   "sdk/java/README.md": "sdk/java.md",
   "sdk/java/rowstile-kotlin/README.md": "sdk/kotlin.md",
@@ -153,15 +167,27 @@ export const PAGES = {
 /** Titles for pages whose first heading says something else on the site. @type {Record<string, string>} */
 export const TITLES = { "development.md": "Working on rowstile", "words.md": "Words" };
 
-/** Whether the sitemap lists a page (its URL: "/errors/AZ201"). An error code's page is left out: there are some eighty
- *  of them, short and alike, and a new site's crawl goes first to what the sitemap lists. They stay pages, linked from
+/** The sitemap VitePress wrote, against the pages: it lists each page but those inSitemap leaves out, and none of
+ *  those; and inSitemap leaves some out (the error codes'). @param {string} sitemap
+ *  @param {string[]} [paths] the pages' URLs */
+export function checkSitemap(sitemap, paths = Object.values(PAGES).map(url)) {
+  const has = (/** @type {string} */ p) => sitemap.includes(`<loc>${ORIGIN}${p}</loc>`);
+  const unlisted = paths.filter(inSitemap).filter((p) => !has(p));
+  if (unlisted.length) throw new Error(`sitemap.xml doesn't list ${unlisted.join(", ")}`);
+  const listed = paths.filter((p) => !inSitemap(p)).filter(has);
+  if (listed.length) throw new Error(`sitemap.xml lists what it leaves out: ${listed.join(", ")}`);
+  if (paths.filter(inSitemap).length === paths.length) throw new Error("inSitemap leaves out no page: the error codes' are");
+}
+
+/** Whether the sitemap lists a page (its URL: "/errors/AZ201"). An error code's page is left out: there is one for each
+ *  code, short and alike, and a new site's crawl goes first to what the sitemap lists. They stay pages, linked from
  *  the errors' index and `rowstile help`. @param {string} path */
 export function inSitemap(path) {
   return !/^\/errors\/AZ\d+$/.test(path);
 }
 
-/** Where the site is served: the sitemap's and the canonical links' host. */
-export const ORIGIN = "https://rowstile.dev";
+/** Where the site is served: the sitemap's and the canonical links' host (source.mjs, which runs alone). */
+export { ORIGIN };
 
 /** One sentence per page, for search results and shared links. It is here and not in the Markdown, which is read on
  *  GitHub too, where front matter shows as a table. An error page's and a recipe's are made from their titles, a
@@ -200,7 +226,7 @@ export const DESCRIPTIONS = {
   "words.md": "The words rowstile uses: policy, object, subject, principal, relation, permission, share, role, rule.",
   "editor.md": "rowstile in your editor: the VS Code and Zed extensions, Tree-sitter for Helix and Neovim, and the language server for .authz files.",
   "benchmark.md": "rowstile's scale benchmark: row-level security reads and tree writes in Postgres, measured with 20 million files and a million folders.",
-  "stacks/index.md": "rowstile in your stack: FastAPI, Next.js with Prisma, Node with pg, postgres.js or Drizzle, Python, ASP.NET Core with EF Core, Rails, Laravel, or plain SQL from any language.",
+  "stacks/index.md": "rowstile in your stack: FastAPI, Django, Next.js with Prisma, Node, Python, Go, ASP.NET Core, Rails, Spring, Ktor, Axum, Phoenix, Laravel, Electric, Zero, PowerSync, or plain SQL from any language.",
   "stacks/fastapi.md": "Permissions for a FastAPI app with SQLAlchemy and Alembic, enforced by Postgres row-level security: each transaction signed in, 403 and 404 from the database.",
   "stacks/nextjs.md": "Permissions for a Next.js app with Prisma and React, enforced by Postgres row-level security: every query signed in, refusals as errors, signed-in reads out of the caches.",
   "stacks/node.md": "rowstile for Node apps on pg, postgres.js or Drizzle (Express, Hono, workers): transactions signed in as the request's user.",
@@ -218,8 +244,10 @@ export const DESCRIPTIONS = {
   "stacks/zero.md": "Zero, the sync engine, on rowstile's sync index (a preview): the app's query endpoint adds each table's filter to the ZQL for the signed-in user, and its mutate endpoint signs each mutation in.",
   "stacks/powersync.md": "PowerSync, the sync engine, on rowstile's sync index (a preview): mirrors of the synced tables, each row with its readers, and the streams that put each row in a bucket for each key that may read it.",
   "stacks/rails.md": "Permissions for a Rails app on Active Record, enforced by Postgres row-level security: each transaction signed in, 403 and 404 from the database (preview).",
-  "sdk/python.md": "The rowstile Python SDK: FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic and pytest on a rowstile policy.",
-  "sdk/typescript.md": "The rowstile TypeScript SDK: Next.js, Prisma, Drizzle, pg, postgres.js, React and Vitest on a rowstile policy.",
+  "sdk/python.md": "The rowstile Python SDK: FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic and pytest on a rowstile policy, and Django (preview).",
+  "sdk/typescript.md": "The rowstile TypeScript SDK: Next.js, Prisma, Drizzle, pg, postgres.js, React, Vitest and Jest on a rowstile policy.",
+  "sdk/go.md": "The rowstile Go SDK (preview): pgx transactions signed in, sqlc's code inside them, net/http answers as problem details, and test databases.",
+  "sdk/dotnet.md": "The rowstile .NET SDK (preview): Npgsql, EF Core and ASP.NET Core on a rowstile policy, refusals as 403 and 404, and test databases.",
   "sdk/ruby.md": "The rowstile Ruby SDK (preview): Rails, Active Record, Active Job and Minitest on a rowstile policy.",
   "sdk/java.md": "The rowstile Java SDK (preview): JDBC, and a Spring Boot starter for JPA, JdbcClient and Spring Security on a rowstile policy.",
   "sdk/kotlin.md": "The rowstile Kotlin module (preview): coroutines, Exposed and a Ktor plugin on a rowstile policy, over the Java SDK.",
@@ -239,11 +267,14 @@ export const DESCRIPTIONS = {
   "errors/index.md": "Every rowstile error code: what it means, the mistake, and the same mistake fixed.",
 };
 
-{
-  const addresses = new Set(Object.values(PAGES));
-  const stale = Object.keys(DESCRIPTIONS).filter((a) => !addresses.has(a));
+/** A sentence for each page only: one for what isn't a page (a page gone, or moved) fails the build.
+ *  @param {Record<string, string>} descriptions @param {Record<string, string>} pages */
+export function checkDescriptions(descriptions, pages) {
+  const addresses = new Set(Object.values(pages));
+  const stale = Object.keys(descriptions).filter((a) => !addresses.has(a));
   if (stale.length) throw new Error(`site/pages.mjs: DESCRIPTIONS names what isn't a page: ${stale.join(", ")}`);
 }
+checkDescriptions(DESCRIPTIONS, PAGES);
 
 /** A page's description. A page without one fails the build: add its sentence to DESCRIPTIONS.
  *  @param {string} address @param {string} title */
@@ -321,8 +352,8 @@ export function structured(address, description) {
   };
 }
 
-/** A summary as a description. A search result shows about 160 characters: the first sentences that fit, else cut
- *  at a word. @param {string} summary */
+/** A summary as a description: up to 200 characters (a search result shows about 160 of them, a shared link more),
+ *  the first sentences within them, else cut at a word. @param {string} summary */
 function short(summary) {
   if (summary.length <= 200) return summary;
   const sentences = summary.slice(0, 200).match(/^.*[.!?](?= )/s);
@@ -344,14 +375,22 @@ export function withoutNotes(text) {
   return text.replace(NOTE_LINE, "").replace(NOTE_AFTER, "");
 }
 
+/** A page's Markdown copy keeps no note for the repository's checks: one withoutNotes can't take out (written
+ *  another way) fails the build. @param {string} source @param {string} copy */
+export function checkCopy(source, copy) {
+  const kept = copy.split("\n").find((line) => NOTE.test(line));
+  if (kept !== undefined) throw new Error(`${source}: its Markdown copy keeps a note: ${kept}`);
+}
+
 /** A page's URL: "/reference", "/stacks/". @param {string} address */
 export function url(address) {
   return "/" + address.replace(/(^|\/)index\.md$/, "$1").replace(/\.md$/, "");
 }
 
-/** Where a link written in `source` (a repository path) goes on the site: a page's URL, or GitHub.
- *  @param {string} source @param {string} href @returns {string} */
-export function siteLink(source, href) {
+/** Where a link written in `source` (a repository path) goes on the site: a page's URL, or GitHub; an image, the file
+ *  itself (GitHub's page for a file is HTML, which no image shows).
+ *  @param {string} source @param {string} href @param {boolean} [image] @returns {string} */
+export function siteLink(source, href, image = false) {
   if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) return href;       // elsewhere, mailto:, or on the same page
   const cut = href.indexOf("#");
   const path = cut < 0 ? href : href.slice(0, cut);
@@ -366,6 +405,7 @@ export function siteLink(source, href) {
   if (page) return url(page) + hash;
   if (target === ".") return GITHUB;
   const at = FOLDERS.some((f) => target === f || target.startsWith(`${f}/`)) ? CONTENT : CODE;
+  if (image && !dir) return `${RAW}/${at}/${target}`;
   return `${GITHUB}/${dir ? "tree" : "blob"}/${at}/${target}${hash}`;
 }
 
@@ -421,10 +461,21 @@ export function deadAnchors(pages, more = []) {
 
 /** A Markdown file with its links rewritten, for the copies of the pages (/operations.md) and llms.txt: each
  *  [words](href) and ![words](src) outside code, its title kept. markdown-it's parse says which links the file
- *  holds: one written another way (a reference, [words][name]) can't be rewritten, and fails the build.
- *  @param {(text: string) => Token[]} parse @param {string} source the file, for messages
- *  @param {string} text @param {(href: string) => string} to the link's new address */
+ *  holds, and which are images: one written another way (a reference, [words][name]) can't be rewritten, and fails
+ *  the build. @param {(text: string) => Token[]} parse @param {string} source the file, for messages
+ *  @param {string} text @param {(href: string, image: boolean) => string} to the link's new address */
 export function rewriteLinks(parse, source, text, to) {
+  /** Whether the "]" at `at` ends an image's words: the "[" it closes has a "!" before it, not written \!.
+   *  @param {string} text @param {number} at */
+  const isImage = (text, at) => {
+    let depth = 0;
+    for (let i = at; i >= 0; i--) {
+      if (text[i - 1] === "\\") continue;
+      if (text[i] === "]") depth++;
+      else if (text[i] === "[" && --depth === 0) return text[i - 1] === "!" && text[i - 2] !== "\\";
+    }
+    return false;
+  };
   const lines = text.split("\n");
   const tokens = parse(text);
   /** @type {string[]} */
@@ -437,7 +488,7 @@ export function rewriteLinks(parse, source, text, to) {
       const href = t.type === "link_open" ? t.attrGet("href") : t.type === "image" ? t.attrGet("src") : null;
       // what the file says: not an autolink, a bare URL, or the link VitePress adds to each heading
       const made = t.markup === "autolink" || t.markup === "linkify" || t.attrGet("class") === "header-anchor";
-      if (href !== null && !made) links.push(href);
+      if (href !== null && !made) links.push(`${t.type === "image" ? "!" : ""}${href}`);
       if (t.children) walk(t.children);
     }
   })(tokens);
@@ -450,12 +501,14 @@ export function rewriteLinks(parse, source, text, to) {
   const flush = () => {
     if (!run.length) return;
     // a code span is kept as it is; a link's address, written bare or in <>, is rewritten, its title kept
-    out.push(run.join("\n").replace(/(`+)[^]*?\1|\]\(\s*(<[^>\n]*>|[^\s)]+)((?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*)\)/g,
-      (all, ticks, href, rest) => {
+    const text = run.join("\n");
+    out.push(text.replace(/(`+)[^]*?\1|\]\(\s*(<[^>\n]*>|[^\s)]+)((?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*)\)/g,
+      (all, ticks, href, rest, at) => {
         if (ticks) return all;
         const bare = href.startsWith("<") ? href.slice(1, -1) : href;
-        found.push(bare);
-        return `](${to(bare)}${rest})`;
+        const image = isImage(text, at);
+        found.push(`${image ? "!" : ""}${bare}`);
+        return `](${to(bare, image)}${rest})`;
       }));
     run = [];
   };
@@ -466,7 +519,8 @@ export function rewriteLinks(parse, source, text, to) {
     } else run.push(line);
   });
   flush();
-  // markdown-it gives an address as it reads it (&amp; read, non-ASCII percent-encoded): compare them so
+  // markdown-it gives an address as it reads it (&amp; read, non-ASCII percent-encoded): compare them so (an
+  // image's with its "!" before it)
   const same = (/** @type {string} */ s) => {
     try {
       return decodeURI(s.replace(/&amp;/g, "&"));

@@ -31,7 +31,7 @@ gf00819cd8d equivalent output.py OutputMixin.compile: authz_ctx.kept_functions i
 g03c4aab253 equivalent output.py OutputMixin.late_conditions: on_row reads this. right under any alias (a query that could hide the alias reads the row as authz__this), so u and w differ only for a where that writes rowstile's internal alias by name, which nothing documents.
 ge43b031efa equivalent hardening.py LintMixin.lint_sql: `a.attnum >= 0` in the check of a column that grants a relation: pg_attribute never holds an attnum of 0 (user columns are 1 and up, system columns negative), so the same rows match.
 gcdb718f918 equivalent hardening.py LintMixin.lint_sql: `a.attnum >= 0` in the check of a column that moves a row: pg_attribute never holds an attnum of 0 (user columns are 1 and up, system columns negative), so the same rows match.
-g4aef67c06f equivalent database.py older_than: `core_a <= core_b` is reached only when core_a != core_b (the line before), where <= and < agree.
+g36eb7fb29e equivalent database.py older_than: `a[:3] <= b[:3]` is reached only when a[:3] != b[:3] (the line before), where <= and < agree.
 gd47b936ef0 equivalent database.py condition_error: `end > 0` differs from `end >= 0` only when ";\n" is found at index 0, which needs the error at position 0 of a text starting with ";\n"; the SQL applied (the compiled policy, or push's migration) starts with a comment line.
 g3b1b42b66d equivalent database.py warn_captured_names: no column has attnum 0 (a table's columns count from 1, system columns are negative), so `attnum >= 0` reads the same rows as `attnum > 0`.
 ge66cf19939 equivalent sqlutil.py <module>: STUB_COLUMNS `attnum >= 0`: no column has attnum 0 (a view's columns count from 1, system columns are negative).

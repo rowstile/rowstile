@@ -29,6 +29,26 @@ def stage(name: str) -> int:
     raise ValueError(f"{name} is not a stage of a version (alpha, beta, rc)")
 
 
+# where a -dev build of X.Y.Z comes among X.Y.Z's (after its stages: the command's main between them and the
+# release), and where X.Y.Z itself comes
+DEV, RELEASED = len(STAGES), len(STAGES) + 1
+
+
+def order(version: str) -> tuple[int, int, int, int, int] | None:
+    """Where a version comes, written as the command writes it or as PyPI does: (X, Y, Z, its stage, the stage's
+    number), its stages 0, 1, 2 (STAGES), then DEV, then RELEASED. None for what is neither (a post-release, a
+    -dev build as PyPI writes it)."""
+    m = VERSION.fullmatch(version)
+    if m:
+        at = DEV if m.group(6) else stage(m.group(4)) if m.group(4) else RELEASED
+    else:
+        m = PYPI.fullmatch(version)
+        if not m:
+            return None
+        at = stage(m.group(4)) if m.group(4) else RELEASED
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), at, int(m.group(5) or 0)
+
+
 def pypi(version: str) -> str | None:
     """How PyPI writes a version: 0.2.0-alpha.1 is 0.2.0a1, 0.2.0-beta.1 0.2.0b1, 0.2.0-rc.1 0.2.0rc1, 0.2.0-dev
     0.2.0.dev0, and 0.2.0 is 0.2.0. None for what isn't a version."""

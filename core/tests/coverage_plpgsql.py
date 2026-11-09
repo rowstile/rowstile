@@ -337,6 +337,7 @@ class Branch:
     label: str  # then, elsif, else, when, body, handler, "no arm" (an IF without ELSE)
     line: int  # its first statement's line, or the IF's for "no arm", or where an empty arm starts
     first: int  # the id of its first statement; 0 when it has none ("no arm", or an arm with no statement)
+    head: int  # where the arm starts (its IF, ELSIF, WHEN, ELSE; a loop's head), or the IF's line for "no arm"
     # the other arms' first statements: an arm without one was taken when its statement ran more often than they
     # did, if it is the only one (an IF's or a CASE's; inferable)
     others: list[int] = field(default_factory=list)
@@ -352,6 +353,9 @@ class Body:
     statements: list[Statement]
     branches: list[Branch] | None
     why: str = ""  # why the branches are None
+    # each statement's arms, outermost first: (label, the line the arm starts on); a block's own body is none (but
+    # its handlers are); empty when the source couldn't be read
+    arms: dict[int, tuple[tuple[str, int], ...]] = field(default_factory=dict)
 
 
 def read_body(md5: str, source: str, rows: Sequence[Sequence[Any]]) -> Body:
@@ -388,10 +392,20 @@ def read_body(md5: str, source: str, rows: Sequence[Sequence[Any]]) -> Body:
         for arm in n.arms:
             first = ids[id(arm.body[0])] if arm.body else 0
             inferable = not arm.body and empty == 1 and n.kind in ("if", "case")
-            branches.append(Branch(s, arm.label, arm.body[0].line if arm.body else arm.line, first, firsts, inferable))
+            line = arm.body[0].line if arm.body else arm.line
+            branches.append(Branch(s, arm.label, line, first, arm.line, firsts, inferable))
         if n.implicit:
-            branches.append(Branch(s, "no arm", n.line, 0, firsts, empty == 1))
+            branches.append(Branch(s, "no arm", n.line, 0, n.line, firsts, empty == 1))
     body.branches = branches
+
+    def under(n: Node, arms: tuple[tuple[str, int], ...]) -> None:
+        body.arms[ids[id(n)]] = arms
+        for arm in n.arms:
+            mine = arms if n.kind == "block" and arm.label == "body" else (*arms, (arm.label, arm.line))
+            for child in arm.body:
+                under(child, mine)
+
+    under(top, ())
     return body
 
 
@@ -495,7 +509,8 @@ COLUMN_RULE = re.compile(
 def plain(text: str, own: Sequence[tuple[str, str]]) -> str:
     """A line of a function, its policy's own names taken out (`names`: those its name holds, longest first; and a
     rule on columns' own words), spaces squeezed: the same statement in two databases' functions of a kind reads the
-    same."""
+    same. Cut: the end of a long line holds the policy's own words (the app role's name, in authz.lint's messages),
+    its start what a guard says."""
     for n, instead in own:
         text = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(n)}(?![A-Za-z0-9_])", instead, text)
     text = COLUMN_RULE.sub(
@@ -510,6 +525,21 @@ def plain(text: str, own: Sequence[tuple[str, str]]) -> str:
     return text if len(text) <= 110 else text[:107] + "..."
 
 
+QUOTED = re.compile(r"""'(?:[^']|'')*'|"(?:[^"]|"")*\"""")
+THEN = re.compile(r"\bTHEN\b", re.I)
+
+
+def head(label: str, text: str) -> str:
+    """An arm as a statement under it is known by: an IF's, ELSIF's, WHEN's or handler's condition (its first line
+    (plain), to THEN), its strings and quoted names left out; an ELSE or a loop's body by that alone. The compiler's
+    arms for each of a policy's types and permissions (WHEN 'folder' THEN, a loop over what one permission gives)
+    differ in those alone: the statements under them are one statement, run when any copy ran. A guard written by
+    hand under two conditions is two."""
+    if label in ("else", "body"):
+        return "loop" if label == "body" else label
+    return f"{label}: {THEN.split(QUOTED.sub(lambda m: m.group()[0] * 2, text), maxsplit=1)[0].strip()}"
+
+
 @dataclass
 class Seen:
     """A statement (or branch) of a kind of function, all databases together."""
@@ -517,7 +547,8 @@ class Seen:
     schema: str
     kind: str
     what: str  # the statement's name (RAISE, IF, ...) or the branch's label
-    text: str  # its line, the policy's names taken out
+    text: str  # its line, the policy's names taken out (`plain`; a branch's: its statement's line -> its first's)
+    under: str = ""  # the line of the arm it is in, so too: what tells apart two statements whose lines read the same
     made: int = 0  # in how many functions (each database's its own)
     ran: int = 0  # how many of them ran it
     raise_: bool = False
@@ -558,20 +589,33 @@ def totals(m: Measured, kind: Callable[[str, str, str], str]) -> Totals:
         body = m.bodies[r.md5]
         k = kind(r.schema, r.name, r.args)
         own = sorted(set(names(r.name)) | tables[(r.step, r.db)], key=lambda n: -len(n[0]))
-        text = {
-            s.id: plain(body.source[s.line - 1] if 0 < s.line <= len(body.source) else "", own) for s in body.statements
-        }
+        lines: dict[int, str] = {}
+
+        def line(n: int, lines: dict[int, str] = lines, body: Body = body, own: list[tuple[str, str]] = own) -> str:
+            """A line of this function, plain (once each)."""
+            if n not in lines:
+                lines[n] = plain(body.source[n - 1] if 0 < n <= len(body.source) else "", own)
+            return lines[n]
+
+        text = {s.id: line(s.line) for s in body.statements}
+        # the arms above each statement, by their first lines (`head`)
+        arms = {s.id: tuple(head(label, line(n)) for label, n in body.arms.get(s.id, ())) for s in body.statements}
         called = any(r.ran.values())
         if called:
             out.called.add(k)
-        # a statement is known by its kind of function and its line's text: the same line twice in a function (a
-        # guard the generator writes for each permission) is one, run when either ran
+        # a statement is known by its kind of function and its line's text: the same line twice in a function (the
+        # copies the generator writes for each type or permission) is one, run when either ran. A RAISE, by the arms
+        # above it too: two guards that say the same words on other conditions are two (authz.login_key's two
+        # 'invalid API key'), while the generator's copies under arms that differ only in a policy's names (WHEN
+        # 'folder' THEN) stay one
         ran: dict[tuple[str, ...], bool] = {}
         for s in body.statements:
-            key = (k, s.name, text[s.id])
+            key = (k, s.name, text[s.id], *(arms[s.id] if s.name == "RAISE" else ()))
             ran[key] = ran.get(key, False) or r.ran.get(s.id, 0) > 0
             if key not in out.statements:
-                out.statements[key] = Seen(r.schema, k, s.name, text[s.id], raise_=s.name == "RAISE")
+                above = body.arms.get(s.id, ())
+                under = line(above[-1][1]) if above else ""
+                out.statements[key] = Seen(r.schema, k, s.name, text[s.id], under, raise_=s.name == "RAISE")
         for key, went in ran.items():
             x = out.statements[key]
             x.made += 1
@@ -589,11 +633,11 @@ def totals(m: Measured, kind: Callable[[str, str, str], str]) -> Totals:
                 out.untold += 1
                 continue
             label = b.label if b.first or b.label == "no arm" else f"{b.label}, no statement"
-            key = (k, parent, b.label, first)
+            key = (k, parent, b.label, first, *arms[b.statement], head(b.label, line(b.head)))
             ran[key] = ran.get(key, False) or went
             if key not in out.branches:
                 what = f"{parent} -> {first or '(' + label + ')'}"
-                out.branches[key] = Seen(r.schema, k, label, what, bare=not b.first)
+                out.branches[key] = Seen(r.schema, k, label, what, line(b.head), bare=not b.first)
         for key, went in ran.items():
             x = out.branches[key]
             x.made += 1
@@ -689,12 +733,21 @@ def read_floor(path: str = FLOOR) -> dict[str, tuple[int, int]]:
     return out
 
 
-def judge(now: dict[str, tuple[int, int]], floor: dict[str, tuple[int, int]], name: str) -> tuple[list[str], bool]:
+def judge(
+    now: dict[str, tuple[int, int]], floor: dict[str, tuple[int, int]], name: str, unread: Iterable[str] = ()
+) -> tuple[list[str], bool]:
     """What the floor (the file `name`) says of this run, and whether it fails: more never run than it allows (a
     change that adds PL/pgSQL no suite runs, or stops running some), or fewer (the floor goes down with the change
-    that ran more: it is written anew)."""
+    that ran more: it is written anew), or a function of a floored schema whose source wasn't read (unread: kinds,
+    Totals.unreadable): its branches would count as none, so fewer, and go unjudged. A count, not a list: a change
+    that leaves one more never run and runs one that wasn't passes it (the report's lists say which)."""
     out = [f"The floor ({name}): what may stay never run, statements then branches"]
     failed = False
+    for k in sorted(k for k in unread if k.split(".", 1)[0] in FLOORED):
+        out.append(
+            f"  {k}: its source wasn't read here, so its branches aren't counted (the report's Sources not read)"
+        )
+        failed = True
     for schema, (s, b) in now.items():
         was = floor.get(schema)
         if was is None:
@@ -770,6 +823,10 @@ def report(m: Measured, t: Totals, paths: Sequence[str] = (), why_path: str = RE
     never_b = sorted((x for x in t.branches.values() if not x.ran), key=lambda x: (x.kind, x.text))
 
     explained: list[str] = []
+    # statements (or branches) whose lines read the same, apart by the arms above them: each says which arm it is in
+    twins: dict[tuple[str, str, str], int] = {}
+    for x in (*t.statements.values(), *t.branches.values()):
+        twins[(x.kind, x.what, x.text)] = twins.get((x.kind, x.what, x.text), 0) + 1
 
     def listed(xs: Sequence[Seen]) -> list[str]:
         """By kind of function, each with what never ran in it; what is only in functions of a kind called elsewhere
@@ -782,7 +839,8 @@ def report(m: Measured, t: Totals, paths: Sequence[str] = (), why_path: str = RE
             mine: list[str] = []
             elsewhere = 0
             for x in these:
-                said = f"      {x.text}  ({x.what}; in {x.made} function(s))"
+                under = f", under {x.under}" if x.under and twins[(x.kind, x.what, x.text)] > 1 else ""
+                said = f"      {x.text}  ({x.what}{under}; in {x.made} function(s))"
                 r = why(x, rs)
                 if r:
                     explained.extend([f"  {k}", f"{said}: {r}"])

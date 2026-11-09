@@ -3,18 +3,19 @@
 ## Speed
 
 [`core/bench/benchmark_results.txt`](../../core/bench/benchmark_results.txt) (`benchmark.sql`): 200,000 files, 10,000 folders, 2,000 users, nested
-teams, 500 linked folders; JIT off. These figures, and those below, were measured on 2026-10-03 by a build from
-before the rename (`rowfence 0.1.0-dev`), on the laptop the project was developed on then; no build since has
-run these benchmarks on a machine of its own.
+teams, 500 linked folders; JIT off. Measured on 2026-11-09 on one of GitHub's runners (4 CPUs, 128 MB of shared
+buffers: a shared machine) by `core/bench/benchmark.sh`, from `main` at 0.1.0-dev. The scale benchmark's figures
+below were measured on 2026-10-03 by a build from before the rename (`rowfence 0.1.0-dev`), on the laptop the
+project was developed on then; no build since has run the scale benchmark on a machine of its own.
 
 | median | ms |
 |---|---|
-| open one file, prepared statement | 1.1 |
-| open a folder (20 files), prepared statement | 1.2 |
-| `authz.can('file', id, 'edit')` | 0.3 |
-| list every visible file (11k to 53k of 200k) | 32 |
-| apply the policy, backfilling 10,000 folders | 940 |
-| move a folder holding 3,441 subfolders (inside the tree) | 290 |
+| open one file, prepared statement | 1.2 |
+| open a folder (20 files), prepared statement | 1.3 |
+| `authz.can('file', id, 'edit')` | 0.4 |
+| list every visible file (11k to 53k of 200k) | 42 |
+| apply the policy, backfilling 10,000 folders | 1,480 |
+| move a folder holding 3,441 subfolders (inside the tree) | 490 |
 
 The scale benchmark (`core/bench/scale.sh --large`: a million files, 50,000 folders, writes arriving while 400
 reads a second are served) moves the folder with the most below it, about 19,000 folders, into another root in
@@ -26,11 +27,12 @@ a p95 of 4.3 to 4.6 ms and tree writes at 28 to 38 ms. The folder with the most 
 3.7 s. Applying takes three minutes there (the backfill), and `authz.verify()` two and a half.
 
 **JIT is off in signed-in transactions** ([Signed sessions](identity.md)): with JIT on, Postgres spends about
-a third of a second compiling each large read through RLS (the list above takes 290 ms instead of 32), since the
+a third of a second compiling each large read through RLS (on the laptop of 2026-10-03, the list above took 290 ms
+instead of 32), since the
 rules' lookups are estimated once per row. Applying analyzes the tables the policy reads that were never
 analyzed: a table never analyzed is planned as ten pages of rows (6 rows as thousands), and a read of it as one
 JIT compiles. <!-- checked: tests/apply.sh "and leaves none of the tables the policy reads, nor of its own, never analyzed" -->
-The audit trail and change feed add about 15 µs per changed row (10,000 owner changes: 292 ms instead of 137 ms).
+The audit trail and change feed add about 20 µs per changed row (10,000 owner changes: 358 ms instead of 163 ms).
 The feed also looks up what reads the objects a write changed, a thousand objects of a type at most: on the docs
 app a member leaving a team or a share on a folder takes about half a millisecond more (0.8 ms instead of 0.3), a
 folder moved or made to stop inheriting 1.5 to 2 ms more; with 300 folders and 2,000 files below the folder, 4.5 ms
@@ -43,14 +45,14 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   Postgres. Across shards, run the same policy in each shard and keep an object's
   whole tree (and its groups) on one shard; cross-shard inheritance isn't supported.
 - **Nested groups are expanded per query**, walking up from the user's own groups: with 20,000
-  teams in chains ten deep, opening a folder given to the top of one takes 1.7 ms (1.5 ms with chains
+  teams in chains ten deep, opening a folder given to the top of one takes 1.9 ms (1.4 ms with chains
   one deep) and `authz.can` 0.2 ms (`benchmark.sql`). A stored closure would only pay off for much
   deeper or wider nesting, and couldn't honour expiring shares. <!-- unchecked: why rowstile is built this way, not what it does -->
 - **A read costs what its reader holds.** A rule looks the object's ancestors up among the folders where the
   reader's permission starts (the ones they own, are shared, or reach through a team), and that set is worked
   out for each query: about a millisecond per thousand. With a million folders and everything in memory,
   opening a folder took 4.5 to 5 ms on the server for a member who held 4,000 folders directly, against the
-  1.2 ms above for one who holds a hundred. Access through one membership of something big costs nothing of
+  1.3 ms above for one who holds a hundred. Access through one membership of something big costs nothing of
   the kind: an org's admin, who reaches every folder, reads faster than any member in the benchmark.
 - **Reads through the rules run on one CPU.** rowstile's functions aren't marked parallel safe: a session's
   signature is bound to its backend, which a parallel worker isn't. So Postgres never splits a read through

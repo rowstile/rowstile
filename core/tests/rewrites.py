@@ -68,6 +68,7 @@ from difftest import CHANGE, DB, Ids, idsql, lit  # noqa: E402
 from difftest import Reference as Reader  # noqa: E402
 from genpolicy import (  # noqa: E402
     CONDS,
+    SLOW_TO_PLAN,
     Node,
     Spec,
     atoms,
@@ -353,32 +354,34 @@ def replay(
     )
     there = DB(f"{db.name}_replay")
     there.recreate()
-    there.run(schema_text(spec))
-    # a made-up world's columns may be NULL where the app's table says they can't be: they may here
-    there.run(
-        "DO $$ DECLARE c record; BEGIN FOR c IN SELECT table_schema, table_name, column_name FROM "
-        "information_schema.columns WHERE table_schema NOT IN ('pg_catalog', 'information_schema') AND is_nullable = 'NO' "
-        "AND column_default IS NOT NULL LOOP EXECUTE format('ALTER TABLE %I.%I ALTER COLUMN %I DROP NOT NULL', "
-        "c.table_schema, c.table_name, c.column_name); END LOOP; END $$;"
-    )
-    for step, applying in ((rows, False), (sql, True), (shares, False)):
-        code, _, err = there.run(step, check=applying)
-        if code != 0:  # (a value the app's table doesn't take: a world made up for the policy alone)
-            raise Unloadable(err.strip().splitlines()[0])
+    try:  # (dropped however it ends: a world rows can't make, or a check that fails)
+        there.run(schema_text(spec))
+        # a made-up world's columns may be NULL where the app's table says they can't be: they may here
+        there.run(
+            "DO $$ DECLARE c record; BEGIN FOR c IN SELECT table_schema, table_name, column_name FROM "
+            "information_schema.columns WHERE table_schema NOT IN ('pg_catalog', 'information_schema') AND is_nullable = 'NO' "
+            "AND column_default IS NOT NULL LOOP EXECUTE format('ALTER TABLE %I.%I ALTER COLUMN %I DROP NOT NULL', "
+            "c.table_schema, c.table_name, c.column_name); END LOOP; END $$;"
+        )
+        for step, applying in ((rows, False), (sql, True), (shares, False)):
+            code, _, err = there.run(step, check=applying)
+            if code != 0:  # (a value the app's table doesn't take: a world made up for the policy alone)
+                raise Unloadable(err.strip().splitlines()[0])
 
-    def answer(pol: Policy) -> tuple[bool, evaluate.Data]:
-        """The user's answer, and what the rows hold for the evaluator (read in the user's session)."""
-        # (the permission itself, as the review compares it: authz.can answers only for rows the user may select)
-        lines = [signed, f"SELECT 'can', authz_int.can({lit(tname)}, {lit(found['object'])}, {lit(perm)});"]
-        lines += [f"SELECT {lit(json.dumps(list(key)))}, ({q});" for key, q in Reader(pol).data_queries()]
-        got = there.rows("\n".join(lines))
-        assert got[0][0] == "can", got[0]
-        return got[0][1] == "t", evaluate.Data.of({tuple(json.loads(k)): json.loads(v) for k, v in got[1:]})
+        def answer(pol: Policy) -> tuple[bool, evaluate.Data]:
+            """The user's answer, and what the rows hold for the evaluator (read in the user's session)."""
+            # (the permission itself, as the review compares it: authz.can answers only for rows the user may select)
+            lines = [signed, f"SELECT 'can', authz_int.can({lit(tname)}, {lit(found['object'])}, {lit(perm)});"]
+            lines += [f"SELECT {lit(json.dumps(list(key)))}, ({q});" for key, q in Reader(pol).data_queries()]
+            got = there.rows("\n".join(lines))
+            assert got[0][0] == "can", got[0]
+            return got[0][1] == "t", evaluate.Data.of({tuple(json.loads(k)): json.loads(v) for k, v in got[1:]})
 
-    before, back_a = answer(base.pol)
-    there.run(Compiler(parse_policy(new, "new.authz")).compile("new.authz"))  # (compiling changes the policy)
-    after, back_b = answer(head)
-    subprocess.run(["dropdb", "--if-exists", there.name], capture_output=True)
+        before, back_a = answer(base.pol)
+        there.run(Compiler(parse_policy(new, "new.authz")).compile("new.authz"))  # (compiling changes the policy)
+        after, back_b = answer(head)
+    finally:
+        subprocess.run(["dropdb", "--if-exists", there.name], capture_output=True)
     said = (
         f"the review says {found['what']} on {found['object']} for {found['user']} goes from {found['before']} to "
         f"{found['after']}"
@@ -412,7 +415,7 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
     if compiled.returncode != 0 and refusal(compiled.stderr) is None:
         return ["the compiler failed, refusing nothing:", *compiled.stderr.strip().splitlines()[-12:]]
-    if compiled.returncode != 0 or "view definitions to plan" in compiled.stdout:
+    if compiled.returncode != 0 or SLOW_TO_PLAN in compiled.stdout:
         raise Refused
     r = random.Random(f"rewrites/{spec.seed}")
     base = review.Side(text, None, None)

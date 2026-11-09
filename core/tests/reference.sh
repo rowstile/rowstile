@@ -21,6 +21,8 @@ ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
 quiet() { PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 T=$(mktemp -d)
+# what the run made, dropped however it ends (KEEP=1 keeps it)
+trap '[ -n "${KEEP:-}" ] || { for d in "$DB" "$DEV" "$REVIEW" "$POLICY"; do dropdb --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }' EXIT
 P=$T/project
 # the command on the PATH as an install puts it there: this checkout's
 export PATH="$CORE/cli:$PATH"
@@ -272,5 +274,4 @@ if [ -z "$left" ] && [ "$total" -ge 8 ]; then ok "every block of the reference r
   [ "$total" -ge 8 ] || bad "only $total blocks were found in the reference"
 fi
 
-[ -n "${KEEP:-}" ] || { dropdb "$DB"; dropdb "$DEV"; dropdb --if-exists "$REVIEW" 2>/dev/null; dropdb --if-exists "$POLICY" 2>/dev/null; rm -rf "$T"; }
 if [ $fails -eq 0 ]; then echo "reference: all passed"; else echo "reference: $fails failed"; exit 1; fi

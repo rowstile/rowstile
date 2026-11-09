@@ -330,8 +330,22 @@ fn errors_made_up_as_the_database_sends_them() {
         "new row violates row-level security policy for table notes",
         "new row violates row-level security policy for table \"notes",
         "row violates row-level security policy for table \"notes\"",
+        "new row violates row-level security policy \"short_notes for table \"notes\"",
     ] {
         assert!(matches!(Error::from_database(db("42501", message)), Error::Database(_)), "{message}");
+    }
+    // a restrictive policy of the app's own: Postgres names it (with a quote in its name here), and says no more; an
+    // upsert's is about the update of the row there already
+    for (message, command) in [
+        ("new row violates row-level security policy \"short_notes\" for table \"notes\"", None),
+        ("new row violates row-level security policy \"a\" b\" (USING expression) for table \"notes\"", Some("update")),
+        ("target row violates row-level security policy \"only_mine\" (USING expression) for table \"notes\"", None),
+    ] {
+        let Error::Refused(r) = Error::from_database(db("42501", message)) else { panic!("{message}") };
+        assert_eq!(
+            (r.message.as_str(), r.table.as_deref(), r.command.as_deref(), r.why.len()),
+            (message, Some("notes"), command, 0)
+        );
     }
     // Postgres's own refusal on a server whose messages aren't English: told by the function that raised it, not its
     // words, the table and the rule unnamed; another 42501 (a grant missing) is none
