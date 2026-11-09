@@ -898,7 +898,7 @@ version = "0.1.0-dev"
 dependencies = [
  "axum",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "sqlx",
  "tokio",
  "tokio-postgres",
