@@ -665,6 +665,20 @@ case "$(cat "$T/dev.log")" in *"isn't marked as a development database"*"[AZ610]
   ok "dev won't push to a database with a policy that isn't marked as a development database" || bad "dev unmarked exit" "$rc";;
   *) bad "dev on an unmarked database" "$(cat "$T/dev.log")";; esac
 CLI push --development example/docs.authz >/dev/null 2>&1 || bad "push --development"
+# a push whose migration only defines a view again in place (a permission of orgs, which the folders' select rule
+# reaches by org.open) asks what the rules call as applying whole does: a function of the row read as a column, which
+# the app role would run with its own rights, is refused (AZ628)
+PSQL -c "CREATE FUNCTION public.frozen(app.orgs) RETURNS boolean LANGUAGE sql STABLE AS 'SELECT EXISTS (SELECT 1 FROM app.files f WHERE f.confidential)'"
+sed -e "s/^  admin  : user = app.org_members(org_id -> user_id) where {role = 'admin'}\$/&\n  can open = admin/" \
+    -e 's/^           or linked_into.view  -- links pass on view, not edit$/&\n           or org.open/' example/docs.authz > "$T/open.authz"
+sed 's/  can open = admin/  can open = admin or {this.frozen}/' "$T/open.authz" > "$T/frozen.authz"
+run push "$T/open.authz"; [ $rc -eq 0 ] || bad "push of a permission another table's rule reaches" "$out"
+run push "$T/frozen.authz"
+case "$out" in *"a condition calls frozen(app.orgs), and nothing in its text shows the call"*"[AZ628]"*)
+  [ $rc -ne 0 ] && ok "a push that only defines a view again: a function of the row the rules would run is refused (AZ628)" || bad "push with a row function: exit" "$rc";;
+  *) bad "push with a row function reached through a view" "$out";; esac
+CLI push example/docs.authz >/dev/null 2>&1 || bad "push back to the docs policy"
+PSQL -c "DROP FUNCTION public.frozen(app.orgs)"
 ( cd "$T/p" && python3 "$OLDPWD/cli/rowstile_cli.py" dev --once ) > "$T/dev.log" 2>&1; rc=$?
 case "$(cat "$T/dev.log")" in *"ok   compiles"*"applied in"*"check(s) pass"*"wrote out/authz_client.py"*) [ $rc -eq 0 ] &&
   ok "dev --once: compiles, applies, tests, writes the client" || bad "dev exit" "$rc";; *) bad "dev --once" "$(cat "$T/dev.log")";; esac

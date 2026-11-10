@@ -12,7 +12,7 @@ cookbook 103
 cuts half way 28
 cuts half way, every statement 31
 cuts half way, other policies 1
-devx 153
+devx 154
 docs 53
 governance 294
 hand answers 370
@@ -33,7 +33,7 @@ migrate vs apply 97
 migrations 87
 moves 23
 multi scenario 119
-policy errors 298
+policy errors 301
 principals 135
 reference 31
 review 60

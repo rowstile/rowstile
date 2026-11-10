@@ -86,6 +86,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ625](AZ625.md): A cascade line that names no foreign key
 - [AZ626](AZ626.md): A policy applied by another version of rowstile
 - [AZ627](AZ627.md): Shares whose ids the key can't read
+- [AZ628](AZ628.md): A condition calls the app's code where its text doesn't show it
 
 ## What apps see
 
