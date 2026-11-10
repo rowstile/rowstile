@@ -6,7 +6,7 @@ import re
 
 from .base import BASE_SQL, GENERATED_FUNCTIONS, SYNC_FUNCTIONS
 from .compiler import rule_name, subject_key
-from .governance import GovernanceMixin, trigger_if_partitioned
+from .governance import GovernanceMixin, trigger_after_where_generated, trigger_if_partitioned
 from .hardening import LintMixin, path_writers_sql
 from .identity import SESSION_OK, IdentityMixin
 from .insight import InsightMixin
@@ -323,6 +323,27 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
 {moved}"""
 
     # --- rules on changed columns (RLS can't compare old and new rows) ----
+    @staticmethod
+    def virtual_sql(tbl: str, pad: str) -> tuple[str, str]:
+        """PL/pgSQL for a trigger function that judges or explains v_row, a row of the table tbl (a regclass): what
+        finds the table's virtual generated columns (into v_virtual, each with what works it out), and what gives
+        them to v_row. PostgreSQL 18 works such a column out when its table is read, and a row a trigger is handed
+        holds none of them; before 18 there is none to find."""
+        find = (
+            f"SELECT pg_catalog.string_agg(pg_catalog.format('%L, (%s)', a.attname, "
+            f"pg_catalog.pg_get_expr(d.adbin, d.adrelid)), ', ')\n"
+            f"{pad}  INTO v_virtual FROM pg_catalog.pg_attribute a\n"
+            f"{pad}  JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum\n"
+            f"{pad}  WHERE a.attrelid = {tbl} AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = 'v';"
+        )
+        fill = (
+            f"IF v_virtual IS NOT NULL THEN\n"
+            f"{pad}  EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual\n"
+            f"{pad}    || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;\n"
+            f"{pad}END IF;"
+        )
+        return find, fill
+
     def column_rule_sql(self, t: Type, alias: str, rule: Rule) -> str:
         new = rule.command == "update after"
         row = "NEW" if new else "OLD"
@@ -331,9 +352,9 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
         # named after what it guards, as the rule's head says it (a table has one rule per head, AZ109), not after
         # its place in the policy: Postgres fires a table's triggers in the order of their names, and the first to
         # refuse an update says why, so which one that is mustn't depend on the order the rules are written in. A
-        # rule on the row before the change speaks first: its trigger is `authz_update <columns>`, one on the row
-        # after it `authz_update_after <columns>` (a space sorts before `_`), and then by the columns. (A name over
-        # 63 bytes is shortened with a hash, by q, keeping its first 54 bytes: the order holds.)
+        # rule on the row before the change speaks first: its trigger, `authz_update <columns>`, runs before the
+        # update, one on the row after it, `authz_update_after <columns>`, after it; and then by the columns. (A
+        # name over 63 bytes is shortened with a hash, by q, keeping its first 54 bytes: the order holds.)
         name = f"column {cols}{' after' if new else ''}"
         trigger = f"authz_update_after {cols}" if new else f"authz_update {cols}"
         fn = f"authz_int.{q(f'{rule.table}:{name}')}"
@@ -344,6 +365,27 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
         holds = f"authz_int.{q(f'{rule.table}:{name}:holds')}"
         schema, table = rule.table.split(".")
         tbl = f"{lit(qt(rule.table))}::pg_catalog.regclass"
+        find_virtual, fill_virtual = self.virtual_sql(tbl, "  ")
+        made = (
+            f"CREATE TRIGGER {q(trigger)} BEFORE UPDATE ON {qt(rule.table)} FOR EACH ROW\n"
+            f"  WHEN (({when})\n"
+            f"    AND pg_catalog.row_security_active({tbl})\n"
+            f"    AND NOT {holds}(pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb({row}))))\n"
+            f"  EXECUTE FUNCTION {fn}()"
+        )
+        # A rule on the row after the change, on a table with a generated column: only once the row is written does
+        # it hold what Postgres works out itself, and a trigger before the update may not read it. There, and there
+        # alone, the rule is checked after the update (and for a row the update puts in another partition, by
+        # moved_rule_sql)
+        made = trigger_after_where_generated(rule.table, made) if new else made + ";"
+
+        def raising(key: str, pad: str) -> str:
+            return (
+                f"RAISE EXCEPTION {lit(msg)}, {key} USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,\n"
+                f"{pad}  SCHEMA = {lit(schema)}, TABLE = {lit(table)}, CONSTRAINT = 'authz_update', "
+                f"HINT = 'rowstile help AZ709';"
+            )
+
         return f"""{self.rule_items_sql(t, rule.table, alias, rule, name)}
 
 {self.rule_why_sql(t, rule.table, alias, rule, name)}
@@ -359,27 +401,92 @@ END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
-DECLARE v_lines text; v_row {qt(rule.table)};
+DECLARE v_lines text; v_row {qt(rule.table)}; v_virtual text;
 BEGIN
   -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
   IF TG_RELID = {tbl} THEN v_row := {row};
   ELSE v_row := pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb({row})); END IF;
+  -- (PostgreSQL 18: with its virtual generated columns, which the row a trigger is handed doesn't hold)
+  {find_virtual}
+  {fill_virtual}
   BEGIN
     v_lines := (SELECT string_agg(l, E'\\n') FROM {why}(v_row) l);
   EXCEPTION WHEN OTHERS THEN
     v_lines := 'no explanation: ' || SQLERRM;
   END;
-  RAISE EXCEPTION {lit(msg)}, {self.key(t, "OLD")} USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
-    SCHEMA = {lit(schema)}, TABLE = {lit(table)}, CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
+  {raising(self.key(t, "OLD"), "  ")}
 END $f$;
 -- checked on the row {"after" if new else "before"} the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
--- the row as the table's own
-CREATE TRIGGER {q(trigger)} BEFORE UPDATE ON {qt(rule.table)} FOR EACH ROW
-  WHEN (({when})
-    AND pg_catalog.row_security_active({tbl})
-    AND NOT {holds}(pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb({row}))))
-  EXECUTE FUNCTION {fn}();"""
+-- the row as the table's own{"; before the update, or after it where the table has a generated column" if new else ""}
+{made}""" + (self.moved_rule_sql(t, rule, name, trigger, why, raising(self.key(t, "v_row"), "      ")) if new else "")
+
+    def moved_rule_sql(self, t: Type, rule: Rule, name: str, trigger: str, why: str, raising: str) -> str:
+        """A rule on the row after the change, where its trigger runs after the update (a table with a generated
+        column), for the rows an update puts in another partition: that is a delete there and an insert here, and
+        Postgres runs no AFTER UPDATE row trigger for it. On a partitioned table the rule is asked again once the
+        statement is done, of each row it left with other values in the rule's columns than the row that had its key
+        before. A key the update made is compared with the one key it left without a row, where there is one of each
+        (a row moved alone: its key holds the column it moved by); otherwise its row is checked whatever changed,
+        which refuses more, never less. It asks what the app role may ask of a row (the rule's items: authz_int is
+        not for a function's text to name), which answers for a row the user may select: an update that hides a row
+        from who makes it is refused here (one with a WHERE or a RETURNING, Postgres refuses itself). A row that
+        stayed in its partition is asked twice, by its row trigger first. Where the row trigger runs before the
+        update it has asked the rule of every row, the ones that move too, and this asks nothing."""
+        tbl = f"{lit(qt(rule.table))}::pg_catalog.regclass"
+        find_virtual, fill_virtual = self.virtual_sql(tbl, "    ")
+        fn = f"authz_int.{q(f'{rule.table}:{name}:moved')}"
+        # the row trigger's name as the catalog has it
+        row_trigger = lit(q(trigger)[1:-1].replace('""', '"'))
+        items = self.rule_fn(rule.table, name, "items")
+        key_o, key_n = self.key_text(t, "o"), self.key_text(t, "n")
+        same = " AND ".join(f"o.{q(c)} IS NOT DISTINCT FROM n.{q(c)}" for c in rule.columns)
+        moved = trigger_if_partitioned(
+            rule.table,
+            f"CREATE TRIGGER {q(trigger.replace('authz_update_after', 'authz_update_after_moved', 1))} "
+            f"AFTER UPDATE ON {qt(rule.table)} "
+            f"REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn}()",
+        )
+        return f"""
+-- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
+-- Postgres runs no AFTER UPDATE row trigger for it. Where the rule's trigger runs after the update, the rule is
+-- asked again when the statement is done, of each row it left with other values in these columns than the row that
+-- had its key (a key the update made: than the one key it left without a row, or, where that isn't one for one,
+-- whatever changed). A trigger before the update has asked it of every row already
+CREATE FUNCTION {fn}() RETURNS trigger
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
+DECLARE v_lines text; v_row {qt(rule.table)}; v_one boolean; v_virtual text;
+BEGIN
+  IF NOT pg_catalog.row_security_active({tbl}) THEN RETURN NULL; END IF;
+  -- (tgtype's bit 2: before. Asked unless a trigger before the update is there, and on: without one, never less)
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger g WHERE g.tgrelid = {tbl} AND g.tgname = {row_trigger}
+             AND g.tgtype & 2 <> 0 AND g.tgenabled <> 'D') THEN
+    RETURN NULL;
+  END IF;
+  -- (PostgreSQL 18: each row with its virtual generated columns, which the statement's rows don't hold)
+  {find_virtual}
+  v_one := (SELECT count(*) FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE {key_n} = {key_o})) = 1
+       AND (SELECT count(*) FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key_o} = {key_n})) = 1;
+  FOR v_row IN
+    SELECT (pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb(n))).* FROM new_rows n
+    WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key_o} = {key_n} AND {same})
+      AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key_o} = {key_n})
+               AND EXISTS (SELECT 1 FROM old_rows o WHERE {same}
+                           AND NOT EXISTS (SELECT 1 FROM new_rows m WHERE {self.key_text(t, "m")} = {key_o})))
+  LOOP
+    {fill_virtual}
+    IF NOT ({items}(v_row))[1] THEN
+      BEGIN
+        v_lines := (SELECT string_agg(l, E'\\n') FROM {why}(v_row) l);
+      EXCEPTION WHEN OTHERS THEN
+        v_lines := 'no explanation: ' || SQLERRM;
+      END;
+      {raising}
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END $f$;
+{moved}"""
 
     def seen_sql(self, t: Type, table: str, alias: str) -> str:
         """authz_int."<table>:seen"(id): no row has the id, or the user may select the one that has it. The functions

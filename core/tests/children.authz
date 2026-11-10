@@ -1,6 +1,7 @@
 -- children.authz: a policy over tables with tables under them (tests/children_schema.sql, tests/children.sh):
 -- two partitioned tables and one whose older rows are stored in a table that inherits from it. Each has a
--- relation that is shared, a column that says who owns the row, and a rule on that column. And two trees whose
+-- relation that is shared, a column that says who owns the row, and a rule on that column; and a rule on the row
+-- after a change: where a note is put, a task's state (it reads a generated column), who a doc is handed to. And two trees whose
 -- tables have no rules (posts read them), one partitioned, one with tables that inherit: the tree's own table,
 -- its link table and the table its condition reads.
 app role app_user
@@ -30,23 +31,27 @@ type doc = ch.docs
 
   can own  = owner
   can edit = own or editor
+  can keep = owner
 
 rules ch.notes
   select          : view
   insert          : owner
   update          : view
   update owner_id : manage
+  update parent_id after : manage
   delete          : manage
 
 rules ch.tasks
   select          : view
   update          : view
   update owner_id : manage
+  update state after : manage or {this.is_done}
 
 rules ch.docs
   select : edit
   update : edit
   update owner_id : own
+  update owner_id after : keep
   delete : own
 
 type topic = ch.topics

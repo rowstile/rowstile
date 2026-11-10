@@ -1017,14 +1017,17 @@ class ColumnRules(unittest.TestCase):
                     self.assertNotRegex(body, r"\bauthz_int\.", f"{name} runs as its caller and names authz_int")
         sql = Compiler(parse_policy(ruled)).compile("x")
         holds = re.findall(r'CREATE FUNCTION authz_int\."cx\.\w+:column [\w, ]+:holds".*?END;', sql, re.S)
-        self.assertEqual(len(holds), len(re.findall(r'AND NOT authz_int\."cx\.\w+:column [\w, ]+:holds"\(', sql)))
+        # (each called by its trigger's WHEN; a rule on the row after is written for before the update and for after it)
+        self.assertEqual(len(holds), len(set(re.findall(r'AND NOT authz_int\."cx\.\w+:column [\w, ]+:holds"\(', sql))))
         self.assertTrue(any('"bot__me"' in fn for fn in holds), "the rule that names the bot is behind no function")
 
     def test_triggers_are_named_after_what_they_guard(self) -> None:
         # Postgres fires a table's triggers in the order of their names, and the first that refuses says why: so a
         # rule's trigger (and its functions) are named after the rule's head, the same wherever the rule is written
         # (rules on another table before it too), within 63 bytes and each its own; and a rule on the row before
-        # the change speaks before one on the row after it, whatever their columns (`a after` sorts first by them)
+        # the change speaks before one on the row after it, whatever their columns (`a after` sorts first by them).
+        # A rule on the row after is written twice, for the database to choose when applying: before the update,
+        # or after it for a table with a generated column (which only the written row holds)
         long = "a_column_named_at_some_length"
         heads = ["owner_id", "title after", "a_b", "a, b", f"{long}_1, {long}_2", f"{long}_1, {long}_3", "a after"]
         heads.append(f"{long}_1, {long}_4 after")
@@ -1036,16 +1039,22 @@ class ColumnRules(unittest.TestCase):
         docs = "rules app.docs\n  select : edit\n  update : edit\n"
         notes = "rules app.notes\n  update : doc.edit\n  update x : doc.edit\n"
         trigger = re.compile(
-            r'CREATE TRIGGER ("[^"]+") BEFORE UPDATE ON ("\w+"\."\w+") FOR EACH ROW\n  WHEN .*?EXECUTE FUNCTION ([^(]+)\(\);',
+            r'CREATE TRIGGER ("authz_update[^"]*") (BEFORE|AFTER) UPDATE ON ("\w+"\."\w+") FOR EACH ROW\n'
+            r"  WHEN .*?EXECUTE FUNCTION ([^(]+)\(\)'?;",
             re.S,
         )
 
-        def triggers(text: str) -> list[tuple[str, str, str]]:
+        def triggers(text: str) -> list[tuple[str, str, str, str]]:
             return trigger.findall(Compiler(parse_policy(text)).compile("x"))
 
-        made = triggers(types + docs + "".join(rules) + notes)
-        self.assertEqual(sorted(made), sorted(triggers(types + notes + docs + "".join(reversed(rules)))))
-        mine = [n for n, t, _ in made if t == '"app"."docs"']
+        written = triggers(types + docs + "".join(rules) + notes)
+        self.assertEqual(sorted(written), sorted(triggers(types + notes + docs + "".join(reversed(rules)))))
+        made = [x for x in written if x[1] == "BEFORE"]
+        self.assertEqual(
+            sorted((n, t, f) for n, when, t, f in written if when == "AFTER"),
+            sorted((n, t, f) for n, _, t, f in made if n.startswith('"authz_update_after ')),
+        )
+        mine = [n for n, _, t, _ in made if t == '"app"."docs"']
         self.assertEqual(
             mine[:4],
             ['"authz_update owner_id"', '"authz_update_after title"', '"authz_update a_b"', '"authz_update a, b"'],
@@ -1056,8 +1065,8 @@ class ColumnRules(unittest.TestCase):
         self.assertEqual([n.startswith("authz_update_after ") for n in fired], [False] * 5 + [True] * 3, fired)
         self.assertEqual(fired[5], "authz_update_after a")
         self.assertTrue(all(len(n[1:-1].encode()) <= 63 for n in mine), mine)
-        self.assertEqual(len({f for _, _, f in made}), len(made))
-        self.assertIn(('"authz_update x"', '"app"."notes"', 'authz_int."app.notes:column x"'), made)
+        self.assertEqual(len({f for *_, f in made}), len(made))
+        self.assertIn(('"authz_update x"', "BEFORE", '"app"."notes"', 'authz_int."app.notes:column x"'), made)
 
 
 class SlowPlans(unittest.TestCase):

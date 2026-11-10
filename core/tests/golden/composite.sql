@@ -4767,11 +4767,20 @@ END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."cx.files:column folder_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
-DECLARE v_lines text; v_row "cx"."files";
+DECLARE v_lines text; v_row "cx"."files"; v_virtual text;
 BEGIN
   -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
   IF TG_RELID = '"cx"."files"'::pg_catalog.regclass THEN v_row := NEW;
   ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"cx"."files", pg_catalog.to_jsonb(NEW)); END IF;
+  -- (PostgreSQL 18: with its virtual generated columns, which the row a trigger is handed doesn't hold)
+  SELECT pg_catalog.string_agg(pg_catalog.format('%L, (%s)', a.attname, pg_catalog.pg_get_expr(d.adbin, d.adrelid)), ', ')
+    INTO v_virtual FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE a.attrelid = '"cx"."files"'::pg_catalog.regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = 'v';
+  IF v_virtual IS NOT NULL THEN
+    EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
+      || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
+  END IF;
   BEGIN
     v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.files:column folder_id after:why"(v_row) l);
   EXCEPTION WHEN OTHERS THEN
@@ -4782,12 +4791,79 @@ BEGIN
 END $f$;
 -- checked on the row after the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
--- the row as the table's own
-CREATE TRIGGER "authz_update_after folder_id" BEFORE UPDATE ON "cx"."files" FOR EACH ROW
+-- the row as the table's own; before the update, or after it where the table has a generated column
+-- @object trigger "authz_update_after folder_id" ON "cx"."files"
+DO $tr$ BEGIN
+  IF EXISTS (WITH RECURSIVE t(oid) AS (
+               SELECT '"cx"."files"'::pg_catalog.regclass::oid
+               UNION ALL SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN t ON i.inhparent = t.oid)
+             SELECT 1 FROM pg_catalog.pg_attribute a JOIN t ON a.attrelid = t.oid
+             WHERE a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated <> '') THEN
+    EXECUTE 'CREATE TRIGGER "authz_update_after folder_id" AFTER UPDATE ON "cx"."files" FOR EACH ROW
   WHEN ((OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
-    AND pg_catalog.row_security_active('"cx"."files"'::pg_catalog.regclass)
+    AND pg_catalog.row_security_active(''"cx"."files"''::pg_catalog.regclass)
     AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"cx"."files", pg_catalog.to_jsonb(NEW))))
-  EXECUTE FUNCTION authz_int."cx.files:column folder_id after"();
+  EXECUTE FUNCTION authz_int."cx.files:column folder_id after"()';
+  ELSE
+    EXECUTE 'CREATE TRIGGER "authz_update_after folder_id" BEFORE UPDATE ON "cx"."files" FOR EACH ROW
+  WHEN ((OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
+    AND pg_catalog.row_security_active(''"cx"."files"''::pg_catalog.regclass)
+    AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"cx"."files", pg_catalog.to_jsonb(NEW))))
+  EXECUTE FUNCTION authz_int."cx.files:column folder_id after"()';
+  END IF;
+END $tr$;
+-- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
+-- Postgres runs no AFTER UPDATE row trigger for it. Where the rule's trigger runs after the update, the rule is
+-- asked again when the statement is done, of each row it left with other values in these columns than the row that
+-- had its key (a key the update made: than the one key it left without a row, or, where that isn't one for one,
+-- whatever changed). A trigger before the update has asked it of every row already
+CREATE FUNCTION authz_int."cx.files:column folder_id after:moved"() RETURNS trigger
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
+DECLARE v_lines text; v_row "cx"."files"; v_one boolean; v_virtual text;
+BEGIN
+  IF NOT pg_catalog.row_security_active('"cx"."files"'::pg_catalog.regclass) THEN RETURN NULL; END IF;
+  -- (tgtype's bit 2: before. Asked unless a trigger before the update is there, and on: without one, never less)
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger g WHERE g.tgrelid = '"cx"."files"'::pg_catalog.regclass AND g.tgname = 'authz_update_after folder_id'
+             AND g.tgtype & 2 <> 0 AND g.tgenabled <> 'D') THEN
+    RETURN NULL;
+  END IF;
+  -- (PostgreSQL 18: each row with its virtual generated columns, which the statement's rows don't hold)
+  SELECT pg_catalog.string_agg(pg_catalog.format('%L, (%s)', a.attname, pg_catalog.pg_get_expr(d.adbin, d.adrelid)), ', ')
+      INTO v_virtual FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE a.attrelid = '"cx"."files"'::pg_catalog.regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = 'v';
+  v_one := (SELECT count(*) FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)) = 1
+       AND (SELECT count(*) FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)) = 1;
+  FOR v_row IN
+    SELECT (pg_catalog.jsonb_populate_record(NULL::"cx"."files", pg_catalog.to_jsonb(n))).* FROM new_rows n
+    WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text AND o."folder_id" IS NOT DISTINCT FROM n."folder_id")
+      AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)
+               AND EXISTS (SELECT 1 FROM old_rows o WHERE o."folder_id" IS NOT DISTINCT FROM n."folder_id"
+                           AND NOT EXISTS (SELECT 1 FROM new_rows m WHERE ROW(m."org_id"::bigint, m."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)))
+  LOOP
+    IF v_virtual IS NOT NULL THEN
+      EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
+        || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
+    END IF;
+    IF NOT (authz_gen."cx.files:column folder_id after:items"(v_row))[1] THEN
+      BEGIN
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.files:column folder_id after:why"(v_row) l);
+      EXCEPTION WHEN OTHERS THEN
+        v_lines := 'no explanation: ' || SQLERRM;
+      END;
+      RAISE EXCEPTION 'changing folder_id of cx.files % needs: folder.edit', ROW(v_row."org_id"::bigint, v_row."id"::bigint)::text USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+        SCHEMA = 'cx', TABLE = 'files', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END $f$;
+-- @object trigger "authz_update_after_moved folder_id" ON "cx"."files"
+-- @if partitioned
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_catalog.pg_class WHERE oid = '"cx"."files"'::regclass) = 'p' THEN
+    EXECUTE 'CREATE TRIGGER "authz_update_after_moved folder_id" AFTER UPDATE ON "cx"."files" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."cx.files:column folder_id after:moved"()';
+  END IF;
+END $tr$;
 
 CREATE FUNCTION authz_gen."cx.folders:column parent_type, parent_id after:items"(p_row "cx"."folders") RETURNS boolean[]
 LANGUAGE sql STABLE
@@ -4845,11 +4921,20 @@ END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
-DECLARE v_lines text; v_row "cx"."folders";
+DECLARE v_lines text; v_row "cx"."folders"; v_virtual text;
 BEGIN
   -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
   IF TG_RELID = '"cx"."folders"'::pg_catalog.regclass THEN v_row := NEW;
   ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"cx"."folders", pg_catalog.to_jsonb(NEW)); END IF;
+  -- (PostgreSQL 18: with its virtual generated columns, which the row a trigger is handed doesn't hold)
+  SELECT pg_catalog.string_agg(pg_catalog.format('%L, (%s)', a.attname, pg_catalog.pg_get_expr(d.adbin, d.adrelid)), ', ')
+    INTO v_virtual FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE a.attrelid = '"cx"."folders"'::pg_catalog.regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = 'v';
+  IF v_virtual IS NOT NULL THEN
+    EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
+      || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
+  END IF;
   BEGIN
     v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.folders:column parent_type, parent_id after:why"(v_row) l);
   EXCEPTION WHEN OTHERS THEN
@@ -4860,13 +4945,81 @@ BEGIN
 END $f$;
 -- checked on the row after the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
--- the row as the table's own
-CREATE TRIGGER "authz_update_after parent_type, parent_id" BEFORE UPDATE ON "cx"."folders" FOR EACH ROW
+-- the row as the table's own; before the update, or after it where the table has a generated column
+-- @object trigger "authz_update_after parent_type, parent_id" ON "cx"."folders"
+DO $tr$ BEGIN
+  IF EXISTS (WITH RECURSIVE t(oid) AS (
+               SELECT '"cx"."folders"'::pg_catalog.regclass::oid
+               UNION ALL SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN t ON i.inhparent = t.oid)
+             SELECT 1 FROM pg_catalog.pg_attribute a JOIN t ON a.attrelid = t.oid
+             WHERE a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated <> '') THEN
+    EXECUTE 'CREATE TRIGGER "authz_update_after parent_type, parent_id" AFTER UPDATE ON "cx"."folders" FOR EACH ROW
   WHEN ((OLD."parent_type" IS DISTINCT FROM NEW."parent_type"
      OR OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
-    AND pg_catalog.row_security_active('"cx"."folders"'::pg_catalog.regclass)
+    AND pg_catalog.row_security_active(''"cx"."folders"''::pg_catalog.regclass)
     AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"cx"."folders", pg_catalog.to_jsonb(NEW))))
-  EXECUTE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"();
+  EXECUTE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"()';
+  ELSE
+    EXECUTE 'CREATE TRIGGER "authz_update_after parent_type, parent_id" BEFORE UPDATE ON "cx"."folders" FOR EACH ROW
+  WHEN ((OLD."parent_type" IS DISTINCT FROM NEW."parent_type"
+     OR OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
+    AND pg_catalog.row_security_active(''"cx"."folders"''::pg_catalog.regclass)
+    AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"cx"."folders", pg_catalog.to_jsonb(NEW))))
+  EXECUTE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"()';
+  END IF;
+END $tr$;
+-- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
+-- Postgres runs no AFTER UPDATE row trigger for it. Where the rule's trigger runs after the update, the rule is
+-- asked again when the statement is done, of each row it left with other values in these columns than the row that
+-- had its key (a key the update made: than the one key it left without a row, or, where that isn't one for one,
+-- whatever changed). A trigger before the update has asked it of every row already
+CREATE FUNCTION authz_int."cx.folders:column parent_type, parent_id after:moved"() RETURNS trigger
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
+DECLARE v_lines text; v_row "cx"."folders"; v_one boolean; v_virtual text;
+BEGIN
+  IF NOT pg_catalog.row_security_active('"cx"."folders"'::pg_catalog.regclass) THEN RETURN NULL; END IF;
+  -- (tgtype's bit 2: before. Asked unless a trigger before the update is there, and on: without one, never less)
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger g WHERE g.tgrelid = '"cx"."folders"'::pg_catalog.regclass AND g.tgname = 'authz_update_after parent_type, parent_id'
+             AND g.tgtype & 2 <> 0 AND g.tgenabled <> 'D') THEN
+    RETURN NULL;
+  END IF;
+  -- (PostgreSQL 18: each row with its virtual generated columns, which the statement's rows don't hold)
+  SELECT pg_catalog.string_agg(pg_catalog.format('%L, (%s)', a.attname, pg_catalog.pg_get_expr(d.adbin, d.adrelid)), ', ')
+      INTO v_virtual FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE a.attrelid = '"cx"."folders"'::pg_catalog.regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = 'v';
+  v_one := (SELECT count(*) FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)) = 1
+       AND (SELECT count(*) FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)) = 1;
+  FOR v_row IN
+    SELECT (pg_catalog.jsonb_populate_record(NULL::"cx"."folders", pg_catalog.to_jsonb(n))).* FROM new_rows n
+    WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text AND o."parent_type" IS NOT DISTINCT FROM n."parent_type" AND o."parent_id" IS NOT DISTINCT FROM n."parent_id")
+      AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)
+               AND EXISTS (SELECT 1 FROM old_rows o WHERE o."parent_type" IS NOT DISTINCT FROM n."parent_type" AND o."parent_id" IS NOT DISTINCT FROM n."parent_id"
+                           AND NOT EXISTS (SELECT 1 FROM new_rows m WHERE ROW(m."org_id"::bigint, m."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)))
+  LOOP
+    IF v_virtual IS NOT NULL THEN
+      EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
+        || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
+    END IF;
+    IF NOT (authz_gen."cx.folders:column parent_type, parent_id after:items"(v_row))[1] THEN
+      BEGIN
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.folders:column parent_type, parent_id after:why"(v_row) l);
+      EXCEPTION WHEN OTHERS THEN
+        v_lines := 'no explanation: ' || SQLERRM;
+      END;
+      RAISE EXCEPTION 'changing parent_type, parent_id of cx.folders % needs: parent.edit or {parent_id is null}', ROW(v_row."org_id"::bigint, v_row."id"::bigint)::text USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+        SCHEMA = 'cx', TABLE = 'folders', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END $f$;
+-- @object trigger "authz_update_after_moved parent_type, parent_id" ON "cx"."folders"
+-- @if partitioned
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_catalog.pg_class WHERE oid = '"cx"."folders"'::regclass) = 'p' THEN
+    EXECUTE 'CREATE TRIGGER "authz_update_after_moved parent_type, parent_id" AFTER UPDATE ON "cx"."folders" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."cx.folders:column parent_type, parent_id after:moved"()';
+  END IF;
+END $tr$;
 
 -- Foreign keys that delete or change governed rows skip row-level security, unless a `cascade from` line
 -- says they do as meant. ON UPDATE CASCADE is left out: it changes a row's reference to follow the key it names,

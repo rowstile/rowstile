@@ -20,7 +20,7 @@ same() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected '$3', got '$2
 schema() { PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$1" -f tests/children_schema.sql >/dev/null; }
 T=$(mktemp -d)
 # whatever way the suite ends: its databases, its files
-cleanup() { [ -n "${KEEP:-}" ] || for d in "$DB" "$DB2" "${DB}_sync"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
+cleanup() { [ -n "${KEEP:-}" ] || for d in "$DB" "$DB2" "${DB}_sync" "${DB}_virtual"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
 trap cleanup EXIT
 # runs the command in the project; sets $out (stdout and stderr) and $rc
 run() { out=$(cd "$T" && python3 "$ROOT/cli/rowstile_cli.py" "$@" 2>&1); rc=$?; }
@@ -50,7 +50,7 @@ rowtriggers=$(triggers ch.docs_old)
 # (and of the ones for TRUNCATE alone, those that forget what names the rows emptied, and the audit's, which says
 # once what a TRUNCATE emptied)
 same "the table that inherits has its table's row and statement triggers" "$rowtriggers" \
-  "authz_doc_col_audit_del authz_doc_col_audit_ins authz_doc_col_audit_row authz_doc_col_audit_trunc authz_doc_col_audit_trunc_first authz_doc_col_audit_upd authz_doc_forget_del authz_doc_forget_id authz_doc_forget_trunc authz_doc_forget_trunc_first authz_update owner_id"
+  "authz_doc_col_audit_del authz_doc_col_audit_ins authz_doc_col_audit_row authz_doc_col_audit_trunc authz_doc_col_audit_trunc_first authz_doc_col_audit_upd authz_doc_forget_del authz_doc_forget_id authz_doc_forget_trunc authz_doc_forget_trunc_first authz_update owner_id authz_update_after owner_id"
 
 echo "-- a table that inherits: its rows, read and written through the table above"
 as 1 -c "SELECT authz.share('doc', 1, 'editor', 'user', 2)" -c "SELECT authz.share('doc', 11, 'editor', 'user', 2)" >/dev/null
@@ -58,6 +58,12 @@ same "a row stored there is written through the table above" "$(as 2 -c "$(chang
 same "the rule on a column, on a row of the table itself" "$(as 2 -c "UPDATE ch.docs SET owner_id = 2 WHERE id = 1")" "ERROR:  changing owner_id of ch.docs 1 needs: own"
 same "... and on a row stored in the table that inherits" "$(as 2 -c "UPDATE ch.docs SET owner_id = 2 WHERE id = 11")" "ERROR:  changing owner_id of ch.docs 11 needs: own"
 same "... which its owner may change" "$(as 1 -c "$(changed "UPDATE ch.docs SET owner_id = 1 WHERE id = 11")")" 1
+# (a doc's owner may not hand it over: `update owner_id after : keep`. Its editor still, so that the update rule holds
+# on the row after the change, and the rule on the column is the one that refuses; the share goes with the error)
+same "a rule on the row after the change, on a row of the table itself" \
+  "$(as 1 -c "BEGIN" -c "SELECT authz.share('doc', 2, 'editor', 'user', 1)" -c "UPDATE ch.docs SET owner_id = 2 WHERE id = 2")" "ERROR:  changing owner_id of ch.docs 2 needs: keep"
+same "... and on a row stored in the table that inherits" \
+  "$(as 1 -c "BEGIN" -c "SELECT authz.share('doc', 13, 'editor', 'user', 1)" -c "UPDATE ch.docs SET owner_id = 2 WHERE id = 13")" "ERROR:  changing owner_id of ch.docs 13 needs: keep"
 owner 1 -c "UPDATE ch.docs SET owner_id = 3 WHERE id = 12" >/dev/null
 same "the audit has the line of a relationship column changed there" "$(relates doc 12)" "1 set 3, was 1"
 same "a key that changes there" "$(as 1 -c "$(changed "UPDATE ch.docs SET id = 111 WHERE id = 11")")" 1
@@ -72,7 +78,7 @@ same "a key two rows hold: authz.can answers for either (owner of one, of the ot
   "$(as 1 -c "SELECT authz.can('doc', 2, 'own')")|$(as 3 -c "SELECT authz.can('doc', 2, 'own')")|$(as 2 -c "SELECT authz.can('doc', 2, 'own')")" "t|t|f"
 same "... and so do perms, explain and who" \
   "$(as 3 -c "SELECT authz.perms('doc', 2)")|$(as 3 -c "SELECT left(e, 3) FROM authz.explain('doc', 2, 'own') e LIMIT 1")|$(owner 1 -c "SELECT string_agg(w, ' ' ORDER BY w) FROM authz.who('doc', 2, 'own') w")" \
-  "{own,edit}|yes|1 3"
+  "{own,edit,keep}|yes|1 3"
 same "... as list does" "$(as 3 -c "SELECT count(*) FROM authz.list('doc', 'own') l WHERE l = '2'")" 1
 PSQL -c "DELETE FROM ch.docs_old WHERE id = 2"
 PSQL -c "DELETE FROM ch.docs WHERE id = 1"
@@ -82,7 +88,7 @@ echo "-- a table that inherits, made after the policy was applied"
 PSQL -c "CREATE TABLE ch.docs_older () INHERITS (ch.docs)" -c "CREATE TABLE ch.docs_oldest () INHERITS (ch.docs_old)" \
      -c "INSERT INTO ch.docs_older VALUES (21, 1, 'ancient')"
 same "lint names each, and the triggers it lacks" \
-  "$(PSQL -c "SELECT string_agg(object || ': ' || split_part(problem, ',', 1), '; ' ORDER BY object) FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'inherits from %, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, and its statement triggers for statements on it only, so a rule on a column is not checked on the rows stored here, their shares stay when their key changes, and a statement on this table doesn''t keep inheritance, shares and the audit current (missing here: authz_doc_col_audit_del, authz_doc_col_audit_ins, authz_doc_col_audit_row, authz_doc_col_audit_trunc, authz_doc_col_audit_trunc_first, authz_doc_col_audit_upd, authz_doc_forget_del, authz_doc_forget_id, authz_doc_forget_trunc, authz_doc_forget_trunc_first, authz_update owner_id). Apply the policy again (it makes them)'")" \
+  "$(PSQL -c "SELECT string_agg(object || ': ' || split_part(problem, ',', 1), '; ' ORDER BY object) FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'inherits from %, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, and its statement triggers for statements on it only, so a rule on a column is not checked on the rows stored here, their shares stay when their key changes, and a statement on this table doesn''t keep inheritance, shares and the audit current (missing here: authz_doc_col_audit_del, authz_doc_col_audit_ins, authz_doc_col_audit_row, authz_doc_col_audit_trunc, authz_doc_col_audit_trunc_first, authz_doc_col_audit_upd, authz_doc_forget_del, authz_doc_forget_id, authz_doc_forget_trunc, authz_doc_forget_trunc_first, authz_update owner_id, authz_update_after owner_id). Apply the policy again (it makes them)'")" \
   "ch.docs_older: inherits from ch.docs; ch.docs_oldest: inherits from ch.docs_old"
 run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "apply after a table was made" "$out"
 same "... and lint has nothing more to say of them" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object LIKE 'ch.docs_old%'")" 0
@@ -107,7 +113,7 @@ PSQL -c "CREATE TABLE ch.docs_older_still () INHERITS (ch.docs)"
 same "a table made since lacks its copies, whatever the search path says first" \
   "$(PSQL -c "CREATE SCHEMA shadow" -c "CREATE TABLE shadow.pg_inherits (LIKE pg_catalog.pg_inherits)" -c "SET client_min_messages = warning" -c "SET search_path = shadow, pg_catalog" \
      -c "SELECT string_agg(child::text || ' ' || name, ', ' ORDER BY name) FROM authz_int.child_triggers()" -c "RESET search_path" -c "DROP SCHEMA shadow CASCADE")" \
-  "ch.docs_older_still authz_doc_col_audit_del, ch.docs_older_still authz_doc_col_audit_ins, ch.docs_older_still authz_doc_col_audit_row, ch.docs_older_still authz_doc_col_audit_trunc, ch.docs_older_still authz_doc_col_audit_trunc_first, ch.docs_older_still authz_doc_col_audit_upd, ch.docs_older_still authz_doc_forget_del, ch.docs_older_still authz_doc_forget_id, ch.docs_older_still authz_doc_forget_trunc, ch.docs_older_still authz_doc_forget_trunc_first, ch.docs_older_still authz_update owner_id"
+  "ch.docs_older_still authz_doc_col_audit_del, ch.docs_older_still authz_doc_col_audit_ins, ch.docs_older_still authz_doc_col_audit_row, ch.docs_older_still authz_doc_col_audit_trunc, ch.docs_older_still authz_doc_col_audit_trunc_first, ch.docs_older_still authz_doc_col_audit_upd, ch.docs_older_still authz_doc_forget_del, ch.docs_older_still authz_doc_forget_id, ch.docs_older_still authz_doc_forget_trunc, ch.docs_older_still authz_doc_forget_trunc_first, ch.docs_older_still authz_update owner_id, ch.docs_older_still authz_update_after owner_id"
 PSQL -c "DROP TABLE ch.docs_older_still"
 
 echo "-- a partitioned table: a row that stays in its partition, and one an update puts in another"
@@ -134,6 +140,39 @@ owner 1 -c "UPDATE ch.tasks SET owner_id = 2 WHERE id = 3" >/dev/null
 same "... and one line, not two, for a row that stayed where it was" "$(relates task 3)" "1 set 2, was 1"
 owner 1 -c "UPDATE ch.tasks SET owner_id = 1 WHERE id = 3" -c "UPDATE ch.tasks SET owner_id = 2, state = 'open' WHERE id = 3" >/dev/null
 same "... a line for each change after that, moved or not" "$(relates task 3)" "1 set 2, was 1; 1 set 1, was 2; 1 set 2, was 1"
+
+echo "-- a rule on the row after the change: a row that stays in its partition, and one an update puts in another"
+# The rule's trigger runs before the update (notes), where it asks the rule of a row that moves too; on a table with
+# a generated column (tasks) it runs after the update, and Postgres runs no AFTER UPDATE row trigger for a row an
+# update puts in another partition: the statement's trigger asks the rule of it.
+# Notes 61 and 62 are under note 1, which bob (user 2) views; tasks 4 and 5 are shared with him
+PSQL -c "INSERT INTO ch.notes VALUES (61, 1, 1, 'under top'), (62, 1, 1, 'under top too')" -c "INSERT INTO ch.tasks VALUES (4, 'open', 1), (5, 'open', 1)"
+as 1 -c "SELECT authz.share('task', 4, 'viewer', 'user', 2)" -c "SELECT authz.share('task', 5, 'viewer', 'user', 2)" >/dev/null
+same "where a note is put needs manage on the row after: a row that stays in its partition" \
+  "$(as 2 -c "UPDATE ch.notes SET parent_id = 62 WHERE id = 61")" "ERROR:  changing parent_id of ch.notes 61 needs: manage"
+same "... and one the same update puts in another partition" \
+  "$(as 2 -c "UPDATE ch.notes SET parent_id = 62, id = 561 WHERE id = 61")" "ERROR:  changing parent_id of ch.notes 61 needs: manage"
+same "... which the note's owner may do" "$(as 1 -c "BEGIN" -c "$(changed "UPDATE ch.notes SET parent_id = 62, id = 561 WHERE id = 61")" -c "ROLLBACK")" 1
+same "a row put in another partition alone, left where it was put: the rule isn't asked of it" \
+  "$(as 2 -c "BEGIN" -c "$(changed "UPDATE ch.notes SET id = 561 WHERE id = 61")" -c "ROLLBACK")" 1
+same "... nor of two rows given new keys by one update (before the update, which row is which is known)" \
+  "$(as 2 -c "BEGIN" -c "$(changed "UPDATE ch.notes SET id = id + 500 WHERE id IN (61, 62)")" -c "ROLLBACK")" 2
+# a task is done by a column Postgres works out (generated): only who manages it may leave it not done
+same "a rule that reads a generated column on the row after: a task that stays in its partition" \
+  "$(as 2 -c "UPDATE ch.tasks SET state = 'late' WHERE id = 4")" "ERROR:  changing state of ch.tasks 4 needs: manage or {this.is_done}"
+same "... one the update puts in another partition, where the rule holds (the statement's trigger asks it)" \
+  "$(as 2 -c "$(changed "UPDATE ch.tasks SET state = 'done' WHERE id = 4")")|$(PSQL -c "SELECT tableoid::regclass FROM ch.tasks WHERE id = 4")" "1|ch.tasks_done"
+same "... and back, where it doesn't" "$(as 2 -c "UPDATE ch.tasks SET state = 'open' WHERE id = 4")" "ERROR:  changing state of ch.tasks 4 needs: manage or {this.is_done}"
+same "... which its owner may do, as write a state that stays in the partition" \
+  "$(as 1 -c "$(changed "UPDATE ch.tasks SET state = 'open' WHERE id = 4")")|$(as 1 -c "$(changed "UPDATE ch.tasks SET state = 'late' WHERE id = 5")")" "1|1"
+same "the tables' owner, whom the rules don't hold, moves a row unasked" "$(owner 2 -c "$(changed "UPDATE ch.tasks SET state = 'done' WHERE id = 5")")" 1
+same "the partitioned tables with a rule on the row after have the trigger that asks it of a row gone to another partition" \
+  "$(PSQL -c "SELECT string_agg(tgrelid::regclass::text || ' ' || tgname, ', ' ORDER BY tgrelid::regclass::text) FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid WHERE tgname LIKE 'authz\_update\_after\_moved %' AND NOT c.relispartition")" \
+  "ch.notes authz_update_after_moved parent_id, ch.tasks authz_update_after_moved state"
+same "the rule's trigger runs before the update, and after it on the table with a generated column" \
+  "$(PSQL -c "SELECT string_agg(tgrelid::regclass::text || ' ' || CASE WHEN tgtype & 2 <> 0 THEN 'before' ELSE 'after' END, ', ' ORDER BY tgrelid::regclass::text) FROM pg_trigger WHERE tgname LIKE 'authz\_update\_after %' AND tgrelid IN ('ch.docs'::regclass, 'ch.docs_old'::regclass, 'ch.notes'::regclass, 'ch.notes_low'::regclass, 'ch.tasks'::regclass, 'ch.tasks_open'::regclass)")" \
+  "ch.docs before, ch.docs_old before, ch.notes before, ch.notes_low before, ch.tasks after, ch.tasks_open after"
+PSQL -c "DELETE FROM ch.notes WHERE id IN (61, 62)" -c "DELETE FROM ch.tasks WHERE id IN (4, 5)"
 
 echo "-- the API keys of principals stored in partitions, and in a table that inherits"
 # (bot 4 and person 13, stored in the table that inherits, are only renamed: their keys stay)
@@ -282,7 +321,7 @@ run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "
 same "... and the partition is closed: the app role reads it through its table" "$(as 2 -c "SELECT count(*) FROM ch.notes_top")|$(as 3 -c "SELECT count(*) FROM ch.notes WHERE id = 1001")" "0|1"
 same "... lint has nothing more to say of it" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object = 'ch.notes_top'")" 0
 same "... Postgres gave it the row triggers itself, and apply the statement triggers" "$(triggers ch.notes_top)" \
-  "authz_note__parent__tree_del authz_note__parent__tree_ins authz_note__parent__tree_trunc authz_note__parent__tree_upd authz_note_col_audit_del authz_note_col_audit_ins authz_note_col_audit_row authz_note_col_audit_trunc authz_note_col_audit_trunc_first authz_note_col_audit_upd authz_note_forget_del authz_note_forget_id authz_note_forget_moved authz_note_forget_trunc authz_note_forget_trunc_first authz_update owner_id"
+  "authz_note__parent__tree_del authz_note__parent__tree_ins authz_note__parent__tree_trunc authz_note__parent__tree_upd authz_note_col_audit_del authz_note_col_audit_ins authz_note_col_audit_row authz_note_col_audit_trunc authz_note_col_audit_trunc_first authz_note_col_audit_upd authz_note_forget_del authz_note_forget_id authz_note_forget_moved authz_note_forget_trunc authz_note_forget_trunc_first authz_update owner_id authz_update_after parent_id authz_update_after_moved parent_id"
 run apply; is unchanged && ok "apply again: unchanged" || bad "apply once more after a partition was made" "$out"
 # a partition of a table without rules, made since: given nothing, its rows are written through its table; but a
 # statement on it alone (the owner's, or the app role's once given it) runs none of the table's statement triggers
@@ -385,12 +424,49 @@ same "... from one whose type has a condition that reads other rows" "$(PSQL -c 
 same "... and from one with a rule that does" "$(PSQL -c "ALTER TABLE ch.posts DROP COLUMN body" 2>&1)" ""
 same "... the rules still hold, and a refused insert still says why" \
   "$(PSQL -v VERBOSITY=default -c "SET authz.user_id = 2" -c "SET ROLE app_user" -c "INSERT INTO ch.notes (id, owner_id) VALUES (5, 1)" 2>&1 | head -n 4 | tr '\n' '|')" \
-  "ERROR:  permission denied: user 2 may not insert this row into ch.notes|DETAIL:  no   insert : owner  (line 36)|  no   owner|HINT:  rowstile help AZ709|"
+  "ERROR:  permission denied: user 2 may not insert this row into ch.notes|DETAIL:  no   insert : owner  (line 38)|  no   owner|HINT:  rowstile help AZ709|"
 same "... and an allowed one is made, there and where the rule reads other rows" \
   "$(as 2 -c "$(changed "INSERT INTO ch.notes (id, owner_id) VALUES (5, 2)")")|$(as 1 -c "$(changed "INSERT INTO ch.posts (id, topic_id) VALUES (99, 1)")")" "1|1"
 same "a column a rule reads can't be dropped: Postgres names what reads it" \
   "$(PSQL -v VERBOSITY=default -c "ALTER TABLE ch.docs DROP COLUMN title" 2>&1 | head -n 2 | tr '\n' '|')" \
   "ERROR:  cannot drop desired object(s) because other objects depend on them|DETAIL:  trigger authz_update owner_id, title on table ch.docs depends on column title of table ch.docs|"
+
+echo "-- a generated column the rows a trigger is handed don't hold (PostgreSQL 18's virtual ones), on a table partitioned by its key"
+# a job is done by a column Postgres works out: on 18, when its table is read (virtual, what GENERATED makes there
+# unless it says STORED), and the row a trigger is handed holds none of it; before 18, stored. Only a job's owner
+# may leave it done: a rule that read the column as a trigger's row holds it (NULL) would let anyone. Jobs are
+# partitioned by their key: a row an update puts in another partition has a new key
+KIND=STORED; [ "$(PSQL -c "SHOW server_version_num")" -ge 180000 ] && KIND=VIRTUAL
+DB4=${DB}_virtual
+dropdb --if-exists "$DB4" 2>/dev/null; createdb "$DB4" && schema "$DB4" || exit 1
+D=$DB4 PSQL -c "CREATE TABLE ch.jobs (id bigint PRIMARY KEY, state text NOT NULL DEFAULT 'open', owner_id bigint,
+                  is_done boolean GENERATED ALWAYS AS (state = 'done') $KIND) PARTITION BY RANGE (id)" \
+  -c "CREATE TABLE ch.jobs_low PARTITION OF ch.jobs FOR VALUES FROM (0) TO (100)" -c "CREATE TABLE ch.jobs_high PARTITION OF ch.jobs FOR VALUES FROM (100) TO (1000)" \
+  -c "GRANT SELECT, UPDATE ON ch.jobs TO app_user" -c "INSERT INTO ch.jobs VALUES (1, 'open', 1), (2, 'done', 1), (3, 'kept', 1)"
+{ cat tests/children.authz; printf '\ntype job = ch.jobs\n  owner : user = owner_id\n\nrules ch.jobs\n  select : owner or {this.state <> \x27hid\x27}\n  update : signed_in\n  update state after : owner or not {this.is_done}\n'; } > "$T/virtual.authz"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$DB4" apply "$T/virtual.authz" --force 2>&1) || bad "a rule on the row after, on a table with such a column: applying" "$out"
+# (the statement's trigger asks what the app role may ask of a row, which answers for a row the user may select, and
+# it asks it of every row whose state changed, moved or not. An update with a WHERE or a RETURNING that hides a row
+# from who makes it, Postgres refuses itself)
+same "on a partitioned table, an update that hides its rows from who makes it is refused, whatever the rule on the row after says of them" \
+  "$(D=$DB4 as 2 -c "UPDATE ch.jobs SET state = 'hid'" | sed 's/jobs [123] /jobs N /')" "ERROR:  changing state of ch.jobs N needs: owner or not {this.is_done}"
+same "a rule that reads it on the row after: a row that stays in its partition" \
+  "$(D=$DB4 as 2 -c "UPDATE ch.jobs SET state = 'done' WHERE id = 3")" "ERROR:  changing state of ch.jobs 3 needs: owner or not {this.is_done}"
+same "... one the update puts in another partition, where the rule doesn't hold" \
+  "$(D=$DB4 as 2 -c "UPDATE ch.jobs SET state = 'done', id = 501 WHERE id = 1")" "ERROR:  changing state of ch.jobs 501 needs: owner or not {this.is_done}"
+same "... and the refusal's lines say so of the column" \
+  "$(D=$DB4 PSQL -v VERBOSITY=default -c "SET authz.user_id = 2" -c "SET ROLE app_user" -c "UPDATE ch.jobs SET state = 'done', id = 501 WHERE id = 1" 2>&1 | sed -n '2,4p' | tr '\n' '|')" \
+  "DETAIL:  no   update state after : owner or not {this.is_done}  (line $(grep -n 'update state after : owner' "$T/virtual.authz" | cut -d: -f1))|  no   owner|  no   not {this.is_done}|"
+same "... and where it holds, there and inside a partition" \
+  "$(D=$DB4 as 2 -c "BEGIN" -c "$(changed "UPDATE ch.jobs SET state = 'open', id = 502 WHERE id = 2")" -c "ROLLBACK")|$(D=$DB4 as 2 -c "$(changed "UPDATE ch.jobs SET state = 'late' WHERE id = 1")")" "1|1"
+# (job 2 is done, and stays so: asked, the rule would refuse bob)
+same "a row put in another partition alone, its state as it was: the rule isn't asked of it (its new key is compared with the one key gone)" \
+  "$(D=$DB4 as 2 -c "BEGIN" -c "$(changed "UPDATE ch.jobs SET id = 502 WHERE id = 2")" -c "ROLLBACK")" 1
+same "two rows given new keys by one update, their states as they were: which was which can't be told, the rule is asked of both" \
+  "$(D=$DB4 as 2 -c "UPDATE ch.jobs SET id = id + 500 WHERE id IN (2, 3)")" "ERROR:  changing state of ch.jobs 502 needs: owner or not {this.is_done}"
+same "... which the jobs' owner may do, as leave one done" \
+  "$(D=$DB4 as 1 -c "BEGIN" -c "$(changed "UPDATE ch.jobs SET id = id + 500 WHERE id IN (2, 3)")" -c "ROLLBACK")|$(D=$DB4 as 1 -c "$(changed "UPDATE ch.jobs SET state = 'done', id = 501 WHERE id = 1")")" "2|1"
+dropdb --if-exists "$DB4" 2>/dev/null
 
 echo "-- the sync index (a preview): what is written through a partition, or a table that inherits, reaches it"
 DB3=${DB}_sync

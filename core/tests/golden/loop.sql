@@ -2791,11 +2791,20 @@ END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."lp.domains:column org_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
-DECLARE v_lines text; v_row "lp"."domains";
+DECLARE v_lines text; v_row "lp"."domains"; v_virtual text;
 BEGIN
   -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
   IF TG_RELID = '"lp"."domains"'::pg_catalog.regclass THEN v_row := NEW;
   ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(NEW)); END IF;
+  -- (PostgreSQL 18: with its virtual generated columns, which the row a trigger is handed doesn't hold)
+  SELECT pg_catalog.string_agg(pg_catalog.format('%L, (%s)', a.attname, pg_catalog.pg_get_expr(d.adbin, d.adrelid)), ', ')
+    INTO v_virtual FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE a.attrelid = '"lp"."domains"'::pg_catalog.regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = 'v';
+  IF v_virtual IS NOT NULL THEN
+    EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
+      || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
+  END IF;
   BEGIN
     v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."lp.domains:column org_id after:why"(v_row) l);
   EXCEPTION WHEN OTHERS THEN
@@ -2806,12 +2815,79 @@ BEGIN
 END $f$;
 -- checked on the row after the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
--- the row as the table's own
-CREATE TRIGGER "authz_update_after org_id" BEFORE UPDATE ON "lp"."domains" FOR EACH ROW
+-- the row as the table's own; before the update, or after it where the table has a generated column
+-- @object trigger "authz_update_after org_id" ON "lp"."domains"
+DO $tr$ BEGIN
+  IF EXISTS (WITH RECURSIVE t(oid) AS (
+               SELECT '"lp"."domains"'::pg_catalog.regclass::oid
+               UNION ALL SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN t ON i.inhparent = t.oid)
+             SELECT 1 FROM pg_catalog.pg_attribute a JOIN t ON a.attrelid = t.oid
+             WHERE a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated <> '') THEN
+    EXECUTE 'CREATE TRIGGER "authz_update_after org_id" AFTER UPDATE ON "lp"."domains" FOR EACH ROW
   WHEN ((OLD."org_id" IS DISTINCT FROM NEW."org_id")
-    AND pg_catalog.row_security_active('"lp"."domains"'::pg_catalog.regclass)
+    AND pg_catalog.row_security_active(''"lp"."domains"''::pg_catalog.regclass)
     AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(NEW))))
-  EXECUTE FUNCTION authz_int."lp.domains:column org_id after"();
+  EXECUTE FUNCTION authz_int."lp.domains:column org_id after"()';
+  ELSE
+    EXECUTE 'CREATE TRIGGER "authz_update_after org_id" BEFORE UPDATE ON "lp"."domains" FOR EACH ROW
+  WHEN ((OLD."org_id" IS DISTINCT FROM NEW."org_id")
+    AND pg_catalog.row_security_active(''"lp"."domains"''::pg_catalog.regclass)
+    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(NEW))))
+  EXECUTE FUNCTION authz_int."lp.domains:column org_id after"()';
+  END IF;
+END $tr$;
+-- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
+-- Postgres runs no AFTER UPDATE row trigger for it. Where the rule's trigger runs after the update, the rule is
+-- asked again when the statement is done, of each row it left with other values in these columns than the row that
+-- had its key (a key the update made: than the one key it left without a row, or, where that isn't one for one,
+-- whatever changed). A trigger before the update has asked it of every row already
+CREATE FUNCTION authz_int."lp.domains:column org_id after:moved"() RETURNS trigger
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
+DECLARE v_lines text; v_row "lp"."domains"; v_one boolean; v_virtual text;
+BEGIN
+  IF NOT pg_catalog.row_security_active('"lp"."domains"'::pg_catalog.regclass) THEN RETURN NULL; END IF;
+  -- (tgtype's bit 2: before. Asked unless a trigger before the update is there, and on: without one, never less)
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger g WHERE g.tgrelid = '"lp"."domains"'::pg_catalog.regclass AND g.tgname = 'authz_update_after org_id'
+             AND g.tgtype & 2 <> 0 AND g.tgenabled <> 'D') THEN
+    RETURN NULL;
+  END IF;
+  -- (PostgreSQL 18: each row with its virtual generated columns, which the statement's rows don't hold)
+  SELECT pg_catalog.string_agg(pg_catalog.format('%L, (%s)', a.attname, pg_catalog.pg_get_expr(d.adbin, d.adrelid)), ', ')
+      INTO v_virtual FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE a.attrelid = '"lp"."domains"'::pg_catalog.regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = 'v';
+  v_one := (SELECT count(*) FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)) = 1
+       AND (SELECT count(*) FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)) = 1;
+  FOR v_row IN
+    SELECT (pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(n))).* FROM new_rows n
+    WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text AND o."org_id" IS NOT DISTINCT FROM n."org_id")
+      AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
+               AND EXISTS (SELECT 1 FROM old_rows o WHERE o."org_id" IS NOT DISTINCT FROM n."org_id"
+                           AND NOT EXISTS (SELECT 1 FROM new_rows m WHERE m."id"::text = o."id"::text)))
+  LOOP
+    IF v_virtual IS NOT NULL THEN
+      EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
+        || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
+    END IF;
+    IF NOT (authz_gen."lp.domains:column org_id after:items"(v_row))[1] THEN
+      BEGIN
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."lp.domains:column org_id after:why"(v_row) l);
+      EXCEPTION WHEN OTHERS THEN
+        v_lines := 'no explanation: ' || SQLERRM;
+      END;
+      RAISE EXCEPTION 'changing org_id of lp.domains % needs: org.edit', v_row."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+        SCHEMA = 'lp', TABLE = 'domains', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END $f$;
+-- @object trigger "authz_update_after_moved org_id" ON "lp"."domains"
+-- @if partitioned
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_catalog.pg_class WHERE oid = '"lp"."domains"'::regclass) = 'p' THEN
+    EXECUTE 'CREATE TRIGGER "authz_update_after_moved org_id" AFTER UPDATE ON "lp"."domains" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."lp.domains:column org_id after:moved"()';
+  END IF;
+END $tr$;
 
 -- Foreign keys that delete or change governed rows skip row-level security, unless a `cascade from` line
 -- says they do as meant. ON UPDATE CASCADE is left out: it changes a row's reference to follow the key it names,

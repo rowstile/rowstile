@@ -4,7 +4,7 @@
 adversarial 122
 apply 177
 capitals 106
-children 162
+children 184
 cli 190
 concurrency 38
 confidence 66
@@ -15,7 +15,7 @@ cuts half way, other policies 1
 devx 154
 docs 53
 governance 294
-hand answers 370
+hand answers 375
 identity 98
 interleavings 1440
 interleavings (read committed, boxes) 10
@@ -29,7 +29,7 @@ keep unchanged trees 16
 language server 149
 masks 39
 mcp 79
-migrate vs apply 97
+migrate vs apply 105
 migrations 87
 moves 23
 multi scenario 119

@@ -189,6 +189,20 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   if the same update gives that key to another row (two rows swapping keys, which takes a deferrable
   key), the shares stay with the key. And the audit has no line for a relation column changed by
   an update that changes the row's key and its partition at once.
+- **A rule on the row after a change, on a table with a generated column**: such a rule
+  (`update folder_id after : folder.edit`) is checked before the update, so it speaks before Postgres's own
+  checks on the row do (a unique index, a foreign key), whose errors tell of rows the user may not see.
+  Postgres works a generated column out after that. So on a table that has one, or with a table under it that
+  has one, the rule is checked once the row is written, and those checks speak first. <!-- checked: tests/children.sh "the rule's trigger runs before the update, and after it on the table with a generated column"; tests/hand/column-rules-generated.authz "a rule on the row after the change reads a generated column" -->
+  Where such a table is partitioned and the update puts the row in another partition, Postgres runs no trigger
+  on the row after it: rowstile asks the rule when the statement is done, of each row it left with other values
+  in the rule's columns than the row that had its key. <!-- checked: tests/children.sh "... one the update puts in another partition, where the rule holds (the statement's trigger asks it)"; tests/children.sh "... and back, where it doesn't" -->
+  Where the update changes the row's key too (a table partitioned by its key), the row is compared with the one
+  key the update left without a row. <!-- checked: tests/children.sh "a row put in another partition alone, its state as it was: the rule isn't asked of it" -->
+  Where one update gives several rows new keys, which was which can't be told, and the rule is asked of each
+  of them, whether or not its columns changed. <!-- checked: tests/children.sh "two rows given new keys by one update, their states as they were" -->
+  Asked so, the rule answers for a row the user may select, as an explanation does: there, an update that
+  changes the rule's columns and hides the row from who makes it is refused. <!-- checked: tests/children.sh "on a partitioned table, an update that hides its rows from who makes it is refused" -->
 - **A key two rows hold, through a table that inherits**: a table's primary key doesn't cover the rows of a
   table that inherits from it (`CREATE TABLE ... INHERITS`), so a row there may have the key of a row of the
   table. rowstile sees one object with that key, and a permission holds on it where it holds on either row:

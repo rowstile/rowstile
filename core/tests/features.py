@@ -1157,10 +1157,15 @@ FEATURES: list[Feature] = [
             T("adversarial.sh", "and both at once: the rule on the row before the change says why"),
             T("unit_test.py", "test_triggers_are_named_after_what_they_guard"),
             T("children.sh", "the rule on a column, on a row of the table itself"),
+            T("children.sh", "... one the update puts in another partition, where the rule holds (the statement"),
+            T(
+                "children.sh",
+                "a rule that reads a generated column on the row after: a task that stays in its partition",
+            ),
             Check(FASTAPI, "test_6_a_refused_insert_says_which_rule"),
         ),
         (T(DIFF, "policy as app"), T("around.py", "def write_problems("), T("genpolicy.py", "def before_after(")),
-        hand=("rules-commands", "update-before-after", "column-rules"),
+        hand=("rules-commands", "update-before-after", "column-rules", "column-rules-generated"),
         grammar=(
             "Rules, masks, scopes, caveats, invariants",
             "Columns named before or after: the last word before the colon says when",

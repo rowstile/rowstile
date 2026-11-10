@@ -1,6 +1,7 @@
 -- children_schema.sql: tables with tables under them (tests/children.authz, tests/children.sh).
 -- Notes are partitioned by their key, tasks by a column that is not their key (a row changes partition
--- and keeps its key), and the older docs are stored in a table that inherits from docs.
+-- and keeps its key), and the older docs are stored in a table that inherits from docs. A task says whether it is
+-- done in a column Postgres works out (a generated column), which a rule on the row after a change reads.
 CREATE SCHEMA ch;
 CREATE TABLE ch.users (id bigint PRIMARY KEY, name text NOT NULL);
 
@@ -17,9 +18,10 @@ CREATE TABLE ch.tasks (
   id       bigint NOT NULL,
   state    text   NOT NULL DEFAULT 'open',
   owner_id bigint REFERENCES ch.users,
+  is_done  boolean GENERATED ALWAYS AS (state = 'done') STORED,
   PRIMARY KEY (id, state)
 ) PARTITION BY LIST (state);
-CREATE TABLE ch.tasks_open PARTITION OF ch.tasks FOR VALUES IN ('open');
+CREATE TABLE ch.tasks_open PARTITION OF ch.tasks FOR VALUES IN ('open', 'late');
 CREATE TABLE ch.tasks_done PARTITION OF ch.tasks FOR VALUES IN ('done');
 
 CREATE TABLE ch.docs (

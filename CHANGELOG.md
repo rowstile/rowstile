@@ -11,6 +11,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- A policy with a rule on the row after a change (`update status after : ...`) applies to a table with a generated
+  column, and the rule reads that column. Applying stopped there on Postgres's own words (`BEFORE trigger's WHEN
+  condition cannot reference NEW generated columns`): with a `STORED` column, and on PostgreSQL 18 with any
+  `GENERATED ALWAYS AS (...)` column, which is virtual there unless it says `STORED`. On such a table the rule is
+  checked once the row is written, after Postgres's own checks on the row; on every other table before the update,
+  as it was ([Limits](docs/reference/limits.md)).
 - `authz.view_as` in a session limited by scopes that hold a write command (a key's or a token's: `update`,
   `app.files.update`) is read-only, as it says: the rules now refuse every write while a session views as someone,
   whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the
