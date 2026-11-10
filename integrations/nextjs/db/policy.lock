@@ -44,7 +44,7 @@
 > rules app.folders: select : edit
 > rules app.folders: update : edit
 
-always | 892a759d6a58
+always | 59564d1a176f
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | d54dfc65af0d shape=73a521b1
 function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394

@@ -40,7 +40,7 @@
 > sync app.folders
 > sync app.notes
 
-always | a1c5b6588054
+always | adc8c1514788
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | d54dfc65af0d shape=73a521b1
 function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394
