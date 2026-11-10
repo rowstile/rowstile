@@ -1,0 +1,29 @@
+-- answer: column-rules-generated
+-- A rule on the row after the change reads the row as the update leaves it, with the columns Postgres works out
+-- itself: is_open is generated from status, and the rule on status reads it on the row after.
+app role app_user
+
+type user = app.users
+type ticket = app.tickets
+  owner : user = owner_id
+  can edit   = owner
+  can reopen = {this.is_open}
+  can settle = {not this.is_open}
+
+rules app.tickets
+  select              : signed_in
+  update              : signed_in
+  update status after : reopen or edit
+  update note after   : settle
+
+test "a rule on the row after the change reads a generated column"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given t   = {INSERT INTO app.tickets (owner_id, status) VALUES ($ann, 'open') RETURNING id}
+  given u   = {INSERT INTO app.tickets (owner_id, status) VALUES ($ann, 'closed') RETURNING id}
+  given v   = {INSERT INTO app.tickets (owner_id, status) VALUES ($ann, 'open') RETURNING id}
+  as user $bo refused {UPDATE app.tickets SET status = 'closed' WHERE id = $t}
+  as user $bo allowed {UPDATE app.tickets SET status = 'open' WHERE id = $u}
+  as user $ann allowed {UPDATE app.tickets SET status = 'closed' WHERE id = $t}
+  as user $bo refused {UPDATE app.tickets SET note = 'x' WHERE id = $v}
+  as user $ann allowed {UPDATE app.tickets SET note = 'x', status = 'closed' WHERE id = $v}

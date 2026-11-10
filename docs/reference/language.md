@@ -212,7 +212,9 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   Postgres checks both), unless `update after : ...` says what must hold after it. <!-- answer: update-before-after --> A column rule checks the
   row before the change (`update owner_id : share`, or
   `update owner_id before : share`) or after it (`update folder_id after : folder.edit`: where
-  a row moves to). `authz.lint()` warns about a move in a tree (a column that links a row to another of its own
+  a row moves to). A rule on the row after the change reads the columns Postgres works out itself too
+  (a generated column): on a table that has one it is checked once the row is written
+  ([Limits](limits.md)). <!-- answer: column-rules-generated --> `authz.lint()` warns about a move in a tree (a column that links a row to another of its own
   type) that nothing checks the destination of, and about any column that gives a relation and that whoever
   may update the row may change, with no rule on it. <!-- checked: tests/governance.sh "lint finds a move nothing checks the destination of"; tests/governance.sh "lint finds a column that gives a relation and that an editor may change" -->
   A rule on the row before the change (`update org_id : share`) says who may move a row to another

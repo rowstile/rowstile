@@ -375,8 +375,43 @@ CASES: list[tuple[str, str, str, str]] = [
         CHILDREN,
         edit(
             CHILDREN,
-            ("  update owner_id : manage\n  delete ", "  update owner_id : manage\n  update title : manage\n  delete "),
+            (
+                "  update parent_id after : manage\n  delete ",
+                "  update parent_id after : manage\n  update title : manage\n  delete ",
+            ),
         ),
+    ),
+    # a rule on the row after a change: its trigger is made by a DO block (before the update, or after it where
+    # the table has a generated column, as the tasks' has), and on a partitioned table a statement's trigger with it
+    (
+        "a rule on the row after a change that goes, from a partitioned table with a generated column",
+        "children",
+        CHILDREN,
+        edit(CHILDREN, ("  update state after : manage or {this.is_done}\n", "")),
+    ),
+    (
+        "... and one that comes",
+        "children",
+        edit(CHILDREN, ("  update state after : manage or {this.is_done}\n", "")),
+        CHILDREN,
+    ),
+    (
+        "... and one on other columns",
+        "children",
+        CHILDREN,
+        edit(
+            CHILDREN,
+            (
+                "  update state after : manage or {this.is_done}\n",
+                "  update state, owner_id after : manage or {this.is_done}\n",
+            ),
+        ),
+    ),
+    (
+        "a rule on the row after a change that goes, from a table others inherit from",
+        "children",
+        CHILDREN,
+        edit(CHILDREN, ("  update owner_id after : keep\n", "")),
     ),
 ]
 # a tree the migration keeps (its definition the same) whose table has other partitions under it since it was last
@@ -387,7 +422,7 @@ CASES: list[tuple[str, str, str, str]] = [
 NOTES_TREE = edit(
     CHILDREN,
     (
-        "rules ch.notes\n  select          : view\n  insert          : owner\n  update          : view\n  update owner_id : manage\n  delete          : manage\n\n",
+        "rules ch.notes\n  select          : view\n  insert          : owner\n  update          : view\n  update owner_id : manage\n  update parent_id after : manage\n  delete          : manage\n\n",
         "",
     ),
 )

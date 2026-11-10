@@ -500,9 +500,10 @@ def names(name: str) -> list[tuple[str, str]]:
 
 
 # a rule on columns refusing (output.py, column_rule_sql): its message holds the policy's own columns and rule, and
-# names the row by its key, of one column or several
+# names the row by its key, of one column or several (the row before the change; for a row an update put in another
+# partition, moved_rule_sql, the row as it is)
 COLUMN_RULE = re.compile(
-    r"""RAISE EXCEPTION 'changing (?:[^']|'')*? of (\S+) % needs: (?:[^']|'')*', (OLD\."(?:[^"]|"")*"|ROW\(.*?\)::text) USING"""
+    r"""RAISE EXCEPTION 'changing (?:[^']|'')*? of (\S+) % needs: (?:[^']|'')*', ((?:OLD|v_row)\."(?:[^"]|"")*"|ROW\(.*?\)::text) USING"""
 )
 
 
@@ -516,7 +517,15 @@ def plain(text: str, own: Sequence[tuple[str, str]]) -> str:
     text = COLUMN_RULE.sub(
         lambda m: (
             f"RAISE EXCEPTION 'changing <columns> of {m.group(1)} % needs: <rule>', "
-            + ("OLD.<key>" if m.group(2).startswith("OLD.") else "ROW(OLD.<key>, ...)::text")
+            + (
+                "OLD.<key>"
+                if m.group(2).startswith("OLD.")
+                else "v_row.<key>"
+                if m.group(2).startswith("v_row.")
+                else "ROW(v_row.<key>, ...)::text"
+                if "v_row." in m.group(2)
+                else "ROW(OLD.<key>, ...)::text"
+            )
             + " USING"
         ),
         text,
