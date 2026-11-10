@@ -71,9 +71,12 @@ Applying the policy deletes the keys of principals whose rows went while nothing
 who is signed in, the scopes, the backend and the transaction, with a key the app role can't read. <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/sessions.sh "and so is the signing"; tests/sessions.sh "view_as signs who it shows" -->
 The
 settings are believed only with it, so nothing but rowstile's own functions (`act_as`, the logins, `view_as`,
-`sign_out`, and `who`, `explain` and the like for the length of their call) can change who is signed in, widen a key's
-scopes, or leave view-as, on any Postgres: setting `authz.user_id` is an error, and so is
+`sign_out`, and `who`, `explain` and the like for the length of their call) can say who is signed in, with which
+scopes, viewing as whom, on any Postgres: setting `authz.user_id` is an error, and so is
 a signature from another transaction or connection. <!-- checked: tests/sessions.sh "and so is a user set directly"; tests/sessions.sh "settings that differ never sign alike"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
+A signature is for its transaction: what an earlier sign-in of the same transaction signed, put back with that
+signature, is believed again (the transaction as it was before a `view_as`, say). The backend, which may sign
+out and in, gets nothing more from it. <!-- checked: tests/sessions.sh "an earlier sign-in of the same transaction, put back with its signature, is believed"; tests/sessions.sh "... but not with the user view-as shows" -->
 A transaction in which nobody signed in gets an error
 too, not an empty result (`act_as(NULL, NULL)` says "nobody" on purpose). <!-- checked: tests/sessions.sh "but nobody signed in is an error, not an empty result"; tests/sessions.sh "act_as(NULL, NULL): nobody, on purpose, no error" -->
 Sessions of the policy's owner

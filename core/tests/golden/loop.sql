@@ -3639,9 +3639,10 @@ END $f$;
 -- Which of these people (or principals of another type) hold a permission: who to tell about a change.
 -- It signs each one in as act_as does, then the caller again: so only a backend trusted to sign anyone in can
 -- use it (the app role), as it could ask authz.can for each one itself. Not in a session limited by scopes or view-as. SELECT * FROM authz.who_among('chat', '7', 'read', ARRAY['1', '2'])
--- (it reads those settings as they are: the guard only keeps its last sign-in, which ends scopes and view-as, from
--- widening the session. Its sign-ins aren't held to one principal a transaction, as authz.act_as's are: it puts
--- back the caller)
+-- (it asks first that who is signed in is to be believed, as authz.uid() does: its last sign-in puts back the caller
+-- as the settings name them, and would sign what was set by hand. Then it reads scopes and view-as as they are: the
+-- guard keeps that last sign-in, which ends both, from widening the session. Its sign-ins aren't held to one
+-- principal a transaction, as authz.act_as's are: it puts back the caller)
 CREATE OR REPLACE FUNCTION authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text DEFAULT 'user')
 RETURNS SETOF text LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := nullif(current_setting('authz.user_id', true), '');
@@ -3653,6 +3654,8 @@ BEGIN
     RAISE EXCEPTION 'permission denied for function act_as: authz.who_among() signs people in, which % may not',
       authz_int.caller_role() USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
+  -- (true, or the error a session gets whose settings aren't signed: nobody signed in, or set by hand)
+  PERFORM authz_int.session_ok();
   IF coalesce(current_setting('authz.scopes', true), '') <> '' OR coalesce(current_setting('authz.acting_user', true), '') <> '' THEN
     RAISE EXCEPTION 'authz.who_among() signs people in, which a session limited by scopes or view-as may not'
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';

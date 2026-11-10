@@ -117,6 +117,34 @@ SQL
 sig=$(psql -X -q -At -U "$APP" -d "$DB" -c "BEGIN" -c "SELECT authz.act_as('user', '1')" -c "SELECT current_setting('authz.session')" -c "COMMIT" | tail -n 1)
 expect "... and one from another connection too" "28000: who is signed in was changed after signing in" -c "SET LOCAL authz.user_id = 1" -c "SELECT set_config('authz.session', '$sig', true)" \
   -c "SELECT count(*) FROM app.files"
+# ... and for its transaction whole, not for a moment in it: what an earlier sign-in of the same transaction signed,
+# put back with that signature, is what rowstile signed there, and is believed. It gives the backend nothing that
+# authz.sign_out() and a sign-in don't (the threat model says so). What no sign-in signed stays an error: erin,
+# viewing as carol, gets back to herself, never to carol without the view
+got=$(psql -X -q -At -U "$APP" -d "$DB" -v VERBOSITY=verbose 2>&1 <<'SQL' | tail -n 1
+BEGIN;
+SELECT authz.act_as('user', '5');
+SELECT current_setting('authz.session') AS sig \gset
+SELECT authz.view_as('3', 'ticket 7');
+SELECT set_config('authz.user_id', '5', true), set_config('authz.principal_type', '', true),
+       set_config('authz.scopes', '', true), set_config('authz.acting_user', '', true),
+       set_config('authz.session', :'sig', true);
+SELECT authz.uid() || '|' || coalesce(current_setting('authz.acting_user', true), '');
+COMMIT;
+SQL
+)
+[ "$got" = "5|" ] && ok "an earlier sign-in of the same transaction, put back with its signature, is believed: erin again, as act_as left her" || bad "an earlier sign-in put back" "$got"
+got=$(error_of "$(psql -X -q -At -U "$APP" -d "$DB" -v VERBOSITY=verbose 2>&1 <<'SQL'
+BEGIN;
+SELECT authz.act_as('user', '5');
+SELECT current_setting('authz.session') AS sig \gset
+SELECT authz.view_as('3', 'ticket 7');
+SELECT set_config('authz.scopes', '', true), set_config('authz.acting_user', '', true), set_config('authz.session', :'sig', true);
+UPDATE app.files SET name = name WHERE id = 11;
+COMMIT;
+SQL
+)")
+[ "$got" = "28000: who is signed in was changed after signing in" ] && ok "... but not with the user view-as shows: that signature signed erin, and writing as carol stays an error" || bad "an earlier signature, the viewed user kept" "$got"
 got=$(psql -X -q -At -U "$APP" -d "$DB" -v VERBOSITY=sqlstate 2>&1 <<'SQL' | tail -n 1
 BEGIN;
 SAVEPOINT s;
@@ -223,6 +251,14 @@ expect "who_among asks each one in turn" "${want%,}" -c "$(ACT "'user', '3'")" \
   -c "SELECT string_agg(x, ',' ORDER BY x) FROM authz.who_among('file', '11', 'view', ARRAY['1', '2', '3', '4', '5']) x"
 expect "... and leaves carol signed in" "$carol" -c "$(ACT "'user', '3'")" \
   -c "SELECT count(*) FROM authz.who_among('file', '11', 'view', ARRAY['1', '2'])" -c "SELECT count(*) FROM app.files"
+# (it signs the caller in again at its end, as the settings name them: so it asks first that they are to be believed)
+expect "who_among asks first who is signed in: a user set by hand after signing in is an error, not one it signs" "28000: who is signed in was changed after signing in" \
+  -c "$(ACT "'user', '1'")" -c "SET LOCAL authz.user_id = 5" -c "SELECT count(*) FROM authz.who_among('file', '11', 'view', ARRAY['1', '2'])"
+expect "... and so is one set with nobody signed in" "28000: authz.user_id was set directly, so it is not believed" \
+  -c "SET LOCAL authz.user_id = 5" -c "SELECT count(*) FROM authz.who_among('file', '11', 'view', ARRAY['1', '2'])"
+expect "... signed in as nobody on purpose, it answers, and nobody is signed in afterwards" "2|" -c "$(ACT "NULL, NULL")" \
+  -c "CREATE TEMP TABLE among ON COMMIT DROP AS SELECT count(*) AS n FROM authz.who_among('file', '11', 'view', ARRAY['1', '2'])" \
+  -c "SELECT n || '|' || coalesce(current_setting('authz.user_id', true), '') FROM among"
 
 echo "-- ... and when they fail half way, signed in as someone else, who is signed in is as it was"
 # A policy whose condition fails for user 3 (as one reading a broken row would): who, explain, who_among and

@@ -27,6 +27,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   table that holds relationships: the `TRIGGER` privilege, which `GRANT ALL` gives beside `TRUNCATE`, which lint
   already reported. A foreign key's action that writes the table's rows runs such a trigger's function as the
   tables' owner, whom no rule holds. The line says what to take back (`REVOKE TRIGGER ON app.files FROM app_user`).
+- `authz.who_among` asks first that who is signed in is to be believed, as every other function does. Called with
+  `authz.user_id` changed by hand after a sign-in, or set with nobody signed in, it signed those settings at its
+  end, and the transaction went on as that user. It answers AZ702 there now, and AZ701 where nobody signed in.
+- The threat model and the identity reference say what a signature holds. They said the app role can't leave
+  view-as by setting the settings: a session can put back the settings an earlier sign-in of the same transaction
+  signed, with that signature, and is believed. That is a state rowstile signed there, and gives the backend
+  nothing `authz.sign_out()` and a sign-in don't; a state no sign-in signed stays an error.
 - `authz.view_as` in a session limited by scopes that hold a write command (a key's or a token's: `update`,
   `app.files.update`) is read-only, as it says: the rules now refuse every write while a session views as someone,
   whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the
@@ -44,6 +51,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 - A policy with a type keyed by a `numeric`, a float or a `bytea` column no longer compiles (AZ206): key the type
   by a column of integers, text or uuid.
+- `authz.who_among` in a transaction where nobody signed in now answers AZ701, as any other question does: sign
+  in first, as nobody where no one is asking (`authz.act_as(NULL, NULL)`; the SDKs' transactions do).
 - `authz.lint()` has a new error where the app role holds `TRIGGER` on a table the policy governs (an app set up
   with `GRANT ALL`): `rowstile lint` then exits 1 until it is taken back.
 - A policy whose condition reads a function of the row as a column, where the function isn't IMMUTABLE, no longer
