@@ -1098,6 +1098,13 @@ admin "... and on a table that holds relationships" "error" \
   "SELECT severity FROM authz.lint() WHERE object = 'app.team_members' AND problem LIKE 'app_user may make triggers on it (TRIGGER, which GRANT ALL gives)%REVOKE TRIGGER ON app.team_members FROM app_user'"
 PSQL -c "REVOKE TRIGGER ON app.files, app.team_members FROM app_user" >/dev/null
 admin "... and no more once it is taken back" "0" "SELECT count(*) FROM authz.lint() WHERE problem LIKE '%may make triggers on it%'"
+# REFERENCES, the last privilege GRANT ALL gives: a foreign key is checked as the tables' owner, so a table of the
+# role's own that names a row tells whether the row is there (one column's privilege is enough)
+PSQL -c "GRANT REFERENCES (id) ON app.files TO app_user" >/dev/null
+admin "lint says the app role may make foreign keys to a governed table, with what to take back: an info" "info" \
+  "SELECT severity FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'app_user may make foreign keys to it (REFERENCES, which GRANT ALL gives)%REVOKE REFERENCES ON app.files FROM app_user'"
+PSQL -c "REVOKE REFERENCES (id) ON app.files FROM app_user" >/dev/null
+admin "... and no more once it is taken back" "0" "SELECT count(*) FROM authz.lint() WHERE problem LIKE '%may make foreign keys to it%'"
 # a unique index on a table without rules tells nothing the app role may not read: only a governed table's is named
 PSQL -c "CREATE UNIQUE INDEX gov_team_pairs ON app.team_members (user_id, team_id)" >/dev/null
 admin "... and of the unique indexes the app role may insert against, those on tables with rules only" \

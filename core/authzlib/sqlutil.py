@@ -34,6 +34,10 @@ IF_PARTITIONED = "@if partitioned"
 # the feed what was emptied, once; and a sync mirror's, whose function, `<type>__mirror`, empties of the mirror what
 # was stored there). This lists the ones missing, each with the statement that makes it; applying runs them
 # (CHILD_TRIGGERS), lint reports them (a table made since).
+# One trigger is not copied as it is: a rule on the row after a change, checked before the update
+# (`authz_update_after <columns>`, governance.trigger_after_where_generated), reads the new row whole in its WHEN,
+# which Postgres refuses on a table with a generated column. A table that inherits may have one of its own: its
+# copy is made after the update, each table by its own columns.
 CHILD_TRIGGERS_FN = f"""-- The triggers above that a table under their table lacks, and the statement that makes each
 CREATE FUNCTION authz_int.child_triggers() RETURNS TABLE (child regclass, name name, stmt text)
 LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
@@ -42,8 +46,10 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
     UNION SELECT b.top, i.inhrelid FROM pg_inherits i JOIN below b ON i.inhparent = b.oid
   )
   SELECT b.oid::regclass, g.tgname,
-         overlay(d.def PLACING ' ON ' || c.name || ' ' FROM strpos(d.def, ' ON ' || p.name || ' ')
-                 FOR length(' ON ' || p.name || ' '))
+         CASE WHEN g.tgtype & 19 = 19 AND g.tgname LIKE 'authz\\_update\\_after %'   -- (a row's, before, an update's)
+                   AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = b.oid AND a.attnum > 0
+                               AND NOT a.attisdropped AND a.attgenerated <> '')
+              THEN replace(s.stmt, ' BEFORE UPDATE ON ', ' AFTER UPDATE ON ') ELSE s.stmt END
   FROM below b
   JOIN pg_class u ON u.oid = b.oid
   JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal
@@ -58,6 +64,8 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
                       FROM pg_class k JOIN pg_namespace n ON n.oid = k.relnamespace WHERE k.oid = b.top) p
   CROSS JOIN LATERAL (SELECT format('%I.%I', n.nspname, k.relname) AS name
                       FROM pg_class k JOIN pg_namespace n ON n.oid = k.relnamespace WHERE k.oid = b.oid) c
+  CROSS JOIN LATERAL (SELECT overlay(d.def PLACING ' ON ' || c.name || ' ' FROM strpos(d.def, ' ON ' || p.name || ' ')
+                                     FOR length(' ON ' || p.name || ' ')) AS stmt) s
   WHERE NOT EXISTS (SELECT 1 FROM pg_description x WHERE x.objoid = g.oid AND x.classoid = 'pg_trigger'::regclass
                     AND x.description = '{CHILD_TRIGGER_MARK}')
     AND NOT EXISTS (SELECT 1 FROM pg_trigger h WHERE h.tgrelid = b.oid AND h.tgname = g.tgname)

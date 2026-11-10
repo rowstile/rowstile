@@ -38,6 +38,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   session: one that has scopes, each of them the session's, as `authz.create_api_key` holds a new key to. A key
   whose scope holds a write command could revoke its user's other keys, one with every scope too. It answers
   AZ704 there now.
+- A table that inherits (`CREATE TABLE ... INHERITS`) with a generated column of its own gets its copy of a rule
+  on the row after a change made after the update, by its own columns. Where the table above had no such column,
+  the next migration, or `rowstile apply`, stopped there on Postgres's own words.
+- `authz.lint()` says two more things, as infos: an app role that may make foreign keys to a governed table or to
+  a partition of one (`REFERENCES`, which `GRANT ALL` gives: a foreign key tells whether the row it names is
+  there, whoever may see it), and a table whose rule on the row after a change is checked once the row is written
+  (it has a generated column), where a unique index or a foreign key of the table speaks first.
 - `authz.view_as` in a session limited by scopes that hold a write command (a key's or a token's: `update`,
   `app.files.update`) is read-only, as it says: the rules now refuse every write while a session views as someone,
   whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the

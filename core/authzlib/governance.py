@@ -68,11 +68,12 @@ def trigger_if_partitioned(table: str, trigger_sql: str) -> str:
 
 def trigger_after_where_generated(table: str, trigger_sql: str) -> str:
     """A row trigger written BEFORE UPDATE that reads the row after the change, made AFTER UPDATE instead where its
-    table, or one under it, has a generated column: Postgres works such a column out once the triggers before the
-    update have run, and refuses a WHEN there that reads the new row whole. Before the update is the place for it
-    wherever it can be: it refuses before Postgres's own checks on the row (a unique index, a foreign key), whose
-    answers would tell of rows the user can't see. The comment names the trigger for the migrations
-    (statements.made)."""
+    table has a generated column: Postgres works such a column out once the triggers before the update have run,
+    and refuses a WHEN there that reads the new row whole. Before the update is the place for it wherever it can
+    be: it refuses before Postgres's own checks on the row (a unique index, a foreign key), whose answers would
+    tell of rows the user can't see. The table's own columns say which (its partitions have the same; a table
+    that inherits gets its copy by its own: sqlutil.CHILD_TRIGGERS_FN). The comment names the trigger for the
+    migrations (statements.made)."""
     m = made(trigger_sql)
     assert m is not None, "a CREATE TRIGGER makes a trigger"
     kind, key = m
@@ -83,11 +84,8 @@ def trigger_after_where_generated(table: str, trigger_sql: str) -> str:
     return (
         f"-- @object {kind} {key}\n"
         f"DO $tr$ BEGIN\n"
-        f"  IF EXISTS (WITH RECURSIVE t(oid) AS (\n"
-        f"               SELECT {tbl}::oid\n"
-        f"               UNION ALL SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN t ON i.inhparent = t.oid)\n"
-        f"             SELECT 1 FROM pg_catalog.pg_attribute a JOIN t ON a.attrelid = t.oid\n"
-        f"             WHERE a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated <> '') THEN\n"
+        f"  IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = {tbl}\n"
+        f"             AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated <> '') THEN\n"
         f"    EXECUTE '{after}';\n"
         f"  ELSE\n"
         f"    EXECUTE '{before}';\n"
