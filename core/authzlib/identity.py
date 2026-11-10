@@ -298,11 +298,13 @@ CREATE FUNCTION authz.session_limited() RETURNS boolean
 LANGUAGE sql STABLE {DEF} AS $f$
   SELECT s IS NOT NULL OR coalesce(current_setting('authz.acting_user', true), '') <> ''
   FROM (SELECT authz_int.scopes_active() AS s) x $f$;
--- may this transaction run a command on a table?
+-- may this transaction run a command on a table? While it views as someone it only reads, whatever its scopes
+-- hold: view_as keeps a key's or a token's scopes, and those may hold a write
 CREATE FUNCTION authz_int.scope_cmd(p_table text, p_cmd text) RETURNS boolean
 LANGUAGE sql STABLE {DEF} AS $f$
-  SELECT s IS NULL OR EXISTS (SELECT 1 FROM authz_int.scope_items i WHERE i.scope = ANY (s) AND i.kind = 'cmd'
-                              AND i.word = p_cmd AND (i.qual IS NULL OR i.qual = p_table))
+  SELECT (s IS NULL OR EXISTS (SELECT 1 FROM authz_int.scope_items i WHERE i.scope = ANY (s) AND i.kind = 'cmd'
+                               AND i.word = p_cmd AND (i.qual IS NULL OR i.qual = p_table)))
+     AND (p_cmd = 'select' OR coalesce(current_setting('authz.acting_user', true), '') = '')
   FROM (SELECT authz_int.scopes_active() AS s) x $f$;
 -- may this transaction ask about (or use) a permission?
 CREATE FUNCTION authz_int.scope_perm(p_type text, p_perm text) RETURNS boolean
@@ -641,6 +643,7 @@ END $f$;
 -- Support staff see what a user sees, read-only, for this transaction, with a reason on record:
 -- SELECT authz.view_as('42', 'ticket 1234'){"" if imp else "  (the user type has no impersonate permission: administrators only)"}
 -- A session limited by scopes (a key's, a token's) keeps them: viewing never reads more than the session could.
+-- It writes nothing, whatever they hold: the rules allow a session that views as someone select alone (scope_cmd).
 CREATE FUNCTION authz.view_as(p_user text, p_reason text) RETURNS void
 LANGUAGE plpgsql {DEF} AS $f$
 DECLARE v_actor text := authz_int.actor();

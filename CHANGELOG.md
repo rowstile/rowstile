@@ -9,6 +9,14 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+### Fixed
+
+- `authz.view_as` in a session limited by scopes that hold a write command (a key's or a token's: `update`,
+  `app.files.update`) is read-only, as it says: the rules now refuse every write while a session views as someone,
+  whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the
+  scopes alone, so it could change rows as the user it viewed as. A session signed in with `authz.act_as` was not
+  affected. A rule's explanation says so (`no   the session views as someone else: it may not update on app.files`).
+
 ## 0.1.0-beta.4 (2026-11-09)
 
 ### Added
