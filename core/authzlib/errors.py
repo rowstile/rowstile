@@ -863,6 +863,18 @@ CODES = {
         "type tag = app.tags (id bigint)\n  owner : user = owner_id\n  can view = owner\n",
         when="apply",
     ),
+    "AZ630": Code(
+        "A key compared by a collation that isn't deterministic",
+        "rowstile keeps ids as text and compares them as they are written. A text column under a collation that "
+        "isn't deterministic (a case-insensitive one, say: `CREATE COLLATION ... deterministic = false`) holds "
+        "`Bob` and `bob` as one key, and they are two ids to rowstile: a share made with one spelling finds the row "
+        "and gives nothing, and stays when the row goes. Applying refuses such a key, with the column and its "
+        "collation. Key the table by a column under a deterministic collation (the database's own is): its id, or a "
+        "copy of the text in one spelling.",
+        "type tag = app.tags (name text)\n  owner : user = owner_id\n  can view = owner\n",
+        "type tag = app.tags (id bigint)\n  owner : user = owner_id\n  can view = owner\n",
+        when="apply",
+    ),
     "AZ701": Code(
         "Nobody signed in",
         "A query needed to know who is asking, and nobody signed in in this transaction. Every transaction starts "

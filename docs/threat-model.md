@@ -107,6 +107,12 @@ request gets no secrets, not on `pull_request_target`.
 - **Whether a row with an id exists** is told by the rules' explanations as by inserting a row with that id:
   `authz.explain_rule` (and a refused write's message) explains a row whose id no row has, and says no to all
   of it for a stored row the user can't see. <!-- checked: tests/adversarial.sh "explaining an insert tells an id no row has from a hidden row's, as inserting does" -->
+- **Whether a subject exists** is told to whoever may share an object: `authz.share` answers a share with a
+  user or a group that isn't there with `there is no team 7` (AZ708), and doesn't ask whether the sharer may see
+  the one that is. A share needs its subject: one made for a row that isn't there would wait for whoever
+  gets that id. <!-- checked: tests/scenario.sql "sharing with someone who does not exist is refused" -->
+  And a foreign key tells whether the row it names is there, whoever may see it: `authz.lint()` names an app
+  role that may make foreign keys to a governed table (`REFERENCES`, which `GRANT ALL` gives). <!-- checked: tests/governance.sh "lint says the app role may make foreign keys to a governed table, with what to take back: an info"; tests/children.sh "... and that the app role may make foreign keys to a partition, with what to take back: an info" -->
 - **Statistics** of governed tables are hidden from the app role by Postgres (`pg_stats` leaves out
   tables with row-level security), checked in adversarial.sh. <!-- checked: tests/adversarial.sh "table statistics of governed tables are hidden" -->
 - **Tables without rules** are readable in full by the app role (`authz.lint()` says so), which suits

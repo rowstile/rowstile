@@ -910,7 +910,8 @@ BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
   p_subject_id := authz_int.canon(p_subject_type, p_subject_id);
-  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE p_subject_relation END;  -- (no anyone#...)
+  -- (no anyone#...; and NULL is no relation, as '' is: the subject itself)
+  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE coalesce(p_subject_relation, '') END;
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) THEN
     RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
@@ -1022,7 +1023,8 @@ BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
   p_subject_id := authz_int.canon(p_subject_type, p_subject_id);
-  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE p_subject_relation END;  -- (no anyone#...)
+  -- (no anyone#...; and NULL is no relation, as '' is)
+  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE coalesce(p_subject_relation, '') END;
   v_by := coalesce(authz_int.manage_perm(p_type, p_relation,
                                          authz_int.subject_key(p_subject_type, p_subject_id, p_subject_relation)),
                    authz_int.manage_perm(p_type, p_relation));
@@ -1560,13 +1562,20 @@ END $kv$;"""
         # the column's own type, as a type line writes it (varchar for character varying): what to write. And first,
         # a type that isn't one of Postgres's own (an extension's, a domain, an enum of the app's): rowstile's
         # functions name the key's type where pg_catalog alone is searched (canon, the functions that hold an id),
-        # so such a key would apply, found on this session's path, and then every sign-in would fail
+        # so such a key would apply, found on this session's path, and then every sign-in would fail. Then a text
+        # compared by a collation that isn't deterministic (case-insensitive, say): two texts are one key there, and
+        # two ids to rowstile, which compares ids as they are written
         pk_checks = "\n".join(
-            f"  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type\n"
+            f"  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar'),\n"
+            f"         (SELECT c.collname FROM pg_collation c WHERE c.oid = attcollation AND NOT c.collisdeterministic)\n"
+            f"  INTO v_oid, v_type, v_coll\n"
             f"  FROM pg_attribute WHERE attrelid = to_regclass({lit(qt(tbl))}) AND attname = {lit(pk)} AND attnum > 0 AND NOT attisdropped;\n"
             f"  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN\n"
             f"    missing := missing || {NEXT} || {lit(f'{loc}: {tbl}.{pk} is ')} || v_type\n"
             f"      || {lit(', which is not one of Postgres' + chr(39) + 's own types (an extension' + chr(39) + 's, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]')};\n"
+            f"  ELSIF FOUND AND v_coll IS NOT NULL THEN\n"
+            f"    missing := missing || {NEXT} || {lit(f'{loc}: {tbl}.{pk} is compared by the collation ')} || v_coll\n"
+            f"      || {lit(', which is not deterministic (texts that differ are one key there, and ids are compared as they are written): key the table by a column under a deterministic collation [AZ630]')};\n"
             f"  ELSIF FOUND AND v_oid <> to_regtype({lit(pkt)}) THEN\n"
             f"    missing := missing || {NEXT} || {lit(f'{loc}: {tbl}.{pk} is ')} || v_type\n"
             f"      || {lit(f', not {pkt}: write its type after the key, ({pk} ')} || v_type || ') [AZ602]';\n"
@@ -1836,7 +1845,7 @@ END $w$;"""
             (
                 "changed",
                 "tables",
-                f"DO $chk$\nDECLARE missing text := ''; v_oid oid; v_type text; v_n int;\nBEGIN\n{checks}\n{pk_checks}\n{share_id_checks + chr(10) if share_id_checks else ''}{cascade_checks + chr(10) if cascade_checks else ''}"
+                f"DO $chk$\nDECLARE missing text := ''; v_oid oid; v_type text; v_coll text; v_n int;\nBEGIN\n{checks}\n{pk_checks}\n{share_id_checks + chr(10) if share_id_checks else ''}{cascade_checks + chr(10) if cascade_checks else ''}"
                 f"  IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;\nEND $chk$;",
             ),
             ("full", "uid_type", uid_check),

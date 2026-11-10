@@ -247,11 +247,18 @@ def or_join(parts: list[str]) -> str:
     return parts[0] if len(parts) == 1 else "(" + "\n    OR ".join(parts) + ")"
 
 
-def strip_literals(sql: str, name: str = '""') -> str:
+def strip_literals(sql: str, name: str | None = '""') -> str:
     """SQL as only its code reads, for keyword checks: a string literal ('...', E'...', $$...$$) as '', a quoted
-    name as `name`, a comment as a space. The quotes are read as Postgres reads them (sql_code)."""
+    name as `name` (None: as it is written, for a check that reads calls by their names, where "now"() is now()), a
+    comment as a space. The quotes are read as Postgres reads them (sql_code)."""
     return "".join(
-        text if code else name if text.startswith('"') else " " if text.startswith(("/*", "--")) else "''"
+        text
+        if code
+        else (text if name is None else name)
+        if text.startswith('"')
+        else " "
+        if text.startswith(("/*", "--"))
+        else "''"
         for code, text in sql_code(sql)
     )
 
@@ -721,13 +728,23 @@ UNSTABLE_WORDS = (
     *CLOCK_WORDS,
     *("current_user", "current_role", "session_user", "user", "system_user", "current_schema", "current_catalog"),
 )
-UNSTABLE_CALL = "|".join(n.replace("*", "[a-z_]+").replace(".", r"\s*\.\s*") for n in UNSTABLE_CALLS)
+
+
+# (each part of a call's name as it is, or in double quotes as Postgres keeps it, in lower case: "now"() and
+# pg_catalog."now"() are now(), "NOW"() is another function. A word in quotes is another matter: "user" is a column)
+def quoted_or_not(part: str) -> str:
+    return rf'(?:"(?-i:{part})"|{part})'
+
+
+UNSTABLE_CALL = "|".join(
+    r"\s*\.\s*".join(quoted_or_not(part) for part in n.replace("*", "[a-z_]+").split(".")) for n in UNSTABLE_CALLS
+)
 UNSTABLE = re.compile(
-    rf"{NOT_AFTER_NAME}(?:({UNSTABLE_CALL})\s*\(|(?<!\.)({'|'.join(UNSTABLE_WORDS)}){NOT_BEFORE_NAME})",
+    rf"{NOT_AFTER_NAME}(?:({UNSTABLE_CALL})\s*\(|(?<![.\"])({'|'.join(UNSTABLE_WORDS)}){NOT_BEFORE_NAME}(?!\"))",
     re.IGNORECASE | re.ASCII,
 )
 # age(x), where x is the one argument: it counts from today (age(x, y) counts from y)
-AGE = re.compile(rf"{NOT_AFTER_NAME}age\s*\(", re.IGNORECASE | re.ASCII)
+AGE = re.compile(rf"{NOT_AFTER_NAME}{quoted_or_not('age')}\s*\(", re.IGNORECASE | re.ASCII)
 
 
 def one_argument(code: str, start: int) -> bool:
@@ -772,11 +789,12 @@ def check_stable_condition(cond: str, loc: Loc, what: str = "limit inheritance")
             f"rights are stored, so the condition must give the same answer for every user at any time",
             "AZ305",
         )
-    code = strip_literals(cond)
+    # (quoted names as they are written: a call by a quoted name is the same call)
+    code = strip_literals(cond, None)
     m = UNSTABLE.search(code)
     age = next((a for a in AGE.finditer(code) if one_argument(code, a.end())), None)
     if m or age:
-        on = (m.group(1) or m.group(2)) if m else "age() with one argument, which counts from today"
+        on = (m.group(1) or m.group(2)).replace('"', "") if m else "age() with one argument, which counts from today"
         fail(
             loc,
             f"{{{cond}}} can't {what}: it depends on {on}, but inherited "

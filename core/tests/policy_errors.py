@@ -308,6 +308,14 @@ COMPILE = [
         "AZ305",
     ),
     (
+        "inheritance that depends on the time, the call's name in quotes, in a condition that reads another table",
+        "  can view = owner or (parent.view and {exists (select 1 from alt.holds h where h.target = this.doc_no "
+        "and pg_catalog.\"now\"() > '2020-01-01')})\n",
+        "can't limit inheritance: it depends on now",
+        10,
+        "AZ305",
+    ),
+    (
         "inheritance that depends on the session, beside a subquery",
         "  can view = owner or (parent.view and {exists (select 1 from alt.holds h where h.target = this.doc_no) "
         "or inet_client_addr() is null})\n",
@@ -1256,6 +1264,13 @@ COMPILE = [
         "AZ804",
     ),
     (
+        "a synced permission reading the clock, the call's name in quotes",
+        "  can view = owner and {pg_catalog.\"now\"() > '2020-01-01'}\nsync role eng\nsync alt.docs : view\n",
+        "reads now(), which changes without a write",
+        10,
+        "AZ804",
+    ),
+    (
         "a synced permission reading 'today'",
         "  can view = owner and {up < 'today'}\nsync role eng\nsync alt.docs : view\n",
         "reads 'today', the current time",
@@ -1486,6 +1501,14 @@ APPLY = [
         "AZ629",
     ),
     (
+        "a key compared by a collation that isn't deterministic: two texts are one key there",
+        "type label = alt.labels (name text)\n  owner : user = owner_id\n  can see = owner\n",
+        "line 10: alt.labels.name is compared by the collation nocase, which is not deterministic (texts that differ "
+        "are one key there, and ids are compared as they are written): key the table by a column under a "
+        "deterministic collation [AZ630]",
+        "AZ630",
+    ),
+    (
         "inheritance limited by a time-zone dependent expression",
         "  can view = owner or (parent.view and {created + interval '1 day' > '2020-01-01'})\n",
         "line 10: a condition that limits inheritance must give the same answer for every user at any time",
@@ -1662,6 +1685,8 @@ CREATE TABLE alt.coded (code alt.code PRIMARY KEY, owner_id bigint);
 DROP TYPE IF EXISTS public.grade;
 CREATE TYPE public.grade AS ENUM ('low', 'high');
 CREATE TABLE alt.levels (level public.grade PRIMARY KEY, owner_id bigint);
+CREATE COLLATION alt.nocase (provider = icu, locale = 'und-u-ks-level2', deterministic = false);
+CREATE TABLE alt.labels (name text COLLATE alt.nocase PRIMARY KEY, owner_id bigint);
 GRANT SELECT ON alt.proj_links, alt.tusers, alt.tdocs, alt.spaces, alt.rooms, alt.pins TO app_user;
 GRANT SELECT, UPDATE ON alt.notes TO app_user;
 """

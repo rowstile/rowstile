@@ -413,6 +413,12 @@ expect "sharing a hidden file with herself" "42501: you cannot share file 12" -c
 expect "sharing what she may only view" "42501: you cannot share file 11" -c "SELECT authz.share('file', 11, 'viewer', 'user', 4)"
 AS=1 expect "sharing a relation the policy doesn't share" "P0001: the policy does not allow sharing file.owner with user" -c "SELECT authz.share('file', 11, 'owner', 'user', 3)"
 AS=1 expect "... or unsharing one" "42501: you cannot unshare owner on file 11" -c "SELECT authz.unshare('file', 11, 'owner', 'user', 3)"
+# a subject relation given as NULL is none, as '' is (the subject itself): the share is made so, and unshare finds it
+AS=1 expect "a share whose subject relation is NULL is one with none, and unshare with NULL takes it back" "1|0" \
+  -c "SELECT authz.share('file', 11, 'viewer', 'user', 4, NULL)" \
+  -c "CREATE TEMP TABLE made ON COMMIT DROP AS SELECT count(*) AS n FROM authz.list_shares('file', '11') WHERE relation = 'viewer' AND subject_id = '4' AND subject_relation = ''" \
+  -c "SELECT authz.unshare('file', 11, 'viewer', 'user', 4, NULL)" \
+  -c "SELECT (SELECT n FROM made) || '|' || count(*) FROM authz.list_shares('file', '11') WHERE relation = 'viewer' AND subject_id = '4'"
 expect "breaking the glass (as she may on Acme's folders) into a relation the policy doesn't share with users" \
   "P0001: the policy does not allow sharing folder.owner with a user" -c "SELECT authz.break_glass('folder', '6', 'owner', 'curious', '1 hour')"
 # every way of asking to share a hidden object (file 12) answers as for a missing one: message and context

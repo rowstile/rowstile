@@ -990,13 +990,17 @@ FEATURES: list[Feature] = [
         "lang.keys",
         1,
         "Keys: of any type, of several columns",
-        ("lang.key", "lang.key_column", "err.AZ206", "err.AZ602", "err.AZ627", "err.AZ629"),
+        ("lang.key", "lang.key_column", "err.AZ206", "err.AZ602", "err.AZ627", "err.AZ629", "err.AZ630"),
         Doc(LANG, "Keys"),
         (
             T("unit_test.py", "class CompositeKeys("),
             T("unit_test.py", "class KeyTypeChecks("),
             T("policy_errors.py", "a key that is numeric"),
             T("policy_errors.py", "a key of a domain of the app's, whatever type the policy writes for it"),
+            T(
+                "policy_errors.py",
+                "a key compared by a collation that isn't deterministic: two texts are one key there",
+            ),
             T("apply.sh", "applying after a key's type changed is refused while shares name ids it can't read"),
         ),
         (T(DIFF, "class CompositeGen("), T("genpolicy.py", "keytype = KEYS["), T("around.py", "keys: two columns")),
