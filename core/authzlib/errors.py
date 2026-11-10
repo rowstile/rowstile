@@ -892,8 +892,8 @@ CODES = {
     "AZ704": Code(
         "A read-only session",
         "The session views as someone else (`authz.view_as`) or signed in with a token limited by scopes, so it may "
-        "read but not change anything, sign other people in, view as someone again, or make a key with more scopes "
-        "than it has. SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this code). Nor may it sync: the "
+        "read but not change anything, sign other people in, view as someone again, or make or revoke a key with "
+        "more scopes than it has. SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this code). Nor may it sync: the "
         "sync index holds what each principal may read, without scopes, so Electric's route in the TypeScript SDK "
         "(`electricShape`) answers its shape requests 403 with this code.",
         when="runtime",

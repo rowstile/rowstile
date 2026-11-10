@@ -10,6 +10,8 @@ Three ways to say who is asking, all per transaction:
    policy's own (`scope files = ...`) limit which commands and permissions the
    transaction gets. <!-- checked: tests/identity.sh "read-only key: may view file 11, not edit it"; tests/identity.sh "files key: sees no folders (not in its scope)" -->
    A read-only session can't share, approve, or mint broader keys. <!-- checked: tests/identity.sh "read-only key: cannot share"; tests/identity.sh "read-only key: cannot approve a request"; tests/identity.sh "a read-only session cannot mint a broader key" -->
+   A session limited by scopes makes, and revokes, only a key no wider than itself: one that has scopes, each
+   of them the session's (AZ704 otherwise). <!-- checked: tests/identity.sh "a session limited to a scope cannot make a key with another"; tests/identity.sh "a session limited to a scope cannot revoke its user's key with every scope"; tests/identity.sh "... nor one with another scope"; tests/identity.sh "... it revokes a key with its own scopes (itself), and the other is as it was" -->
    Pass the key as a parameter (`SELECT authz.login_key($1)`, as the generated clients do), not
    written into the statement, or it ends up in the server's statement log; the same for a JWT.
    `authz.login_key(key)` works in read-only transactions too (a replica), and requests with
