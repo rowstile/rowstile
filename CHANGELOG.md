@@ -34,6 +34,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   view-as by setting the settings: a session can put back the settings an earlier sign-in of the same transaction
   signed, with that signature, and is believed. That is a state rowstile signed there, and gives the backend
   nothing `authz.sign_out()` and a sign-in don't; a state no sign-in signed stays an error.
+- `authz.revoke_api_key` in a session limited by scopes (a key's, a token's) revokes only a key no wider than the
+  session: one that has scopes, each of them the session's, as `authz.create_api_key` holds a new key to. A key
+  whose scope holds a write command could revoke its user's other keys, one with every scope too. It answers
+  AZ704 there now.
 - `authz.view_as` in a session limited by scopes that hold a write command (a key's or a token's: `update`,
   `app.files.update`) is read-only, as it says: the rules now refuse every write while a session views as someone,
   whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the
@@ -55,6 +59,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   in first, as nobody where no one is asking (`authz.act_as(NULL, NULL)`; the SDKs' transactions do).
 - `authz.lint()` has a new error where the app role holds `TRIGGER` on a table the policy governs (an app set up
   with `GRANT ALL`): `rowstile lint` then exits 1 until it is taken back.
+- A session limited by scopes no longer revokes a key with other scopes, or with none (AZ704): revoke keys from
+  a session without scopes, as the app's own sign-in is.
 - A policy whose condition reads a function of the row as a column, where the function isn't IMMUTABLE, no longer
   applies (AZ628): call it by its name on the row's columns, `{app.blocked_doc(this.id)}`, or mark it IMMUTABLE if
   it reads nothing.

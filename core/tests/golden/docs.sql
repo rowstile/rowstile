@@ -6436,10 +6436,12 @@ BEGIN
   FROM authz.api_keys k WHERE k.user_id = v_id AND k.principal_type = v_type ORDER BY k.id;
 END $f$;
 
--- Revoke a key: your own, a user's you may inspect, or a principal's you manage the keys of
+-- Revoke a key: your own, a user's you may inspect, or a principal's you manage the keys of. A session limited by
+-- scopes (a key's, a token's) revokes a key no wider than itself: one that has scopes, each of them the session's,
+-- as create_api_key holds a new key to (a scope that holds a write command is no say over the user's other keys)
 CREATE OR REPLACE FUNCTION authz.revoke_api_key(p_id bigint) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE k authz.api_keys;
+DECLARE k authz.api_keys; v_cur text[] := authz_int.scopes_active();
 BEGIN
   PERFORM authz_int.check_writable();
   SELECT * INTO k FROM authz.api_keys WHERE id = p_id AND revoked_at IS NULL;
@@ -6450,6 +6452,9 @@ BEGIN
            AND EXISTS (SELECT 1 FROM authz.principal())
            AND coalesce(authz_int.can(k.principal_type, k.user_id, 'manage_keys'), false))) THEN
     RAISE EXCEPTION 'no API key % of yours', p_id USING HINT = 'rowstile help AZ708';
+  END IF;
+  IF v_cur IS NOT NULL AND (coalesce(k.scopes, '') = '' OR NOT string_to_array(k.scopes, ',') <@ v_cur) THEN
+    RAISE EXCEPTION 'a session limited by scopes cannot revoke a key with more scopes than its own' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;
   UPDATE authz.api_keys SET revoked_at = now() WHERE id = p_id;
   PERFORM authz_int.audit('revoke_api_key', k.principal_type, k.user_id, NULL, NULL, NULL, NULL,

@@ -92,6 +92,19 @@ expect_code "a session limited to a scope cannot make a key with another" "42501
   -c "BEGIN" -c "SELECT authz.login_key('$FILES')" -c "SELECT authz.create_api_key('wider', 'read')"
 expect_code "... nor one with every scope (none named)" "42501: a key cannot have more scopes than the session creating it" \
   -c "BEGIN" -c "SELECT authz.login_key('$FILES')" -c "SELECT authz.create_api_key('wider')"
+# ... nor revoke one: a scope that holds a write command is no say over its user's other keys. (alice makes a key
+# with every scope first, in the same transaction; her keys are named by authz.list_api_keys, which the session may ask)
+expect_code "a session limited to a scope cannot revoke its user's key with every scope" "42501: a session limited by scopes cannot revoke a key with more scopes than its own" \
+  -c "BEGIN" -c "SET LOCAL authz.user_id = 1" -c "SELECT authz.create_api_key('everything') IS NOT NULL" -c "SELECT authz.login_key('$FILES')" \
+  -c "SELECT authz.revoke_api_key((SELECT id FROM authz.list_api_keys() WHERE name = 'everything'))"
+expect_code "... nor one with another scope" "42501: a session limited by scopes cannot revoke a key with more scopes than its own" \
+  -c "BEGIN" -c "SELECT authz.login_key('$FILES')" -c "SELECT authz.revoke_api_key((SELECT id FROM authz.list_api_keys() WHERE name = 'laptop'))"
+check "... it revokes a key with its own scopes (itself), and the other is as it was" "true|false" \
+  "BEGIN; SELECT authz.login_key('$FILES'); SELECT authz.revoke_api_key((SELECT id FROM authz.list_api_keys() WHERE name = 'script'));
+   SELECT (SELECT revoked_at IS NOT NULL FROM authz.list_api_keys() WHERE name = 'script') || '|' || (SELECT revoked_at IS NOT NULL FROM authz.list_api_keys() WHERE name = 'laptop'); ROLLBACK;"
+check "... and a session without scopes revokes any of its user's keys" "t" \
+  "BEGIN; SET LOCAL authz.user_id = 1; SELECT authz.revoke_api_key((SELECT id FROM authz.list_api_keys() WHERE name = 'script'));
+   SELECT revoked_at IS NOT NULL FROM authz.list_api_keys() WHERE name = 'script'; ROLLBACK;"
 expect_code "a scope the policy doesn't have is a mistake, not a key" "P0001: no scope boat in the policy" \
   -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('k', 'read, boat')"
 expect_code "a key for another user: users' keys are their own (the policy gives user no manage_keys)" \
