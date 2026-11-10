@@ -67,7 +67,7 @@ function authz.delete_role(p_role bigint) | b4c64d8168eb shape=7c823e86
 function authz.explain(p_type text, p_id integer, p_perm text, p_user text) | 1409a3a04a15 shape=7d31b532
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 30759d66a645 shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | 1e145f454a48 shape=1223ad2f
-function authz.lint() | a821a3ad829d shape=54cb1505
+function authz.lint() | 0223f2a744fe shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | c0702096461f shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id integer) | cec8e40d450f shape=92b36157
@@ -112,7 +112,7 @@ function authz.view_as(p_user text, p_reason text) | bf76b2722b72 shape=5d7b6326
 function authz.who(p_type text, p_id integer, p_perm text) | 392e8fa82862 shape=b6bb06d3
 function authz.who(p_type text, p_id text, p_perm text) | f17536049c0c shape=1cf83af9
 function authz.who_among(p_type text, p_id integer, p_perm text, p_users text[], p_principal_type text) | 3cbf9dbbd703 shape=21122f56
-function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 3051f8f59667 shape=17b9de43
+function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 4222125f156f shape=17b9de43
 function authz_gen."app.feedback:insert:items"(p_row "app"."feedback") | 4a88637384bc shape=8c57a438 atomic
 function authz_gen."app.feedback:insert:refuse"(p_row "app"."feedback") | 0c458d19c08e shape=cb184e89
 function authz_gen."app.feedback:insert:why"(p_row "app"."feedback") | a441c75905b9 shape=bb49a266
@@ -312,7 +312,7 @@ step grant_views | beccea35a5e4
 step mask_privileges | ef21e3cee165
 step share_indexes | 7d96f6207c06
 step sweep | 5e1e5e051948
-step tables | 6a4754d39bfd
+step tables | e64e6e54a787
 table authz_gen.policy_lines | eca60ad437ca shape=dcfedc96
 table authz_int."folder__parent__tree" | 0761ea300228 shape=0761ea30 tree=folder__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6

@@ -127,7 +127,7 @@ function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9f
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 3b1e6518163f shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | 935f0ec6d2fd shape=1223ad2f
-function authz.lint() | 77996017bc54 shape=54cb1505
+function authz.lint() | 8317f701c9ac shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 9fba6ce4043f shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
@@ -190,7 +190,7 @@ function authz.who(p_type text, p_id bigint, p_perm text) | 2e6bf67dc8a8 shape=9
 function authz.who(p_type text, p_id text, p_perm text) | 09e0a0e472dc shape=1cf83af9
 function authz.who(p_type text, p_id uuid, p_perm text) | 68091c833309 shape=721cfa7a
 function authz.who_among(p_type text, p_id bigint, p_perm text, p_users text[], p_principal_type text) | c12c43bbe47f shape=9f8e2d53
-function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 3051f8f59667 shape=17b9de43
+function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 4222125f156f shape=17b9de43
 function authz.who_among(p_type text, p_id uuid, p_perm text, p_users text[], p_principal_type text) | 30cd12790511 shape=a10912c4
 function authz_gen."ms.blocks:delete:items"(p_row "ms"."blocks") | 1e607b2bb21d shape=523eb29a atomic
 function authz_gen."ms.blocks:delete:why"(p_row "ms"."blocks") | 5a5984fe5e44 shape=3ab4f823
@@ -350,36 +350,40 @@ function authz_int."message__remove__why"(p_id text, p_depth int, p_seen text[],
 function authz_int."message__sender__who"(p_id text) | f8d0c28b0171 shape=65950e85
 function authz_int."message__sender__why"(p_id text, p_depth int, p_seen text[], p_asker text[]) | dd020a6d715e shape=9d97fb81
 function authz_int."ms.blocks:seen"(p_id text) | 2a5e967fe2b5 shape=494519ac
-function authz_int."ms.bots:column id, owner_id"() | 12617673350d shape=2d6f9241
+function authz_int."ms.bots:column id, owner_id"() | 355a6fe3a9d1 shape=2d6f9241
 function authz_int."ms.bots:column id, owner_id:holds"(p_row "ms"."bots") | dee199cd3090 shape=d2e08ee5 atomic
 function authz_int."ms.bots:seen"(p_id bigint) | cdeb7a245abd shape=26279f37
 function authz_int."ms.chat_bots:seen"(p_id text) | 957b6138deda shape=0ed8202b
-function authz_int."ms.chats:column kind, created_by, created_at, last_seq"() | 034aa02f5ba3 shape=6de826f5
+function authz_int."ms.chats:column kind, created_by, created_at, last_seq"() | 1e1736bc5bf1 shape=6de826f5
 function authz_int."ms.chats:column kind, created_by, created_at, last_seq:holds"(p_row "ms"."chats") | 915f2eec6cfe shape=4f158370 atomic
 function authz_int."ms.chats:seen"(p_id bigint) | b8628335b882 shape=62d7b203
-function authz_int."ms.members:column chat_id, user_id, joined_at, joined_seq"() | fbf925698a96 shape=04d56ff2
+function authz_int."ms.members:column chat_id, user_id, joined_at, joined_seq"() | c7b988690f86 shape=04d56ff2
 function authz_int."ms.members:column chat_id, user_id, joined_at, joined_seq:holds"(p_row "ms"."members") | d1e317998323 shape=3489c4d4 atomic
-function authz_int."ms.members:column last_read_seq after"() | b1d355432f85 shape=e4607be4
+function authz_int."ms.members:column last_read_seq after"() | 1c3a6392df77 shape=e4607be4
 function authz_int."ms.members:column last_read_seq after:holds"(p_row "ms"."members") | d77dceeb2fc6 shape=b7ecefb6 atomic
-function authz_int."ms.members:column last_read_seq"() | 5f91a0503c62 shape=be626ea7
+function authz_int."ms.members:column last_read_seq after:moved"() | ab60fcd87af9 shape=1b5b6a0f
+function authz_int."ms.members:column last_read_seq"() | 2a543b134a1d shape=be626ea7
 function authz_int."ms.members:column last_read_seq:holds"(p_row "ms"."members") | bbd616291564 shape=2318b342 atomic
-function authz_int."ms.members:column role after"() | 743049a55700 shape=2011dd82
+function authz_int."ms.members:column role after"() | 58f4fbc140be shape=2011dd82
 function authz_int."ms.members:column role after:holds"(p_row "ms"."members") | 30b87d0a3103 shape=84ae5e96 atomic
-function authz_int."ms.members:column role"() | 810535c24879 shape=17759dc8
+function authz_int."ms.members:column role after:moved"() | 6e795b4ff2d4 shape=59c6ecfd
+function authz_int."ms.members:column role"() | 02169fc0809a shape=17759dc8
 function authz_int."ms.members:column role:holds"(p_row "ms"."members") | a1cc67dacd3f shape=ddcb7fc5 atomic
 function authz_int."ms.members:seen"(p_id text) | 3cca2334a3da shape=7e8bbe6c
-function authz_int."ms.messages:column body after"() | 733cd6dd44f8 shape=96abdf17
+function authz_int."ms.messages:column body after"() | 0554f4a8e912 shape=96abdf17
 function authz_int."ms.messages:column body after:holds"(p_row "ms"."messages") | a351403cdb82 shape=57c63676 atomic
+function authz_int."ms.messages:column body after:moved"() | 0aea89c04ae1 shape=e2d61473
 function authz_int."ms.messages:column chat_id, seq, sender_id, bot_id, cr_95321345"(p_row "ms"."messages") | 3c5f9d12934f shape=e77bbb45 atomic
-function authz_int."ms.messages:column chat_id, seq, sender_id, bot_id, created_at"() | 757d414710b5 shape=7492f037
-function authz_int."ms.messages:column deleted after"() | c1242a10c5e9 shape=5d642ee4
+function authz_int."ms.messages:column chat_id, seq, sender_id, bot_id, created_at"() | 7dc6f24469fc shape=7492f037
+function authz_int."ms.messages:column deleted after"() | e1c13e907a71 shape=5d642ee4
 function authz_int."ms.messages:column deleted after:holds"(p_row "ms"."messages") | c07516a2dd89 shape=5b2987f4 atomic
-function authz_int."ms.messages:column deleted"() | 3b1710d5af37 shape=e380ce0b
+function authz_int."ms.messages:column deleted after:moved"() | eb39278d63ec shape=56b87a0a
+function authz_int."ms.messages:column deleted"() | 4a8f685bfdfa shape=e380ce0b
 function authz_int."ms.messages:column deleted:holds"(p_row "ms"."messages") | 21ed765405ff shape=83ea9aa3 atomic
-function authz_int."ms.messages:column edited_at"() | 8b83d305370b shape=58c6b436
+function authz_int."ms.messages:column edited_at"() | 8805dbf7d582 shape=58c6b436
 function authz_int."ms.messages:column edited_at:holds"(p_row "ms"."messages") | caaa4ec9efaa shape=9a6c76dd atomic
 function authz_int."ms.messages:seen"(p_id text) | fb01d66ba682 shape=f8228104
-function authz_int."ms.users:column id, phone, created_at"() | 1c9b2a3aa7f7 shape=00ac8647
+function authz_int."ms.users:column id, phone, created_at"() | 8170ba40f55d shape=00ac8647
 function authz_int."ms.users:column id, phone, created_at:holds"(p_row "ms"."users") | 2b8ef81954b9 shape=2c8875f6 atomic
 function authz_int."ms.users:seen"(p_id uuid) | c9db899aa396 shape=5d4268de
 function authz_int."rel_audit_1_del"() | 88ddaad6e53b shape=ca2c96f6
@@ -506,7 +510,7 @@ step grant_views | c8e558735372
 step mask_privileges | 0b7a0eb94253
 step share_indexes | 7d0648f6a5ed
 step sweep | 66b168ba0729
-step tables | 6ffbe77ba478
+step tables | 11f84cf752b8
 table authz_gen.policy_lines | cbf59a60b004 shape=dcfedc96
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | 1779df2cc717 shape=1779df2c
@@ -596,10 +600,14 @@ trigger "authz_update id, phone, created_at" ON "ms"."users" | 2611ddf9cd5a
 trigger "authz_update kind, created_by, created_at, last_seq" ON "ms"."chats" | 87a8806f8c22
 trigger "authz_update last_read_seq" ON "ms"."members" | 9af46fb37167
 trigger "authz_update role" ON "ms"."members" | 429fd6b62c5c
-trigger "authz_update_after body" ON "ms"."messages" | bb3898b21c6f
-trigger "authz_update_after deleted" ON "ms"."messages" | a524ba68801c
-trigger "authz_update_after last_read_seq" ON "ms"."members" | e950ad407d67
-trigger "authz_update_after role" ON "ms"."members" | f6c10a9670ef
+trigger "authz_update_after body" ON "ms"."messages" | 8b2424b64039
+trigger "authz_update_after deleted" ON "ms"."messages" | 9ea2f17a70f9
+trigger "authz_update_after last_read_seq" ON "ms"."members" | 219a04ea3bea
+trigger "authz_update_after role" ON "ms"."members" | 42fac53d6b24
+trigger "authz_update_after_moved body" ON "ms"."messages" | 26274ae5d6fb
+trigger "authz_update_after_moved deleted" ON "ms"."messages" | a00f7f902a2a
+trigger "authz_update_after_moved last_read_seq" ON "ms"."members" | 6b075cf15f15
+trigger "authz_update_after_moved role" ON "ms"."members" | ad5bf030ef26
 trigger "authz_user_col_audit_del" ON "ms"."users" | a6fc56d3362a
 trigger "authz_user_col_audit_ins" ON "ms"."users" | 68378bd738a8
 trigger "authz_user_col_audit_row" ON "ms"."users" | 44bca16781e3
