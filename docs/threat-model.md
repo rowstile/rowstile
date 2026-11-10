@@ -39,8 +39,12 @@ do depends on identity:
   signed in, the scopes, the backend and the transaction with a key the app role can't read, and nothing else
   is believed (`authz.who()`, `authz.explain()` and the like switch who is signed in only for the length of
   their call). <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/sessions.sh "a forged signature is an error"; tests/sessions.sh "view_as signs who it shows" -->
-  So the app role can't change who is signed in by setting it, widen a key's scopes, leave
-  view-as, or reuse a sign-in from another transaction or connection (`tests/sessions.sh`). <!-- checked: tests/sessions.sh "settings that differ never sign alike"; tests/sessions.sh "changing authz.user_id after signing in is an error"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
+  So the app role can't make up who is signed in, wider scopes than a key's, or a session that no longer
+  views as someone: the settings are believed only as rowstile signed them, in this transaction, on this
+  connection (`tests/sessions.sh`). <!-- checked: tests/sessions.sh "settings that differ never sign alike"; tests/sessions.sh "changing authz.user_id after signing in is an error"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
+  A signature is for its transaction, not for a moment in it: the settings an earlier sign-in of the same
+  transaction signed, put back with that signature, are believed again. That is a state rowstile signed there
+  (the one before a `view_as`, say), and gives the backend nothing `authz.sign_out()` and a sign-in don't. <!-- checked: tests/sessions.sh "an earlier sign-in of the same transaction, put back with its signature, is believed"; tests/sessions.sh "... but not with the user view-as shows" -->
 - **The app role may call `authz.act_as()`**, so code running as the app role can claim to be anyone. <!-- checked: tests/sessions.sh "authz.act_as signs carol in: she sees her files" -->
   Postgres roles other than the app role
   and its members can't sign anyone in. <!-- checked: tests/sessions.sh "a role that isn't the app role can't act_as"; tests/docs_test.sh "another role can't say who is signed in" -->
