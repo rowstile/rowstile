@@ -3,17 +3,17 @@
 -- + type file: can comment = folder.view
 
 -- a migration is one transaction: outside one, nothing below changes anything
-SELECT pg_catalog.set_config('authz_ctx.migration', '034b179a21733584', true);
+SELECT pg_catalog.set_config('authz_ctx.migration', 'e8936f1800c350e6', true);
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '034b179a21733584' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM 'e8936f1800c350e6' THEN
     PERFORM pg_catalog.set_config('authz_migration.read_only', pg_catalog.current_setting('default_transaction_read_only'), false);
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '034b179a21733584' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM 'e8936f1800c350e6' THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
       USING HINT = 'nothing was changed, and this session is read-only until the migration''s last statement; run the file with your migration tool, or with psql -1 -f';
   END IF;
@@ -29,13 +29,13 @@ BEGIN
   IF to_regclass('authz.policy_versions') IS NOT NULL THEN
     EXECUTE 'SELECT lock FROM authz.policy_versions ORDER BY id DESC LIMIT 1' INTO v_lock;
   END IF;
-  IF v_lock = '034b179a21733584' THEN
+  IF v_lock = 'e8936f1800c350e6' THEN
     RAISE EXCEPTION 'rowstile: this database already holds what this migration brings (it ran here before, or rowstile dev or push took the database there): don''t run it, tell your migration tool it is applied [AZ607]'
       USING HINT = 'Prisma: prisma migrate resolve --applied <the migration''s folder>. Alembic: alembic stamp head. '
                    'Others, and why: rowstile help AZ607';
-  ELSIF v_lock IS DISTINCT FROM '4a496a2c6acc461d' THEN
+  ELSIF v_lock IS DISTINCT FROM 'c80a9b8b63984ffc' THEN
     RAISE EXCEPTION 'rowstile: this migration changes the policy the migration before it left (%), but the database has % [AZ607]',
-      '4a496a2c6acc461d', coalesce(v_lock, 'none')
+      'c80a9b8b63984ffc', coalesce(v_lock, 'none')
       USING HINT = 'apply the migrations in order; a database changed with rowstile push or apply since needs the '
                    'migrations from the start (or rowstile apply of the policy the previous migration left) '
                    '(rowstile help AZ607)';
@@ -124,6 +124,49 @@ INSERT INTO authz_int.perms VALUES
 -- file.comment (line 62): folder.view
 CREATE VIEW authz_int."file__comment" AS
   SELECT id FROM authz_int."file__folder__view";
+
+-- What the app role evaluates itself (its rules, the views they read, the rules' own functions, the masked views)
+-- calls nothing of the app's that may read data: a call the condition's text doesn't show isn't run as the owner
+DO $ac$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    WITH RECURSIVE read(classid, objid, what) AS (
+      SELECT x.classid, x.objid, x.what FROM (
+        SELECT 'pg_policy'::regclass::oid AS classid, p.oid AS objid,
+               format('the %s rule of %s', substr(p.polname::text, 7), p.polrelid::regclass) AS what
+        FROM pg_policy p JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass
+         AND d.description IN ('rowstile')
+        UNION ALL
+        SELECT 'pg_proc'::regclass::oid, f.oid, 'the rules of ' || split_part(f.proname::text, ':', 1)
+        FROM pg_proc f WHERE f.pronamespace = 'authz_gen'::regnamespace
+        UNION ALL
+        SELECT 'pg_rewrite'::regclass::oid, w.oid, 'the masked view ' || c.oid::regclass
+        FROM pg_class c JOIN pg_description d ON d.objoid = c.oid AND d.classoid = 'pg_class'::regclass
+         AND d.description IN ('rowstile masked view')
+        JOIN pg_rewrite w ON w.ev_class = c.oid) x
+      UNION
+      -- (the views they read, and those these read: a view runs what it calls as whoever reads it)
+      SELECT 'pg_rewrite'::regclass::oid, w.oid, rd.what
+      FROM read rd JOIN pg_depend dep ON dep.classid = rd.classid AND dep.objid = rd.objid
+       AND dep.refclassid = 'pg_class'::regclass
+      JOIN pg_class v ON v.oid = dep.refobjid AND v.relkind = 'v' AND v.relnamespace = 'authz_int'::regnamespace
+      JOIN pg_rewrite w ON w.ev_class = v.oid)
+    SELECT rd.what, fn.oid::regprocedure::text AS fn
+    FROM read rd JOIN pg_depend dep ON dep.classid = rd.classid AND dep.objid = rd.objid
+    JOIN pg_proc fn ON fn.oid = CASE dep.refclassid
+        WHEN 'pg_proc'::regclass THEN dep.refobjid
+        WHEN 'pg_operator'::regclass THEN (SELECT o.oprcode FROM pg_operator o WHERE o.oid = dep.refobjid) END
+    WHERE fn.pronamespace NOT IN (SELECT n.oid FROM pg_namespace n
+                                  WHERE n.nspname IN ('pg_catalog', 'authz', 'authz_gen', 'authz_int'))
+      AND fn.provolatile <> 'i'
+      AND fn.prolang NOT IN (SELECT l.oid FROM pg_language l WHERE l.lanname IN ('internal', 'c'))
+    ORDER BY 1, 2 LIMIT 1
+  LOOP
+    RAISE EXCEPTION '%: a condition calls %, and nothing in its text shows the call (a function of the row read as a column, a cast, an operator written OPERATOR(...)), so the app role would run it with its own rights, not the policy''s [AZ628]', r.what, r.fn
+      USING HINT = 'call it by its name, with parentheses, on the row''s columns, as {app.blocked_doc(this.id)}: rowstile then runs it with the policy''s rights. A function that reads nothing may be marked IMMUTABLE instead';
+  END LOOP;
+END $ac$;
 
 -- A permission on an object, whether the user may select its row or not: what the functions that act on the
 -- object ask (sharing, roles, keys, view_as, break_glass, requests), where authz.can's answer is for rows they may see
@@ -1097,7 +1140,7 @@ test
   user 5 can view file 16      -- erin: Joint project is linked into Company
   user 5 cannot edit file 16   -- links pass on view rights only
 $authz_policy$,
-  $authz_files${}$authz_files$::jsonb, 'BUILD', '034b179a21733584');
+  $authz_files${}$authz_files$::jsonb, 'BUILD', 'e8936f1800c350e6');
 
 -- the session made read-only above (its statements committed one by one) is as it was again
 DO $authz_tx$

@@ -1075,11 +1075,12 @@ FEATURES: list[Feature] = [
         "lang.conditions",
         1,
         "Conditions: `{...}`, `this`, read with the policy's rights",
-        ("lang.sql", "lang.sql_text", "err.AZ110", "err.AZ112", "err.AZ113", "err.AZ114", "err.AZ613"),
+        ("lang.sql", "lang.sql_text", "err.AZ110", "err.AZ112", "err.AZ113", "err.AZ114", "err.AZ613", "err.AZ628"),
         Doc(LANG, "Conditions name their row `this`"),
         (
             T("devx.sh", "a rule condition that reads a governed table runs with the policy's rights, as a function"),
             T("apply.sh", "a function a condition calls runs with the policy's rights where a view reads it too"),
+            T("policy_errors.py", "a function of the row read as a column (a computed column), which the app role"),
             T("apply.sh", "a condition that doesn't run names its line"),
             T("unit_test.py", "class ThisRow("),
             T("apply.sh", "a signing-in type's where whose subquery calls its table w: applies, then is unchanged"),

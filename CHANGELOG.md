@@ -16,6 +16,19 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the
   scopes alone, so it could change rows as the user it viewed as. A session signed in with `authz.act_as` was not
   affected. A rule's explanation says so (`no   the session views as someone else: it may not update on app.files`).
+- A condition that calls the app's code without its text showing the call ran it with the app role's rights where a
+  rule is checked: a function of the row written as a column of it (`{this.blocked}` for `blocked(docs)`, a computed
+  column), a cast to a type of the app's, `OPERATOR(app.=)`. Such a function read of a table with rules only what
+  the signed-in user may see, so `not {this.blocked}` let through rows `authz.can` refused. Applying now asks
+  Postgres what the rules and the views they read call, and refuses a function of the app's there that may read
+  data (AZ628), and so does every migration. A call written by its name with parentheses runs with the policy's
+  rights, as before.
+
+### Upgrading
+
+- A policy whose condition reads a function of the row as a column, where the function isn't IMMUTABLE, no longer
+  applies (AZ628): call it by its name on the row's columns, `{app.blocked_doc(this.id)}`, or mark it IMMUTABLE if
+  it reads nothing.
 
 ## 0.1.0-beta.4 (2026-11-09)
 

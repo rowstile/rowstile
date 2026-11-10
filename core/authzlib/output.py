@@ -18,6 +18,7 @@ from .sqlutil import (
     DROP_OLD_POLICIES,
     GIVE_BACK_MASKED,
     LOST_RULES,
+    POLICY_MARKS,
     STUB_COLUMNS,
     VIEW_MARKS,
     below_too,
@@ -1277,6 +1278,58 @@ END $mc$;"""
         )
         return out
 
+    @staticmethod
+    def app_code_sql() -> str:
+        """Refused: a function or an operator of the app's that may read data, called where the app role evaluates
+        the policy's SQL itself (its rules, the views they read, the rules' own functions, the masked views). A
+        condition's call of the app's code runs as the owner where its text shows the call (cond_sql,
+        calls_app_code); Postgres also calls a function written as a column of its row (`docs.blocked`), through a
+        cast, or as OPERATOR(app.=), which the text doesn't show. Postgres records what each of those depends on:
+        asked here, once they are made. A function that is IMMUTABLE reads nothing, whoever runs it, and a C
+        function is an extension's, not the app's reading of its tables."""
+        return f"""-- What the app role evaluates itself (its rules, the views they read, the rules' own functions, the masked views)
+-- calls nothing of the app's that may read data: a call the condition's text doesn't show isn't run as the owner
+DO $ac$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    WITH RECURSIVE read(classid, objid, what) AS (
+      SELECT x.classid, x.objid, x.what FROM (
+        SELECT 'pg_policy'::regclass::oid AS classid, p.oid AS objid,
+               format('the %s rule of %s', substr(p.polname::text, 7), p.polrelid::regclass) AS what
+        FROM pg_policy p JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass
+         AND d.description IN {POLICY_MARKS}
+        UNION ALL
+        SELECT 'pg_proc'::regclass::oid, f.oid, 'the rules of ' || split_part(f.proname::text, ':', 1)
+        FROM pg_proc f WHERE f.pronamespace = 'authz_gen'::regnamespace
+        UNION ALL
+        SELECT 'pg_rewrite'::regclass::oid, w.oid, 'the masked view ' || c.oid::regclass
+        FROM pg_class c JOIN pg_description d ON d.objoid = c.oid AND d.classoid = 'pg_class'::regclass
+         AND d.description IN {VIEW_MARKS}
+        JOIN pg_rewrite w ON w.ev_class = c.oid) x
+      UNION
+      -- (the views they read, and those these read: a view runs what it calls as whoever reads it)
+      SELECT 'pg_rewrite'::regclass::oid, w.oid, rd.what
+      FROM read rd JOIN pg_depend dep ON dep.classid = rd.classid AND dep.objid = rd.objid
+       AND dep.refclassid = 'pg_class'::regclass
+      JOIN pg_class v ON v.oid = dep.refobjid AND v.relkind = 'v' AND v.relnamespace = 'authz_int'::regnamespace
+      JOIN pg_rewrite w ON w.ev_class = v.oid)
+    SELECT rd.what, fn.oid::regprocedure::text AS fn
+    FROM read rd JOIN pg_depend dep ON dep.classid = rd.classid AND dep.objid = rd.objid
+    JOIN pg_proc fn ON fn.oid = CASE dep.refclassid
+        WHEN 'pg_proc'::regclass THEN dep.refobjid
+        WHEN 'pg_operator'::regclass THEN (SELECT o.oprcode FROM pg_operator o WHERE o.oid = dep.refobjid) END
+    WHERE fn.pronamespace NOT IN (SELECT n.oid FROM pg_namespace n
+                                  WHERE n.nspname IN ('pg_catalog', 'authz', 'authz_gen', 'authz_int'))
+      AND fn.provolatile <> 'i'
+      AND fn.prolang NOT IN (SELECT l.oid FROM pg_language l WHERE l.lanname IN ('internal', 'c'))
+    ORDER BY 1, 2 LIMIT 1
+  LOOP
+    RAISE EXCEPTION '%: a condition calls %, and nothing in its text shows the call (a function of the row read as a column, a cast, an operator written OPERATOR(...)), so the app role would run it with its own rights, not the policy''s [AZ628]', r.what, r.fn
+      USING HINT = 'call it by its name, with parentheses, on the row''s columns, as {{app.blocked_doc(this.id)}}: rowstile then runs it with the policy''s rights. A function that reads nothing may be marked IMMUTABLE instead';
+  END LOOP;
+END $ac$;"""
+
     def kept_views_sql(self) -> str:
         """The whole script's last look at masked views (see RESET_MASKED_VIEWS)."""
         # the whole script only: a masked view the reset emptied in place (something is built on it) that this
@@ -1708,6 +1761,10 @@ END $w$;"""
             *[("objects", "masks", x) for x in masked_views[:-2]],
             ("changed", "mask_privileges", masked_views[-2]),
             ("objects", "masks", masked_views[-1]),
+            # once the rules, the views they read and the masked views are made. Every migration: one that only
+            # defines a view again in place (a permission another table's rule reaches) makes nothing, and changes
+            # what the app role runs all the same
+            ("always", "app_code", self.app_code_sql()),
             ("objects", "api", self.api_sql(list_cases, list_held)),
             ("objects", "share_api", share_api),
             ("objects", "explain_rule", self.explain_rule_sql(list(by_table))),

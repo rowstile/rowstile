@@ -1420,6 +1420,12 @@ APPLY = [
         "AZ603",
     ),
     (
+        "a function of the row read as a column (a computed column), which the app role would run with its own rights",
+        "  can view = owner and not {this.held}\nrules alt.docs\n  select : view\n",
+        "the select rule of alt.docs: a condition calls held(alt.docs), and nothing in its text shows the call",
+        "AZ628",
+    ),
+    (
         "a cascade line that names no foreign key that acts: the keys of docs to users are NO ACTION",
         "rules alt.docs\n  select : share\n  cascade from alt.users\n",
         "line 12: cascade from alt.users: no foreign key of alt.docs to alt.users deletes or changes rows of alt.docs "
@@ -1488,6 +1494,11 @@ APPLY_OK = [
         {},
     ),
     ("an empty search_path while applying", "  can view = owner\n", {"PGOPTIONS": "-c search_path="}),
+    (
+        "a function of the row that reads nothing (IMMUTABLE), read as a column: the app role may run it",
+        "  can view = owner and not {this.shelved}\nrules alt.docs\n  select : view\n",
+        {},
+    ),
     (
         "a deny and a condition both joining the inheritance with and",
         "  can hidden = reader or parent.hidden\n  can view = (owner or parent.view) and {not locked} and not hidden\n",
@@ -1600,6 +1611,9 @@ CREATE TABLE alt."group" (gid bigint PRIMARY KEY, owner_id bigint);
 GRANT SELECT ON alt."group" TO app_user;
 CREATE VIEW alt.member_view AS SELECT group_id, user_id FROM alt.group_members;
 CREATE FUNCTION alt.is_active(boolean) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT $1';
+CREATE FUNCTION public.held(alt.docs) RETURNS boolean LANGUAGE sql STABLE
+  AS 'SELECT EXISTS (SELECT 1 FROM alt.holds h WHERE h.target = $1.doc_no)';
+CREATE FUNCTION public.shelved(alt.docs) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT $1.up IS NULL';
 CREATE TABLE alt.proj_links (doc_no bigint REFERENCES alt.docs, proj_id bigint REFERENCES alt.projects,
   active boolean NOT NULL DEFAULT true, since timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (doc_no, proj_id));
 CREATE TABLE alt.tusers (id text PRIMARY KEY);

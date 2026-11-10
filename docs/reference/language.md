@@ -140,6 +140,10 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
 - **Conditions read with the policy's rights**, wherever they are checked (a rule, a permission, a caveat,
   `authz.can`, another type's rule through `rel.perm`), as relations do: a subquery sees every row of the tables it reads,
   not only those the signed-in user may. <!-- checked: tests/devx.sh "a rule condition that reads a governed table runs with the policy's rights, as a function"; tests/apply.sh "a condition in a permission sees every membership in its table's rules too"; tests/apply.sh "a function a condition calls runs with the policy's rights where a view reads it too"; tests/apply.sh "a function a caveat calls runs with the policy's rights where a view reads the share" --> <!-- answer: conditions-rights -->
+  A function of the app's is called by its name, with parentheses: `{app.is_member(this.org_id)}`. One that Postgres
+  calls without the condition's text showing it (a function of the row written as a column of it, `{this.blocked}`;
+  a cast; `OPERATOR(app.=)`) would run with the app role's rights where a rule is checked, so applying refuses it
+  (AZ628), unless it is IMMUTABLE and so reads nothing. <!-- checked: tests/policy_errors.py "a function of the row read as a column (a computed column), which the app role would run with its own rights"; tests/policy_errors.py "a function of the row that reads nothing (IMMUTABLE), read as a column: the app role may run it" -->
   In a write rule, they see the tables as the statement found them, without the other rows it writes: a count
   in a rule is no limit on how many rows there may be ([Limits](limits.md)).
   A condition that is NULL holds nothing: `{not archived}` is false

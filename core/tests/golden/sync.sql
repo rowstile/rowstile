@@ -4506,6 +4506,49 @@ END $mr$;
 
 CREATE TABLE authz_int.masked_columns (tbl text, col text, view text, PRIMARY KEY (tbl, col));
 
+-- What the app role evaluates itself (its rules, the views they read, the rules' own functions, the masked views)
+-- calls nothing of the app's that may read data: a call the condition's text doesn't show isn't run as the owner
+DO $ac$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    WITH RECURSIVE read(classid, objid, what) AS (
+      SELECT x.classid, x.objid, x.what FROM (
+        SELECT 'pg_policy'::regclass::oid AS classid, p.oid AS objid,
+               format('the %s rule of %s', substr(p.polname::text, 7), p.polrelid::regclass) AS what
+        FROM pg_policy p JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass
+         AND d.description IN ('rowstile')
+        UNION ALL
+        SELECT 'pg_proc'::regclass::oid, f.oid, 'the rules of ' || split_part(f.proname::text, ':', 1)
+        FROM pg_proc f WHERE f.pronamespace = 'authz_gen'::regnamespace
+        UNION ALL
+        SELECT 'pg_rewrite'::regclass::oid, w.oid, 'the masked view ' || c.oid::regclass
+        FROM pg_class c JOIN pg_description d ON d.objoid = c.oid AND d.classoid = 'pg_class'::regclass
+         AND d.description IN ('rowstile masked view')
+        JOIN pg_rewrite w ON w.ev_class = c.oid) x
+      UNION
+      -- (the views they read, and those these read: a view runs what it calls as whoever reads it)
+      SELECT 'pg_rewrite'::regclass::oid, w.oid, rd.what
+      FROM read rd JOIN pg_depend dep ON dep.classid = rd.classid AND dep.objid = rd.objid
+       AND dep.refclassid = 'pg_class'::regclass
+      JOIN pg_class v ON v.oid = dep.refobjid AND v.relkind = 'v' AND v.relnamespace = 'authz_int'::regnamespace
+      JOIN pg_rewrite w ON w.ev_class = v.oid)
+    SELECT rd.what, fn.oid::regprocedure::text AS fn
+    FROM read rd JOIN pg_depend dep ON dep.classid = rd.classid AND dep.objid = rd.objid
+    JOIN pg_proc fn ON fn.oid = CASE dep.refclassid
+        WHEN 'pg_proc'::regclass THEN dep.refobjid
+        WHEN 'pg_operator'::regclass THEN (SELECT o.oprcode FROM pg_operator o WHERE o.oid = dep.refobjid) END
+    WHERE fn.pronamespace NOT IN (SELECT n.oid FROM pg_namespace n
+                                  WHERE n.nspname IN ('pg_catalog', 'authz', 'authz_gen', 'authz_int'))
+      AND fn.provolatile <> 'i'
+      AND fn.prolang NOT IN (SELECT l.oid FROM pg_language l WHERE l.lanname IN ('internal', 'c'))
+    ORDER BY 1, 2 LIMIT 1
+  LOOP
+    RAISE EXCEPTION '%: a condition calls %, and nothing in its text shows the call (a function of the row read as a column, a cast, an operator written OPERATOR(...)), so the app role would run it with its own rights, not the policy''s [AZ628]', r.what, r.fn
+      USING HINT = 'call it by its name, with parentheses, on the row''s columns, as {app.blocked_doc(this.id)}: rowstile then runs it with the policy''s rights. A function that reads nothing may be marked IMMUTABLE instead';
+  END LOOP;
+END $ac$;
+
 -- A permission on an object, whether the user may select its row or not: what the functions that act on the
 -- object ask (sharing, roles, keys, view_as, break_glass, requests), where authz.can's answer is for rows they may see
 CREATE FUNCTION authz_int.can(p_type text, p_id text, p_perm text) RETURNS boolean
