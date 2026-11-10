@@ -17,6 +17,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `GENERATED ALWAYS AS (...)` column, which is virtual there unless it says `STORED`. On such a table the rule is
   checked once the row is written, after Postgres's own checks on the row; on every other table before the update,
   as it was ([Limits](docs/reference/limits.md)).
+- A key of a `numeric`, a float or a `bytea` column is refused when the policy is compiled (AZ206), as a date or an
+  interval is: ids are kept as text, and these write one value several ways. `authz.share(..., 'user', '2.0')`
+  found user 2, stored `2.0` and gave them nothing, and the share stayed when their row went, for a later row
+  written `2.0`.
+- A key whose type isn't one of Postgres's own (an extension's, as `citext`; a domain; an enum) is refused when
+  applying (AZ629). It applied, and then every sign-in failed: `type "citext" does not exist`.
 - `authz.view_as` in a session limited by scopes that hold a write command (a key's or a token's: `update`,
   `app.files.update`) is read-only, as it says: the rules now refuse every write while a session views as someone,
   whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the
@@ -32,6 +38,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Upgrading
 
+- A policy with a type keyed by a `numeric`, a float or a `bytea` column no longer compiles (AZ206): key the type
+  by a column of integers, text or uuid.
 - A policy whose condition reads a function of the row as a column, where the function isn't IMMUTABLE, no longer
   applies (AZ628): call it by its name on the row's columns, `{app.blocked_doc(this.id)}`, or mark it IMMUTABLE if
   it reads nothing.

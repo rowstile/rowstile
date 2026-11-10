@@ -1267,6 +1267,10 @@ KEY_TYPES = ("bigint", "int8", "integer", "int", "int4", "smallint", "int2", "te
 # no key at all: ids are kept as text, and these read and write theirs by the session's settings (DateStyle,
 # IntervalStyle, TimeZone, lc_monetary, and 'now' for a time), so an index can't read the shares' ids as them
 SETTINGS_KEY_TYPES = ("date", "time", "timetz", "timestamp", "timestamptz", "interval", "money")
+# nor these: one value has several texts. 2 and 2.0 are one numeric, each written as it was given; a float's and a
+# bytea's text follow a setting (extra_float_digits, bytea_output). A share made with one text is not found by the
+# other, and stays when its row goes
+MANY_TEXTS_KEY_TYPES = ("numeric", "decimal", "real", "float4", "float8", "float", "bytea")
 
 
 # a key's column, and its type if written: (id uuid), (org_id, id)
@@ -1303,6 +1307,15 @@ def parse_key(key: tuple[str, int] | None, loc: Loc) -> list[tuple[str, str]]:
             loc,
             f"{c} is {ty}: a key can't be a date, a time, an interval or money (ids are kept as text, and these "
             f"read and write theirs by the session's settings): key the table by integers, text or uuid",
+            "AZ206",
+            at=at,
+        )
+    if len(out) == 1 and out[0][1] in MANY_TEXTS_KEY_TYPES:
+        c, ty, at = out[0]
+        fail(
+            loc,
+            f"{c} is {ty}: a key can't be a numeric, a float or a bytea (ids are kept as text, and these write one "
+            f"value several ways: 2 and 2.0 are one numeric): key the table by integers, text or uuid",
             "AZ206",
             at=at,
         )

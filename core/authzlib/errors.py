@@ -269,7 +269,8 @@ CODES = {
         "A type's key is its table's primary key: `id bigint` unless written after the table, "
         "`type folder = app.folders (folder_no)` or `(id uuid)`. A composite key names each column, "
         "`(org_id, slug text)`, of integers, text or uuid. No key is a date, a time, an interval or money: ids are "
-        "kept as text, and these write theirs by the session's settings. A type that signs in (the user type, principals) has "
+        "kept as text, and these write theirs by the session's settings. Nor a numeric, a float or a bytea, which "
+        "write one value several ways (`2` and `2.0` are one numeric). A type that signs in (the user type, principals) has "
         "a key of one column. A relation to a type with a composite key gives its columns in brackets: "
         "`page : doc = [org_id, doc_slug]`.",
         "type folder = app.folders (id bigint uuid)\n  owner : user = owner_id\n  can view = owner\n",
@@ -848,6 +849,18 @@ CODES = {
         "is reached from. Call it by its name, with parentheses, on the row's columns, as "
         "`{app.blocked_doc(this.id)}`. A function that is IMMUTABLE reads nothing, whoever runs it, and is left "
         "alone, as a C function is.",
+        when="apply",
+    ),
+    "AZ629": Code(
+        "A key of a type that isn't Postgres's own",
+        "A type's key is a column of one of Postgres's own types: integers, text, uuid. The functions rowstile "
+        "makes name the key's type where only Postgres's own are found, whatever the search path of the session "
+        "that applies. So a key of an extension's type (`citext`), of a domain or of an enum of the app's is "
+        "refused when applying, with the column and its type: it used to apply, and then every sign-in failed "
+        '(`type "citext" does not exist`). Key the table by a column of integers, text or uuid: its own, or one '
+        "beside it that the table keeps unique.",
+        "type tag = app.tags (name citext)\n  owner : user = owner_id\n  can view = owner\n",
+        "type tag = app.tags (id bigint)\n  owner : user = owner_id\n  can view = owner\n",
         when="apply",
     ),
     "AZ701": Code(

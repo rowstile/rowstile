@@ -529,31 +529,46 @@ BEGIN
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."users"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 25: app.users.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 25: app.users.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."orgs"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 30: app.orgs.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 30: app.orgs.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."teams"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 34: app.teams.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 34: app.teams.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 38: app.folders.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 38: app.folders.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 56: app.files.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 56: app.files.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;

@@ -1557,11 +1557,17 @@ END $kv$;"""
             f"    missing := missing || {NEXT} || {lit(f'{loc}: column {col} not found in {tbl} [AZ601]')};\n  END IF;"
             for tbl, col, loc in dict.fromkeys((a, b, str(c)) for a, b, c in self.columns)
         )
-        # the column's own type, as a type line writes it (varchar for character varying): what to write
+        # the column's own type, as a type line writes it (varchar for character varying): what to write. And first,
+        # a type that isn't one of Postgres's own (an extension's, a domain, an enum of the app's): rowstile's
+        # functions name the key's type where pg_catalog alone is searched (canon, the functions that hold an id),
+        # so such a key would apply, found on this session's path, and then every sign-in would fail
         pk_checks = "\n".join(
             f"  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type\n"
             f"  FROM pg_attribute WHERE attrelid = to_regclass({lit(qt(tbl))}) AND attname = {lit(pk)} AND attnum > 0 AND NOT attisdropped;\n"
-            f"  IF FOUND AND v_oid <> to_regtype({lit(pkt)}) THEN\n"
+            f"  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN\n"
+            f"    missing := missing || {NEXT} || {lit(f'{loc}: {tbl}.{pk} is ')} || v_type\n"
+            f"      || {lit(', which is not one of Postgres' + chr(39) + 's own types (an extension' + chr(39) + 's, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]')};\n"
+            f"  ELSIF FOUND AND v_oid <> to_regtype({lit(pkt)}) THEN\n"
             f"    missing := missing || {NEXT} || {lit(f'{loc}: {tbl}.{pk} is ')} || v_type\n"
             f"      || {lit(f', not {pkt}: write its type after the key, ({pk} ')} || v_type || ') [AZ602]';\n"
             f"  END IF;"

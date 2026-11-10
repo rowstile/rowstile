@@ -539,6 +539,28 @@ COMPILE = [
         "AZ206",
     ),
     (
+        "a key that is numeric",
+        "type sum = alt.docs (doc_no numeric)\n",
+        "doc_no is numeric: a key can't be a numeric, a float or a bytea (ids are kept as text, and these write one "
+        "value several ways: 2 and 2.0 are one numeric)",
+        10,
+        "AZ206",
+    ),
+    (
+        "a key that is a float",
+        "type ratio = alt.docs (doc_no float8)\n",
+        "doc_no is float8: a key can't be a numeric, a float or a bytea",
+        10,
+        "AZ206",
+    ),
+    (
+        "a key that is a bytea",
+        "type blob = alt.docs (doc_no bytea)\n",
+        "doc_no is bytea: a key can't be a numeric, a float or a bytea",
+        10,
+        "AZ206",
+    ),
+    (
         "a key that is an interval",
         "type span = alt.docs (doc_no interval)\n",
         "doc_no is interval: a key can't be",
@@ -1451,6 +1473,19 @@ APPLY = [
         "AZ602",
     ),
     (
+        "a key of a domain of the app's, whatever type the policy writes for it",
+        "type code = alt.coded (code)\n  owner : user = owner_id\n  can see = owner\n",
+        "line 10: alt.coded.code is alt.code, which is not one of Postgres's own types (an extension's, a domain, an "
+        "enum): key the table by a column of integers, text or uuid [AZ629]",
+        "AZ629",
+    ),
+    (
+        "a key of an enum of the app's, found on the path of the session that applies",
+        "type level = alt.levels (level grade)\n  owner : user = owner_id\n  can see = owner\n",
+        "line 10: alt.levels.level is grade, which is not one of Postgres's own types",
+        "AZ629",
+    ),
+    (
         "inheritance limited by a time-zone dependent expression",
         "  can view = owner or (parent.view and {created + interval '1 day' > '2020-01-01'})\n",
         "line 10: a condition that limits inheritance must give the same answer for every user at any time",
@@ -1622,6 +1657,11 @@ CREATE TABLE alt.spaces (org bigint, id bigint, keeper_id bigint, PRIMARY KEY (o
 CREATE TABLE alt.rooms (org bigint, id bigint, keeper_id bigint, PRIMARY KEY (org, id));
 CREATE TABLE alt.pins (doc_no bigint REFERENCES alt.docs, kind text, org bigint, ref bigint);
 CREATE TABLE alt.notes (id bigint PRIMARY KEY, owner_id bigint, editor_id bigint, "check" text, body text);
+CREATE DOMAIN alt.code AS text;
+CREATE TABLE alt.coded (code alt.code PRIMARY KEY, owner_id bigint);
+DROP TYPE IF EXISTS public.grade;
+CREATE TYPE public.grade AS ENUM ('low', 'high');
+CREATE TABLE alt.levels (level public.grade PRIMARY KEY, owner_id bigint);
 GRANT SELECT ON alt.proj_links, alt.tusers, alt.tdocs, alt.spaces, alt.rooms, alt.pins TO app_user;
 GRANT SELECT, UPDATE ON alt.notes TO app_user;
 """

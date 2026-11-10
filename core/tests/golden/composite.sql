@@ -616,67 +616,100 @@ BEGIN
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."users"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 5: cx.users.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 5: cx.users.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."bots"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 9: cx.bots.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 9: cx.bots.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."orgs"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 13: cx.orgs.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 13: cx.orgs.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."teams"') AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 16: cx.teams.org_id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 16: cx.teams.org_id is ' || v_type
       || ', not bigint: write its type after the key, (org_id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."teams"') AND attname = 'slug' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('text') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 16: cx.teams.slug is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('text') THEN
     missing := missing || E'\n  ' || 'line 16: cx.teams.slug is ' || v_type
       || ', not text: write its type after the key, (slug ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."projects"') AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 24: cx.projects.org_id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 24: cx.projects.org_id is ' || v_type
       || ', not bigint: write its type after the key, (org_id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."projects"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 24: cx.projects.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 24: cx.projects.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."folders"') AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 32: cx.folders.org_id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 32: cx.folders.org_id is ' || v_type
       || ', not bigint: write its type after the key, (org_id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."folders"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 32: cx.folders.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 32: cx.folders.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."files"') AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 43: cx.files.org_id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 43: cx.files.org_id is ' || v_type
       || ', not bigint: write its type after the key, (org_id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."files"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
-  IF FOUND AND v_oid <> to_regtype('bigint') THEN
+  IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
+    missing := missing || E'\n  ' || 'line 43: cx.files.id is ' || v_type
+      || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 43: cx.files.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;

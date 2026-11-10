@@ -538,9 +538,9 @@ def values_named(used: list[tuple[str, Scalar]], past: bool = True) -> list[Scal
     return values + between(used, values)
 
 
-# key types whose ids are whole numbers, or numbers; another key's ids are texts (a key of one of TEXT_KEYS: any)
+# key types whose ids are whole numbers; another key's ids are texts (a key of one of TEXT_KEYS: any). No key is a
+# number that isn't whole: a numeric or a float key is refused (AZ206, parse.MANY_TEXTS_KEY_TYPES)
 WHOLE_KEYS = ("bigint", "int", "integer", "smallint", "int2", "int4", "int8", "serial", "bigserial")
-NUMBER_KEYS = ("numeric", "decimal", "real", "double precision", "float4", "float8")
 TEXT_KEYS = ("text", "varchar", "character varying", "citext")
 
 
@@ -548,7 +548,7 @@ def named_ids(pols: Sequence[Policy]) -> dict[str, list[str]]:
     """{type: ids}: the values the policies' simple conditions compare a relation's column with (`{owner_id <> 7}`,
     `{parent_id = 0}`), and those around them (values_named), as ids of the type it names: the rows a world may have
     for such a condition to hold on some row and not on another. Only ids of the key's type: a whole number for a
-    bigint key (no id lies between 7 and 8), any number for a numeric one, a text for a text one. Worked out once
+    bigint key (no id lies between 7 and 8), a text for a text one. Worked out once
     for the policies of the last few comparisons (each world asks)."""
     return remembered(pols, ("named ids",), lambda: ids_named(pols))
 
@@ -582,12 +582,8 @@ def ids_named(pols: Sequence[Policy]) -> dict[str, list[str]]:
         for v in values_named(used, past=False):
             if isinstance(v, str) and v != ANOTHER and key in TEXT_KEYS:
                 ids.append(v)
-            elif (
-                isinstance(v, (int, Decimal))
-                and not isinstance(v, bool)
-                and (key in NUMBER_KEYS or (key in WHOLE_KEYS and v == int(v)))
-            ):
-                ids.append(str(int(v)) if key in WHOLE_KEYS else str(v))
+            elif isinstance(v, (int, Decimal)) and not isinstance(v, bool) and key in WHOLE_KEYS and v == int(v):
+                ids.append(str(int(v)))
         if ids:
             out[st] = list(dict.fromkeys(ids))
     return out
