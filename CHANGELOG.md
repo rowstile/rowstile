@@ -23,6 +23,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   written `2.0`.
 - A key whose type isn't one of Postgres's own (an extension's, as `citext`; a domain; an enum) is refused when
   applying (AZ629). It applied, and then every sign-in failed: `type "citext" does not exist`.
+- `authz.lint()` reports an app role that may make triggers on a governed table, on a partition of one or on a
+  table that holds relationships: the `TRIGGER` privilege, which `GRANT ALL` gives beside `TRUNCATE`, which lint
+  already reported. A foreign key's action that writes the table's rows runs such a trigger's function as the
+  tables' owner, whom no rule holds. The line says what to take back (`REVOKE TRIGGER ON app.files FROM app_user`).
 - `authz.view_as` in a session limited by scopes that hold a write command (a key's or a token's: `update`,
   `app.files.update`) is read-only, as it says: the rules now refuse every write while a session views as someone,
   whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the
@@ -40,6 +44,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 - A policy with a type keyed by a `numeric`, a float or a `bytea` column no longer compiles (AZ206): key the type
   by a column of integers, text or uuid.
+- `authz.lint()` has a new error where the app role holds `TRIGGER` on a table the policy governs (an app set up
+  with `GRANT ALL`): `rowstile lint` then exits 1 until it is taken back.
 - A policy whose condition reads a function of the row as a column, where the function isn't IMMUTABLE, no longer
   applies (AZ628): call it by its name on the row's columns, `{app.blocked_doc(this.id)}`, or mark it IMMUTABLE if
   it reads nothing.

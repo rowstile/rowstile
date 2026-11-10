@@ -1531,12 +1531,13 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
         if kind != "creator" and word != "applied":
             problems.append(f"after `{what}`, rowstile apply answers '{word}': it left it as it was")
         # (what the app role was given on the app's own table is the owner's to take back: the owner's default
-        # privileges can give it TRUNCATE on the table made now, which lint goes on reporting, rightly)
+        # privileges can give it TRUNCATE and TRIGGER on the table made now, which lint goes on reporting, rightly)
         made = start if kind == "child" else None
         left = [
             e
             for e in lint_errors(db)
-            if e not in before and not (made and e.startswith(made) and "may TRUNCATE it" in e)
+            if e not in before
+            and not (made and e.startswith(made) and ("may TRUNCATE it" in e or "may make triggers on it" in e))
         ]
         problems += [f"after `{what}` and rowstile apply, authz.lint() still reports: {e[:200]}" for e in left[:3]]
         problems += privilege_problems(db, plain, f"after `{what}` and rowstile apply")

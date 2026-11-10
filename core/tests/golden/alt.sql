@@ -7441,6 +7441,13 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
       problem := format('%s may TRUNCATE it, which skips row-level security: REVOKE TRUNCATE ON %s FROM %s', 'app_user', r.tbl, 'app_user');
       RETURN NEXT;
     END IF;
+    -- (TRIGGER, the other privilege GRANT ALL gives beside the four commands: with it a role puts a function of
+    -- its own on the table, and what writes the table's rows as its owner runs it as the owner)
+    IF has_table_privilege(v_role, r.tbl, 'TRIGGER') THEN
+      severity := 'error'; object := r.tbl::text;
+      problem := format('%s may make triggers on it (TRIGGER, which GRANT ALL gives): a foreign key''s action that writes its rows (ON DELETE or ON UPDATE CASCADE, SET NULL) runs their functions as the table''s owner, whom no rule holds: REVOKE TRIGGER ON %s FROM %s', 'app_user', r.tbl, 'app_user');
+      RETURN NEXT;
+    END IF;
   END LOOP;
   -- policies on governed tables that rowstile didn't make (left from before, or made by a migration) and that
   -- apply to the app role: Postgres joins permissive policies with OR, so one widens what the rules allow
@@ -7497,6 +7504,11 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     IF has_table_privilege(v_role, r.part, 'TRUNCATE') THEN
       severity := 'error'; object := r.part::text;
       problem := format('is a partition of %s (or inherits from it), and %s may TRUNCATE it, which skips row-level security: REVOKE TRUNCATE ON %s FROM %s', r.tbl, 'app_user', r.part, 'app_user');
+      RETURN NEXT;
+    END IF;
+    IF has_table_privilege(v_role, r.part, 'TRIGGER') THEN
+      severity := 'error'; object := r.part::text;
+      problem := format('is a partition of %s (or inherits from it), and %s may make triggers on it (TRIGGER, which GRANT ALL gives): a foreign key''s action that writes its rows runs their functions as the table''s owner, whom no rule holds: REVOKE TRIGGER ON %s FROM %s', r.tbl, 'app_user', r.part, 'app_user');
       RETURN NEXT;
     END IF;
     -- (on a table without rules, statements on it run the triggers of the table above as their own: the next loop
@@ -7562,6 +7574,12 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     IF has_table_privilege(v_role, r.tbl, 'TRUNCATE') THEN
       severity := 'error'; object := r.tbl::text;
       problem := format('%s may TRUNCATE it, which empties memberships without row-level security: REVOKE TRUNCATE ON %s FROM %s', 'app_user', r.tbl, 'app_user');
+      RETURN NEXT;
+    END IF;
+    -- (a type's table was asked above)
+    IF NOT r.typed AND has_table_privilege(v_role, r.tbl, 'TRIGGER') THEN
+      severity := 'error'; object := r.tbl::text;
+      problem := format('%s may make triggers on it (TRIGGER, which GRANT ALL gives): a foreign key''s action that writes its rows (ON DELETE or ON UPDATE CASCADE, SET NULL) runs their functions as the table''s owner, whom no rule holds: REVOKE TRIGGER ON %s FROM %s', 'app_user', r.tbl, 'app_user');
       RETURN NEXT;
     END IF;
     IF (has_any_column_privilege(v_role, r.tbl, 'INSERT') OR has_any_column_privilege(v_role, r.tbl, 'UPDATE')
