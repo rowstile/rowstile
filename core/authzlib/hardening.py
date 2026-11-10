@@ -417,6 +417,13 @@ BEGIN
       problem := format('%s may make triggers on it (TRIGGER, which GRANT ALL gives): a foreign key''s action that writes its rows (ON DELETE or ON UPDATE CASCADE, SET NULL) runs their functions as the table''s owner, whom no rule holds: REVOKE TRIGGER ON %s FROM %s', {lit(role)}, r.tbl, {lit(role)});
       RETURN NEXT;
     END IF;
+    -- (REFERENCES, the last one GRANT ALL gives: a foreign key is checked as the tables' owner, whatever the rules
+    -- hide, so a table of the role's own that names a row says whether the row is there; one column's is enough)
+    IF r.governed AND has_any_column_privilege(v_role, r.tbl, 'REFERENCES') THEN
+      severity := 'info'; object := r.tbl::text;
+      problem := format('%s may make foreign keys to it (REFERENCES, which GRANT ALL gives): a table of its own that names one of its rows tells whether the row is there, hidden or not: REVOKE REFERENCES ON %s FROM %s', {lit(role)}, r.tbl, {lit(role)});
+      RETURN NEXT;
+    END IF;
   END LOOP;
   -- policies on governed tables that rowstile didn't make (left from before, or made by a migration) and that
   -- apply to the app role: Postgres joins permissive policies with OR, so one widens what the rules allow
@@ -480,6 +487,11 @@ BEGIN
       problem := format('is a partition of %s (or inherits from it), and %s may make triggers on it (TRIGGER, which GRANT ALL gives): a foreign key''s action that writes its rows runs their functions as the table''s owner, whom no rule holds: REVOKE TRIGGER ON %s FROM %s', r.tbl, {lit(role)}, r.part, {lit(role)});
       RETURN NEXT;
     END IF;
+    IF r.governed AND has_any_column_privilege(v_role, r.part, 'REFERENCES') THEN
+      severity := 'info'; object := r.part::text;
+      problem := format('is a partition of %s (or inherits from it), and %s may make foreign keys to it (REFERENCES, which GRANT ALL gives): a table of its own that names one of its rows tells whether the row is there, hidden or not: REVOKE REFERENCES ON %s FROM %s', r.tbl, {lit(role)}, r.part, {lit(role)});
+      RETURN NEXT;
+    END IF;
     -- (on a table without rules, statements on it run the triggers of the table above as their own: the next loop
     -- finds one made since that lacks them)
     -- (one column's privilege is enough: no DELETE has columns)
@@ -503,6 +515,18 @@ BEGIN
     ELSE
       problem := format('inherits from %s, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, and its statement triggers for statements on it only, so a rule on a column is not checked on the rows stored here, their shares stay when their key changes, and a statement on this table doesn''t keep inheritance, shares and the audit current (missing here: %s). Apply the policy again (it makes them)', r.above, r.names);
     END IF;
+    RETURN NEXT;
+  END LOOP;
+  -- a rule on the row after a change whose trigger runs after the update (its table has a generated column, which
+  -- only the written row holds: governance.trigger_after_where_generated): Postgres's own checks on the row speak
+  -- before the rule there. Said once a table (a partition's trigger is its table's)
+  FOR r IN SELECT g.tgrelid::regclass AS tbl,
+                  string_agg('update ' || substr(g.tgname, 20) || ' after', ', ' ORDER BY g.tgname) AS rules
+           FROM pg_trigger g JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
+           WHERE NOT g.tgisinternal AND g.tgparentid = 0 AND g.tgtype & 19 = 17 AND g.tgname LIKE 'authz\\_update\\_after %'
+           GROUP BY g.tgrelid ORDER BY g.tgrelid::regclass::text LOOP
+    severity := 'info'; object := r.tbl::text;
+    problem := format('has a generated column, so what its rules say of the row after a change (%s) is checked once the row is written, not before: a unique index or a foreign key of the table speaks first, and its error tells of a row the user may not see', r.rules);
     RETURN NEXT;
   END LOOP;
   -- unique constraints on governed tables tell people that rows they cannot see exist

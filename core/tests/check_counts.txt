@@ -4,7 +4,7 @@
 adversarial 122
 apply 177
 capitals 106
-children 185
+children 189
 cli 190
 concurrency 38
 confidence 66
@@ -14,7 +14,7 @@ cuts half way, every statement 31
 cuts half way, other policies 1
 devx 154
 docs 53
-governance 297
+governance 299
 hand answers 375
 identity 102
 interleavings 1440

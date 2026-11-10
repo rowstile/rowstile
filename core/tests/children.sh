@@ -393,9 +393,19 @@ same "... and the changed rule holds on its rows" "$(D=$DB2 as 2 -c "UPDATE ch.d
 D=$DB2 PSQL -c "CREATE TABLE ch.notes_more PARTITION OF ch.notes FOR VALUES FROM (5000) TO (6000)" \
   -c "GRANT SELECT ON ch.notes_more TO app_user" -c "INSERT INTO ch.notes VALUES (5001, 3, NULL, 'carol''s')" >/dev/null
 same "a partition made since a migration, given to the app role: open until the next one" "$(D=$DB2 as 2 -c "SELECT count(*) FROM ch.notes_more")" 1
+# a table that inherits made since, with a generated column of its own: Postgres refuses a trigger before the update
+# whose WHEN reads the new row there, so its copy of the rule on the row after is made after the update (and the
+# next migration, which changes other rules, doesn't stop on it)
+D=$DB2 PSQL -c "CREATE TABLE ch.docs_counted (title_length int GENERATED ALWAYS AS (length(title)) STORED) INHERITS (ch.docs)" \
+  -c "INSERT INTO ch.docs_counted (id, owner_id, title) VALUES (31, 1, 'counted')" >/dev/null
 sed -i '/^rules ch.tasks$/,/^$/ s/^  select          : view$/  select          : view or owner/' "$T/db/policy.authz"
 run migrate --name tasks_owner; case "$out" in *"_authz_tasks_owner.sql"*) ok "... a migration that changes the rules of another table";; *) bad "migrate the tasks' rule" "$out";; esac
 psql -X -q -1 -v ON_ERROR_STOP=1 -d "$DB2" -f "$(ls "$T"/db/migrations/*_authz_tasks_owner.sql)" >/dev/null 2>"$T/err" || bad "the tasks' migration" "$(cat "$T/err")"
+same "a table that inherits with a generated column of its own, made since: the migration gives it the rule on the row after, checked after the update there" \
+  "$(D=$DB2 PSQL -c "SELECT string_agg(tgrelid::regclass::text || ' ' || CASE WHEN tgtype & 2 <> 0 THEN 'before' ELSE 'after' END, ', ' ORDER BY tgrelid::regclass::text) FROM pg_trigger WHERE tgname = 'authz_update_after owner_id' AND tgrelid IN ('ch.docs'::regclass, 'ch.docs_old'::regclass, 'ch.docs_counted'::regclass)")" \
+  "ch.docs before, ch.docs_counted after, ch.docs_old before"
+same "... where it holds on the rows stored there" \
+  "$(D=$DB2 as 1 -c "BEGIN" -c "SELECT authz.share('doc', 31, 'editor', 'user', 1)" -c "UPDATE ch.docs SET owner_id = 2 WHERE id = 31")" "ERROR:  changing owner_id of ch.docs 31 needs: keep"
 same "a migration closes a partition made since, where the rules of its table didn't change" \
   "$(D=$DB2 PSQL -c "SELECT relrowsecurity FROM pg_class WHERE oid = 'ch.notes_more'::regclass")|$(D=$DB2 as 2 -c "SELECT count(*) FROM ch.notes_more")|$(D=$DB2 as 3 -c "SELECT count(*) FROM ch.notes WHERE id = 5001")" "t|0|1"
 run push --development; is pushed && ok "push: the same change on the first database" || bad "push" "$out"
@@ -471,6 +481,12 @@ same "... which the jobs' owner may do, as leave one done" \
 D=$DB4 PSQL -c "GRANT TRIGGER ON ch.jobs_low TO app_user"
 same "lint says the app role may make triggers on a partition, with what to take back" \
   "$(D=$DB4 PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.jobs_low' AND problem LIKE 'is a partition of ch.jobs (or inherits from it), and app_user may make triggers on it (TRIGGER, which GRANT ALL gives)%REVOKE TRIGGER ON ch.jobs_low FROM app_user'")" 1
+same "lint says, of the tables whose rule on the row after is checked after the update, that Postgres's own checks speak first" \
+  "$(D=$DB4 PSQL -c "SELECT string_agg(object || ': ' || substring(problem from '\\((update [^)]* after)\\)'), ', ' ORDER BY object) FROM authz.lint() WHERE severity = 'info' AND problem LIKE 'has a generated column, so what its rules say of the row after a change (%) is checked once the row is written, not before: a unique index or a foreign key of the table speaks first%'")" \
+  "ch.jobs: update state after, ch.tasks: update state after"
+D=$DB4 PSQL -c "GRANT REFERENCES ON ch.jobs_low TO app_user"
+same "... and that the app role may make foreign keys to a partition, with what to take back: an info" \
+  "$(D=$DB4 PSQL -c "SELECT severity FROM authz.lint() WHERE object = 'ch.jobs_low' AND problem LIKE 'is a partition of ch.jobs (or inherits from it), and app_user may make foreign keys to it (REFERENCES, which GRANT ALL gives)%REVOKE REFERENCES ON ch.jobs_low FROM app_user'")" info
 dropdb --if-exists "$DB4" 2>/dev/null
 
 echo "-- the sync index (a preview): what is written through a partition, or a table that inherits, reaches it"

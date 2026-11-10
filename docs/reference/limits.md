@@ -192,8 +192,9 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
 - **A rule on the row after a change, on a table with a generated column**: such a rule
   (`update folder_id after : folder.edit`) is checked before the update, so it speaks before Postgres's own
   checks on the row do (a unique index, a foreign key), whose errors tell of rows the user may not see.
-  Postgres works a generated column out after that. So on a table that has one, or with a table under it that
-  has one, the rule is checked once the row is written, and those checks speak first. <!-- checked: tests/children.sh "the rule's trigger runs before the update, and after it on the table with a generated column"; tests/hand/column-rules-generated.authz "a rule on the row after the change reads a generated column" -->
+  Postgres works a generated column out after that. So on a table that has one the rule is checked once the
+  row is written, and those checks speak first: `authz.lint()` names those tables. A table that inherits goes
+  by its own columns. <!-- checked: tests/children.sh "the rule's trigger runs before the update, and after it on the table with a generated column"; tests/hand/column-rules-generated.authz "a rule on the row after the change reads a generated column"; tests/children.sh "lint says, of the tables whose rule on the row after is checked after the update, that Postgres's own checks speak first"; tests/children.sh "a table that inherits with a generated column of its own, made since: the migration gives it the rule on the row after, checked after the update there" -->
   Where such a table is partitioned and the update puts the row in another partition, Postgres runs no trigger
   on the row after it: rowstile asks the rule when the statement is done, of each row it left with other values
   in the rule's columns than the row that had its key. <!-- checked: tests/children.sh "... one the update puts in another partition, where the rule holds (the statement's trigger asks it)"; tests/children.sh "... and back, where it doesn't" -->

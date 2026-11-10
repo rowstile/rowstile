@@ -7239,8 +7239,10 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
     UNION SELECT b.top, i.inhrelid FROM pg_inherits i JOIN below b ON i.inhparent = b.oid
   )
   SELECT b.oid::regclass, g.tgname,
-         overlay(d.def PLACING ' ON ' || c.name || ' ' FROM strpos(d.def, ' ON ' || p.name || ' ')
-                 FOR length(' ON ' || p.name || ' '))
+         CASE WHEN g.tgtype & 19 = 19 AND g.tgname LIKE 'authz\_update\_after %'   -- (a row's, before, an update's)
+                   AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = b.oid AND a.attnum > 0
+                               AND NOT a.attisdropped AND a.attgenerated <> '')
+              THEN replace(s.stmt, ' BEFORE UPDATE ON ', ' AFTER UPDATE ON ') ELSE s.stmt END
   FROM below b
   JOIN pg_class u ON u.oid = b.oid
   JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal
@@ -7255,6 +7257,8 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
                       FROM pg_class k JOIN pg_namespace n ON n.oid = k.relnamespace WHERE k.oid = b.top) p
   CROSS JOIN LATERAL (SELECT format('%I.%I', n.nspname, k.relname) AS name
                       FROM pg_class k JOIN pg_namespace n ON n.oid = k.relnamespace WHERE k.oid = b.oid) c
+  CROSS JOIN LATERAL (SELECT overlay(d.def PLACING ' ON ' || c.name || ' ' FROM strpos(d.def, ' ON ' || p.name || ' ')
+                                     FOR length(' ON ' || p.name || ' ')) AS stmt) s
   WHERE NOT EXISTS (SELECT 1 FROM pg_description x WHERE x.objoid = g.oid AND x.classoid = 'pg_trigger'::regclass
                     AND x.description = 'rowstile: the trigger of the table above, for the rows stored here')
     AND NOT EXISTS (SELECT 1 FROM pg_trigger h WHERE h.tgrelid = b.oid AND h.tgname = g.tgname)
@@ -7385,6 +7389,13 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
       problem := format('%s may make triggers on it (TRIGGER, which GRANT ALL gives): a foreign key''s action that writes its rows (ON DELETE or ON UPDATE CASCADE, SET NULL) runs their functions as the table''s owner, whom no rule holds: REVOKE TRIGGER ON %s FROM %s', 'app_user', r.tbl, 'app_user');
       RETURN NEXT;
     END IF;
+    -- (REFERENCES, the last one GRANT ALL gives: a foreign key is checked as the tables' owner, whatever the rules
+    -- hide, so a table of the role's own that names a row says whether the row is there; one column's is enough)
+    IF r.governed AND has_any_column_privilege(v_role, r.tbl, 'REFERENCES') THEN
+      severity := 'info'; object := r.tbl::text;
+      problem := format('%s may make foreign keys to it (REFERENCES, which GRANT ALL gives): a table of its own that names one of its rows tells whether the row is there, hidden or not: REVOKE REFERENCES ON %s FROM %s', 'app_user', r.tbl, 'app_user');
+      RETURN NEXT;
+    END IF;
   END LOOP;
   -- policies on governed tables that rowstile didn't make (left from before, or made by a migration) and that
   -- apply to the app role: Postgres joins permissive policies with OR, so one widens what the rules allow
@@ -7448,6 +7459,11 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
       problem := format('is a partition of %s (or inherits from it), and %s may make triggers on it (TRIGGER, which GRANT ALL gives): a foreign key''s action that writes its rows runs their functions as the table''s owner, whom no rule holds: REVOKE TRIGGER ON %s FROM %s', r.tbl, 'app_user', r.part, 'app_user');
       RETURN NEXT;
     END IF;
+    IF r.governed AND has_any_column_privilege(v_role, r.part, 'REFERENCES') THEN
+      severity := 'info'; object := r.part::text;
+      problem := format('is a partition of %s (or inherits from it), and %s may make foreign keys to it (REFERENCES, which GRANT ALL gives): a table of its own that names one of its rows tells whether the row is there, hidden or not: REVOKE REFERENCES ON %s FROM %s', r.tbl, 'app_user', r.part, 'app_user');
+      RETURN NEXT;
+    END IF;
     -- (on a table without rules, statements on it run the triggers of the table above as their own: the next loop
     -- finds one made since that lacks them)
     -- (one column's privilege is enough: no DELETE has columns)
@@ -7471,6 +7487,18 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     ELSE
       problem := format('inherits from %s, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, and its statement triggers for statements on it only, so a rule on a column is not checked on the rows stored here, their shares stay when their key changes, and a statement on this table doesn''t keep inheritance, shares and the audit current (missing here: %s). Apply the policy again (it makes them)', r.above, r.names);
     END IF;
+    RETURN NEXT;
+  END LOOP;
+  -- a rule on the row after a change whose trigger runs after the update (its table has a generated column, which
+  -- only the written row holds: governance.trigger_after_where_generated): Postgres's own checks on the row speak
+  -- before the rule there. Said once a table (a partition's trigger is its table's)
+  FOR r IN SELECT g.tgrelid::regclass AS tbl,
+                  string_agg('update ' || substr(g.tgname, 20) || ' after', ', ' ORDER BY g.tgname) AS rules
+           FROM pg_trigger g JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
+           WHERE NOT g.tgisinternal AND g.tgparentid = 0 AND g.tgtype & 19 = 17 AND g.tgname LIKE 'authz\_update\_after %'
+           GROUP BY g.tgrelid ORDER BY g.tgrelid::regclass::text LOOP
+    severity := 'info'; object := r.tbl::text;
+    problem := format('has a generated column, so what its rules say of the row after a change (%s) is checked once the row is written, not before: a unique index or a foreign key of the table speaks first, and its error tells of a row the user may not see', r.rules);
     RETURN NEXT;
   END LOOP;
   -- unique constraints on governed tables tell people that rows they cannot see exist
