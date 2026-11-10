@@ -92,11 +92,11 @@ def unstable(sql: str) -> tuple[str, str] | None:
     for code, text in sql_code(sql):
         if not code and text[0] in "'$" and (m := TIME_WORDS.fullmatch(literal_text(text))):
             return "AZ804", f"'{m.group(1)}', the current time"
-    code = strip_literals(sql)
+    code = strip_literals(sql, None)
     m = UNSTABLE.search(code)
     if m:
         word = (m.group(1) or m.group(2)).lower()
-        bare = re.sub(r"\s+", "", word)
+        bare = re.sub(r'[\s"]+', "", word)
         # (the clock or chance: the index can't follow it, AZ804; the rest of UNSTABLE reads who asks, AZ805)
         return ("AZ804" if bare in CLOCK else "AZ805"), bare + ("()" if m.group(1) else "")
     if any(one_argument(code, a.end()) for a in AGE.finditer(code)):

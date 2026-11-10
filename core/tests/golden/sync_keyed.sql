@@ -422,7 +422,7 @@ ALTER TABLE authz_sync."folder__readers" REPLICA IDENTITY FULL;
 REVOKE ALL ON ALL TABLES IN SCHEMA authz_sync FROM PUBLIC;
 
 DO $chk$
-DECLARE missing text := ''; v_oid oid; v_type text; v_n int;
+DECLARE missing text := ''; v_oid oid; v_type text; v_coll text; v_n int;
 BEGIN
   IF to_regclass('"app"."users"') IS NULL THEN
     missing := missing || E'\n  ' || 'line 25: table app.users not found [AZ601]';
@@ -622,47 +622,72 @@ BEGIN
                     AND attname = 'confidential' AND attnum > 0 AND NOT attisdropped) THEN
     missing := missing || E'\n  ' || 'line 83: column confidential not found in app.files [AZ601]';
   END IF;
-  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
+  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar'),
+         (SELECT c.collname FROM pg_collation c WHERE c.oid = attcollation AND NOT c.collisdeterministic)
+  INTO v_oid, v_type, v_coll
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."users"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
     missing := missing || E'\n  ' || 'line 25: app.users.id is ' || v_type
       || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_coll IS NOT NULL THEN
+    missing := missing || E'\n  ' || 'line 25: app.users.id is compared by the collation ' || v_coll
+      || ', which is not deterministic (texts that differ are one key there, and ids are compared as they are written): key the table by a column under a deterministic collation [AZ630]';
   ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 25: app.users.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
-  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
+  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar'),
+         (SELECT c.collname FROM pg_collation c WHERE c.oid = attcollation AND NOT c.collisdeterministic)
+  INTO v_oid, v_type, v_coll
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."orgs"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
     missing := missing || E'\n  ' || 'line 30: app.orgs.id is ' || v_type
       || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_coll IS NOT NULL THEN
+    missing := missing || E'\n  ' || 'line 30: app.orgs.id is compared by the collation ' || v_coll
+      || ', which is not deterministic (texts that differ are one key there, and ids are compared as they are written): key the table by a column under a deterministic collation [AZ630]';
   ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 30: app.orgs.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
-  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
+  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar'),
+         (SELECT c.collname FROM pg_collation c WHERE c.oid = attcollation AND NOT c.collisdeterministic)
+  INTO v_oid, v_type, v_coll
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."teams"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
     missing := missing || E'\n  ' || 'line 34: app.teams.id is ' || v_type
       || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_coll IS NOT NULL THEN
+    missing := missing || E'\n  ' || 'line 34: app.teams.id is compared by the collation ' || v_coll
+      || ', which is not deterministic (texts that differ are one key there, and ids are compared as they are written): key the table by a column under a deterministic collation [AZ630]';
   ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 34: app.teams.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
-  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
+  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar'),
+         (SELECT c.collname FROM pg_collation c WHERE c.oid = attcollation AND NOT c.collisdeterministic)
+  INTO v_oid, v_type, v_coll
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
     missing := missing || E'\n  ' || 'line 38: app.folders.id is ' || v_type
       || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_coll IS NOT NULL THEN
+    missing := missing || E'\n  ' || 'line 38: app.folders.id is compared by the collation ' || v_coll
+      || ', which is not deterministic (texts that differ are one key there, and ids are compared as they are written): key the table by a column under a deterministic collation [AZ630]';
   ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 38: app.folders.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
-  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
+  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar'),
+         (SELECT c.collname FROM pg_collation c WHERE c.oid = attcollation AND NOT c.collisdeterministic)
+  INTO v_oid, v_type, v_coll
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND (SELECT t.typnamespace FROM pg_type t WHERE t.oid = v_oid) <> 'pg_catalog'::regnamespace THEN
     missing := missing || E'\n  ' || 'line 56: app.files.id is ' || v_type
       || ', which is not one of Postgres''s own types (an extension''s, a domain, an enum): key the table by a column of integers, text or uuid [AZ629]';
+  ELSIF FOUND AND v_coll IS NOT NULL THEN
+    missing := missing || E'\n  ' || 'line 56: app.files.id is compared by the collation ' || v_coll
+      || ', which is not deterministic (texts that differ are one key there, and ids are compared as they are written): key the table by a column under a deterministic collation [AZ630]';
   ELSIF FOUND AND v_oid <> to_regtype('bigint') THEN
     missing := missing || E'\n  ' || 'line 56: app.files.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
@@ -5183,7 +5208,8 @@ BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
   p_subject_id := authz_int.canon(p_subject_type, p_subject_id);
-  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE p_subject_relation END;  -- (no anyone#...)
+  -- (no anyone#...; and NULL is no relation, as '' is: the subject itself)
+  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE coalesce(p_subject_relation, '') END;
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) THEN
     RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
@@ -5309,7 +5335,8 @@ BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
   p_subject_id := authz_int.canon(p_subject_type, p_subject_id);
-  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE p_subject_relation END;  -- (no anyone#...)
+  -- (no anyone#...; and NULL is no relation, as '' is)
+  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE coalesce(p_subject_relation, '') END;
   v_by := coalesce(authz_int.manage_perm(p_type, p_relation,
                                          authz_int.subject_key(p_subject_type, p_subject_id, p_subject_relation)),
                    authz_int.manage_perm(p_type, p_relation));

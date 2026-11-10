@@ -45,6 +45,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   a partition of one (`REFERENCES`, which `GRANT ALL` gives: a foreign key tells whether the row it names is
   there, whoever may see it), and a table whose rule on the row after a change is checked once the row is written
   (it has a generated column), where a unique index or a foreign key of the table speaks first.
+- A text key compared by a collation that isn't deterministic (a case-insensitive one) is refused when applying
+  (AZ630): two texts are one key there, and two ids to rowstile, as `2` and `2.0` were.
+- `authz.share` and `authz.unshare` read a subject relation given as NULL as none, as `''` is. The share failed
+  on Postgres's own words (a column that takes no NULL), and the unshare removed nothing.
+- A condition that limits inheritance, or that the sync index reads, is refused when it calls the clock or reads
+  the session by a name written in quotes too (`pg_catalog."now"()`), where the condition reads another table
+  and Postgres isn't asked (AZ305, AZ804, AZ805).
 - `authz.view_as` in a session limited by scopes that hold a write command (a key's or a token's: `update`,
   `app.files.update`) is read-only, as it says: the rules now refuse every write while a session views as someone,
   whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the
@@ -68,6 +75,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   with `GRANT ALL`): `rowstile lint` then exits 1 until it is taken back.
 - A session limited by scopes no longer revokes a key with other scopes, or with none (AZ704): revoke keys from
   a session without scopes, as the app's own sign-in is.
+- A policy with a type keyed by a text column under a collation that isn't deterministic no longer applies
+  (AZ630): key the type by a column under a deterministic collation.
 - A policy whose condition reads a function of the row as a column, where the function isn't IMMUTABLE, no longer
   applies (AZ628): call it by its name on the row's columns, `{app.blocked_doc(this.id)}`, or mark it IMMUTABLE if
   it reads nothing.

@@ -88,6 +88,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ627](AZ627.md): Shares whose ids the key can't read
 - [AZ628](AZ628.md): A condition calls the app's code where its text doesn't show it
 - [AZ629](AZ629.md): A key of a type that isn't Postgres's own
+- [AZ630](AZ630.md): A key compared by a collation that isn't deterministic
 
 ## What apps see
 
