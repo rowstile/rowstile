@@ -171,7 +171,7 @@ function authz.delete_role(p_role bigint) | b4c64d8168eb shape=7c823e86
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 8689b2108a84 shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | e98f52f28997 shape=1223ad2f
-function authz.lint() | 8ad19c8d4418 shape=54cb1505
+function authz.lint() | bd61aca001e8 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | ada360afe39f shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
@@ -189,14 +189,14 @@ function authz.request_access(p_type text, p_id text, p_relation text, p_reason 
 function authz.request_access(p_type text, p_id uuid, p_relation text, p_reason text, p_duration interval) | 3351f44b53b7 shape=40a06ee2
 function authz.review_decide(p_review bigint, p_item int, p_keep boolean) | cb7c972d81fc shape=76724fb2
 function authz.review_items(p_review bigint) | 9f111fa185c9 shape=fc0e6cb7
-function authz.revoke_api_key(p_id bigint) | 428658670110 shape=590521c4
+function authz.revoke_api_key(p_id bigint) | b88ed17a5a5e shape=590521c4
 function authz.revoke_link(p_type text, p_id text, p_link text) | 9f1e3334d1ec shape=6418747f
 function authz.revoke_link(p_type text, p_id uuid, p_link text) | 94e8249bbae8 shape=446fa386
 function authz.roles_of(p_owner_type text, p_owner_id text) | 3f395238b63f shape=e439cd41
 function authz.roles_of(p_owner_type text, p_owner_id uuid) | b9067b3a8f6e shape=0efd6960
 function authz.session_limited() | 5a874cdc8846 shape=5f278327
 function authz.set_role_permissions(p_role bigint, p_permissions text[]) | 8a2c50ce96df shape=3cffc528
-function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | a7cccf8337e0 shape=386e2b78
+function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | da4041b717d9 shape=386e2b78
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 87f2949cb44e shape=1caa9ec9
 function authz.share(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 64daabdd2acd shape=a7761e79
 function authz.share(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | c24a738d67c8 shape=6c1be595
@@ -211,7 +211,7 @@ function authz.sync_work() | 89ce52581ab7 shape=fad1cdef
 function authz.trim_audit(p_keep interval) | 506854f7888f shape=59da80c2
 function authz.trim_changes(p_keep interval) | 8812962935bc shape=5f059d1e
 function authz.uid() | 46613921cf07 shape=e4787fc1
-function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | fc5abfbbdbc4 shape=d4ebe9cc
+function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | b1cffd18e9bb shape=d4ebe9cc
 function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text) | d9181c30d80d shape=42efbb66
 function authz.unshare(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | 5f197b2fa529 shape=2446d596
 function authz.unshare(p_type text, p_id uuid, p_relation text, p_subject_type text, p_subject_id uuid, p_subject_relation text) | 27c3caa15e04 shape=2943705b
@@ -582,7 +582,7 @@ function authz_int.canon(p_type text, p_id text) | 305c59d9e86e shape=ab774d8a
 function authz_int.changed(p_type text, p_ids text[], p_cause text) | ea7f9d82be5d shape=7a5b1adc
 function authz_int.check_manage_keys(p_type text, p_id text) | 5c1c44f7a9a5 shape=391727a0
 function authz_int.check_writable() | 87ff3161cc1d shape=a16d3e7b
-function authz_int.child_triggers() | 15de79a6e75a shape=52e92456
+function authz_int.child_triggers() | f90445c5e0ff shape=52e92456
 function authz_int.dependents(p_type text, p_ids text[]) | c4c4caf986f6 shape=8a4f5a6e
 function authz_int.forget_marks(p_type text, p_ids text[]) | 2ddee1fcc0be shape=8933fd55
 function authz_int.hmac_sha256(p_key bytea, p_msg bytea) | 33edf164bad5 shape=4d6b17ae
@@ -686,7 +686,7 @@ step share_indexes | 7b6abf1f960f
 step sweep | 720e0c5ae09f
 step sync_base | d56d2648ef0a
 step sync_refresh | f25732325514
-step tables | fcaf219e2ce6
+step tables | 41b30dca0ebc
 table authz_gen.policy_lines | 7c09872a2861 shape=dcfedc96
 table authz_int."team__parent__tree" | ed6220be97e0 shape=ed6220be tree=team__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
@@ -814,8 +814,8 @@ trigger "authz_update notes" ON "hd"."users" | 70ad50bb2059
 trigger "authz_update role, active" ON "hd"."users" | a382e9f15f25
 trigger "authz_update status" ON "hd"."tickets" | 49c1d79d892f
 trigger "authz_update team_id, assignee_id" ON "hd"."tickets" | 31eaa26cb281
-trigger "authz_update_after parent_id" ON "hd"."teams" | 68a39d7a6051
-trigger "authz_update_after status" ON "hd"."tickets" | 9b61b69f283c
+trigger "authz_update_after parent_id" ON "hd"."teams" | d11b58c29262
+trigger "authz_update_after status" ON "hd"."tickets" | 240ff985381d
 trigger "authz_update_after_moved parent_id" ON "hd"."teams" | d46648b63a61
 trigger "authz_update_after_moved status" ON "hd"."tickets" | 3abaaf855cee
 trigger "authz_user_col_audit_del" ON "hd"."users" | 9ae67208d86e
