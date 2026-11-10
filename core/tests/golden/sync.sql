@@ -1034,11 +1034,13 @@ CREATE OR REPLACE FUNCTION authz.session_limited() RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
   SELECT s IS NOT NULL OR coalesce(current_setting('authz.acting_user', true), '') <> ''
   FROM (SELECT authz_int.scopes_active() AS s) x $f$;
--- may this transaction run a command on a table?
+-- may this transaction run a command on a table? While it views as someone it only reads, whatever its scopes
+-- hold: view_as keeps a key's or a token's scopes, and those may hold a write
 CREATE FUNCTION authz_int.scope_cmd(p_table text, p_cmd text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-  SELECT s IS NULL OR EXISTS (SELECT 1 FROM authz_int.scope_items i WHERE i.scope = ANY (s) AND i.kind = 'cmd'
-                              AND i.word = p_cmd AND (i.qual IS NULL OR i.qual = p_table))
+  SELECT (s IS NULL OR EXISTS (SELECT 1 FROM authz_int.scope_items i WHERE i.scope = ANY (s) AND i.kind = 'cmd'
+                               AND i.word = p_cmd AND (i.qual IS NULL OR i.qual = p_table)))
+     AND (p_cmd = 'select' OR coalesce(current_setting('authz.acting_user', true), '') = '')
   FROM (SELECT authz_int.scopes_active() AS s) x $f$;
 -- may this transaction ask about (or use) a permission?
 CREATE FUNCTION authz_int.scope_perm(p_type text, p_perm text) RETURNS boolean
@@ -3795,7 +3797,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.folders:insert:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'insert : parent.edit and owner  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders insert'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow insert on app.folders'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not insert on app.folders'
+    ELSE '  no   the sign-in''s scopes do not allow insert on app.folders' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'parent.edit';
   IF NOT v[4] THEN
     FOR v_t IN SELECT DISTINCT x.id FROM (SELECT ("folders"."parent_id")::text AS id FROM (SELECT (p_row).*) AS "folders") x WHERE x.id IS NOT NULL ORDER BY 1 LIMIT 3 LOOP
@@ -3846,7 +3850,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.folders:update:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders update'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.folders'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on app.folders'
+    ELSE '  no   the sign-in''s scopes do not allow update on app.folders' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
   IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('folder', ((p_row)."id"::text), 'edit') l LIMIT 20;
@@ -3892,7 +3898,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.folders:delete:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'delete : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders delete'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow delete on app.folders'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not delete on app.folders'
+    ELSE '  no   the sign-in''s scopes do not allow delete on app.folders' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'share';
   IF NOT v[4] THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('folder', ((p_row)."id"::text), 'share') l LIMIT 20;
@@ -4001,7 +4009,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.files:insert:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'insert : folder.edit and owner  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files insert'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow insert on app.files'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not insert on app.files'
+    ELSE '  no   the sign-in''s scopes do not allow insert on app.files' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'folder.edit';
   IF NOT v[4] THEN
     FOR v_t IN SELECT DISTINCT x.id FROM (SELECT ("files"."folder_id")::text AS id FROM (SELECT (p_row).*) AS "files") x WHERE x.id IS NOT NULL ORDER BY 1 LIMIT 3 LOOP
@@ -4046,7 +4056,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.files:update:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files update'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.files'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on app.files'
+    ELSE '  no   the sign-in''s scopes do not allow update on app.files' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
   IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('file', ((p_row)."id"::text), 'edit') l LIMIT 20;
@@ -4088,7 +4100,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.files:delete:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'delete : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files delete'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow delete on app.files'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not delete on app.files'
+    ELSE '  no   the sign-in''s scopes do not allow delete on app.files' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
   IF NOT v[4] THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('file', ((p_row)."id"::text), 'edit') l LIMIT 20;
@@ -4186,7 +4200,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.folders:column parent_id after:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update parent_id after : parent.edit or ({parent_id is null} and share)  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders update parent_id after'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.folders'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on app.folders'
+    ELSE '  no   the sign-in''s scopes do not allow update on app.folders' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'parent.edit';
   IF NOT v[4] THEN
     FOR v_t IN SELECT DISTINCT x.id FROM (SELECT ("folders"."parent_id")::text AS id FROM (SELECT (p_row).*) AS "folders") x WHERE x.id IS NOT NULL ORDER BY 1 LIMIT 3 LOOP
@@ -4262,7 +4278,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.folders:column id, owner_id, org_id, inherit:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update id, owner_id, org_id, inherit : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders update id, owner_id, org_id, inherit'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.folders'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on app.folders'
+    ELSE '  no   the sign-in''s scopes do not allow update on app.folders' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'share';
   IF NOT v[4] THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('folder', ((p_row)."id"::text), 'share') l LIMIT 20;
@@ -4326,7 +4344,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.files:column folder_id after:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update folder_id after : folder.edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files update folder_id after'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.files'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on app.files'
+    ELSE '  no   the sign-in''s scopes do not allow update on app.files' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'folder.edit';
   IF NOT v[4] THEN
     FOR v_t IN SELECT DISTINCT x.id FROM (SELECT ("files"."folder_id")::text AS id FROM (SELECT (p_row).*) AS "files") x WHERE x.id IS NOT NULL ORDER BY 1 LIMIT 3 LOOP
@@ -4388,7 +4408,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."app.files:column id, owner_id, confidential:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update id, owner_id, confidential : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files update id, owner_id, confidential'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.files'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on app.files'
+    ELSE '  no   the sign-in''s scopes do not allow update on app.files' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'share';
   IF NOT v[4] THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('file', ((p_row)."id"::text), 'share') l LIMIT 20;
@@ -6460,6 +6482,7 @@ END $f$;
 -- Support staff see what a user sees, read-only, for this transaction, with a reason on record:
 -- SELECT authz.view_as('42', 'ticket 1234')
 -- A session limited by scopes (a key's, a token's) keeps them: viewing never reads more than the session could.
+-- It writes nothing, whatever they hold: the rules allow a session that views as someone select alone (scope_cmd).
 CREATE OR REPLACE FUNCTION authz.view_as(p_user text, p_reason text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_actor text := authz_int.actor();

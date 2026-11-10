@@ -271,6 +271,18 @@ check "... one with files too: her files, still no folders, read-only" "3|0|fals
   "BEGIN; SELECT authz.login_key('$SUPPORT_FILES'); SELECT authz.view_as('3', 'ticket 49');
    SELECT (SELECT count(*) FROM app.files) || '|' || (SELECT count(*) FROM app.folders) || '|' || authz.can('file', 11, 'edit')
           || '|' || current_setting('authz.scopes'); COMMIT;"
+# ... and writes nothing, whatever its scopes hold (files: app.files.update): the rules let a session that views as
+# someone read only. Alice may edit her own file 11; erin's key, viewing as her, changes nothing
+check "... a write its scopes hold: viewing as alice, an UPDATE of her own file changes nothing" "0" \
+  "BEGIN; SELECT authz.login_key('$SUPPORT_FILES'); SELECT authz.view_as('1', 'ticket 51');
+   WITH u AS (UPDATE app.files SET body = 'x' WHERE id = 11 RETURNING 1) SELECT count(*) FROM u; ROLLBACK;"
+check "... which the key alone, signed in as a user who may, would change" "1" \
+  "BEGIN; SELECT authz.login_key('$(state -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('her files', 'files')")');
+   WITH u AS (UPDATE app.files SET body = body WHERE id = 11 RETURNING 1) SELECT count(*) FROM u; ROLLBACK;"
+check "... and the rule's explanation says why: the session views as someone else" "t" \
+  "BEGIN; SELECT authz.login_key('$SUPPORT_FILES'); SELECT authz.view_as('1', 'ticket 52');
+   SELECT array_to_string(authz.explain_rule('app.files', 'update', '11'), chr(10))
+          LIKE '%no   the session views as someone else: it may not update on app.files%'; ROLLBACK;"
 check "... and a session without scopes views with read" "read" \
   "BEGIN; SET LOCAL authz.user_id = 5; SELECT authz.view_as('3', 'ticket 50'); SELECT current_setting('authz.scopes'); COMMIT;"
 expect_code "carol cannot view as erin" "42501: you cannot view as user 5" -c "SET authz.user_id = 3" -c "SELECT authz.view_as('5', 'curious')"

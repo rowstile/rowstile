@@ -803,11 +803,13 @@ CREATE OR REPLACE FUNCTION authz.session_limited() RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
   SELECT s IS NOT NULL OR coalesce(current_setting('authz.acting_user', true), '') <> ''
   FROM (SELECT authz_int.scopes_active() AS s) x $f$;
--- may this transaction run a command on a table?
+-- may this transaction run a command on a table? While it views as someone it only reads, whatever its scopes
+-- hold: view_as keeps a key's or a token's scopes, and those may hold a write
 CREATE FUNCTION authz_int.scope_cmd(p_table text, p_cmd text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-  SELECT s IS NULL OR EXISTS (SELECT 1 FROM authz_int.scope_items i WHERE i.scope = ANY (s) AND i.kind = 'cmd'
-                              AND i.word = p_cmd AND (i.qual IS NULL OR i.qual = p_table))
+  SELECT (s IS NULL OR EXISTS (SELECT 1 FROM authz_int.scope_items i WHERE i.scope = ANY (s) AND i.kind = 'cmd'
+                               AND i.word = p_cmd AND (i.qual IS NULL OR i.qual = p_table)))
+     AND (p_cmd = 'select' OR coalesce(current_setting('authz.acting_user', true), '') = '')
   FROM (SELECT authz_int.scopes_active() AS s) x $f$;
 -- may this transaction ask about (or use) a permission?
 CREATE FUNCTION authz_int.scope_perm(p_type text, p_perm text) RETURNS boolean
@@ -2475,7 +2477,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."lp.orgs:update:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule lp.orgs update'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on lp.orgs'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on lp.orgs'
+    ELSE '  no   the sign-in''s scopes do not allow update on lp.orgs' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
   IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('org', ((p_row)."id"::text), 'edit') l LIMIT 20;
@@ -2567,7 +2571,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."lp.settings:update:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule lp.settings update'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on lp.settings'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on lp.settings'
+    ELSE '  no   the sign-in''s scopes do not allow update on lp.settings' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
   IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('setting', ((p_row)."id"::text), 'edit') l LIMIT 20;
@@ -2686,7 +2692,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."lp.domains:update:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule lp.domains update'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on lp.domains'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on lp.domains'
+    ELSE '  no   the sign-in''s scopes do not allow update on lp.domains' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
   IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('domain', ((p_row)."id"::text), 'edit') l LIMIT 20;
@@ -2761,7 +2769,9 @@ LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE v boolean[] := authz_gen."lp.domains:column org_id after:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update org_id after : org.edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule lp.domains update org_id after'), '?') || ')';
-  IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on lp.domains'; END IF;
+  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
+    THEN '  no   the session views as someone else: it may not update on lp.domains'
+    ELSE '  no   the sign-in''s scopes do not allow update on lp.domains' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'org.edit';
   IF NOT v[4] THEN
     FOR v_t IN SELECT DISTINCT x.id FROM (SELECT ("domains"."org_id")::text AS id FROM (SELECT (p_row).*) AS "domains") x WHERE x.id IS NOT NULL ORDER BY 1 LIMIT 3 LOOP
@@ -4301,6 +4311,7 @@ END $f$;
 -- Support staff see what a user sees, read-only, for this transaction, with a reason on record:
 -- SELECT authz.view_as('42', 'ticket 1234')  (the user type has no impersonate permission: administrators only)
 -- A session limited by scopes (a key's, a token's) keeps them: viewing never reads more than the session could.
+-- It writes nothing, whatever they hold: the rules allow a session that views as someone select alone (scope_cmd).
 CREATE OR REPLACE FUNCTION authz.view_as(p_user text, p_reason text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_actor text := authz_int.actor();

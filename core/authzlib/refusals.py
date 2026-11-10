@@ -108,7 +108,10 @@ class RefusalMixin(Core):
         head = f"{lit(rule_name(rule) + ' : ' + rule.src + '  (')} || {self.line_sql(f'rule {table} {rule_name(rule)}', rule.loc)} || ')'"
         code = [
             f"  RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || {head};",
-            f"  IF NOT v[2] THEN RETURN NEXT {lit('  no   the sign-in' + chr(39) + 's scopes do not allow ' + cmd + ' on ' + table)}; END IF;",
+            # (a session that views as someone only reads, whatever its scopes hold: authz_int.scope_cmd)
+            f"  IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''\n"
+            f"    THEN {lit('  no   the session views as someone else: it may not ' + cmd + ' on ' + table)}\n"
+            f"    ELSE {lit('  no   the sign-in' + chr(39) + 's scopes do not allow ' + cmd + ' on ' + table)} END; END IF;",
         ]
         if t.where:
             code.append(
