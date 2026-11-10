@@ -1089,6 +1089,15 @@ PSQL -c "REVOKE SELECT (name) ON app.all_files FROM app_user" -c "GRANT SELECT O
 admin "... and says of the function what it does" \
   "SECURITY DEFINER, callable by the app role, and seems to use a governed table: it reads rows without row-level security unless its owner is subject to it" \
   "SELECT problem FROM authz.lint() WHERE object = 'app.peek(bigint)'"
+# TRIGGER, the privilege GRANT ALL gives beside the four commands and TRUNCATE: with it the role puts a function of
+# its own on the table, and a foreign key's action that writes the table's rows runs it as the tables' owner
+PSQL -c "GRANT TRIGGER ON app.files, app.team_members TO app_user" >/dev/null
+admin "lint finds the app role may make triggers on a governed table, with what to take back" "error" \
+  "SELECT severity FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'app_user may make triggers on it (TRIGGER, which GRANT ALL gives)%REVOKE TRIGGER ON app.files FROM app_user'"
+admin "... and on a table that holds relationships" "error" \
+  "SELECT severity FROM authz.lint() WHERE object = 'app.team_members' AND problem LIKE 'app_user may make triggers on it (TRIGGER, which GRANT ALL gives)%REVOKE TRIGGER ON app.team_members FROM app_user'"
+PSQL -c "REVOKE TRIGGER ON app.files, app.team_members FROM app_user" >/dev/null
+admin "... and no more once it is taken back" "0" "SELECT count(*) FROM authz.lint() WHERE problem LIKE '%may make triggers on it%'"
 # a unique index on a table without rules tells nothing the app role may not read: only a governed table's is named
 PSQL -c "CREATE UNIQUE INDEX gov_team_pairs ON app.team_members (user_id, team_id)" >/dev/null
 admin "... and of the unique indexes the app role may insert against, those on tables with rules only" \

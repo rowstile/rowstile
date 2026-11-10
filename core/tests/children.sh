@@ -466,6 +466,11 @@ same "two rows given new keys by one update, their states as they were: which wa
   "$(D=$DB4 as 2 -c "UPDATE ch.jobs SET id = id + 500 WHERE id IN (2, 3)")" "ERROR:  changing state of ch.jobs 502 needs: owner or not {this.is_done}"
 same "... which the jobs' owner may do, as leave one done" \
   "$(D=$DB4 as 1 -c "BEGIN" -c "$(changed "UPDATE ch.jobs SET id = id + 500 WHERE id IN (2, 3)")" -c "ROLLBACK")|$(D=$DB4 as 1 -c "$(changed "UPDATE ch.jobs SET state = 'done', id = 501 WHERE id = 1")")" "2|1"
+# (TRIGGER, what GRANT ALL gives beside TRUNCATE: a function of the role's own, which a foreign key's action runs as
+# the owner. Asked here, in a database applied once: where one is applied again, what ran before isn't measured)
+D=$DB4 PSQL -c "GRANT TRIGGER ON ch.jobs_low TO app_user"
+same "lint says the app role may make triggers on a partition, with what to take back" \
+  "$(D=$DB4 PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.jobs_low' AND problem LIKE 'is a partition of ch.jobs (or inherits from it), and app_user may make triggers on it (TRIGGER, which GRANT ALL gives)%REVOKE TRIGGER ON ch.jobs_low FROM app_user'")" 1
 dropdb --if-exists "$DB4" 2>/dev/null
 
 echo "-- the sync index (a preview): what is written through a partition, or a table that inherits, reaches it"
