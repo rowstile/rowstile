@@ -197,6 +197,13 @@
       "when": 1794327101347,
       "tag": "0027_authz_after_rules_key_types_lint_who_among",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794339165791,
+      "tag": "0028_authz_keys_revoked_by_scope_inherited_rules_lint_collation",
+      "breakpoints": true
     }
   ]
 }
