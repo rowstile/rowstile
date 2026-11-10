@@ -183,6 +183,13 @@
       "when": 1794312821430,
       "tag": "0025_authz_view_as_read_only",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794315565190,
+      "tag": "0026_authz_unseen_app_code",
+      "breakpoints": true
     }
   ]
 }
