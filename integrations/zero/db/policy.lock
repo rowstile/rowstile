@@ -63,7 +63,7 @@ function authz.delete_role(p_role bigint) | b4c64d8168eb shape=7c823e86
 function authz.explain(p_type text, p_id integer, p_perm text, p_user text) | 1409a3a04a15 shape=7d31b532
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 3c9d6f2ff41e shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | b4934125ed34 shape=1223ad2f
-function authz.lint() | 69b3c5fde9cf shape=54cb1505
+function authz.lint() | 7bbe56d63a7b shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 3a40141bdf63 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id integer) | cec8e40d450f shape=92b36157
@@ -112,7 +112,7 @@ function authz.view_as(p_user text, p_reason text) | bf76b2722b72 shape=5d7b6326
 function authz.who(p_type text, p_id integer, p_perm text) | 392e8fa82862 shape=b6bb06d3
 function authz.who(p_type text, p_id text, p_perm text) | ef160babb484 shape=1cf83af9
 function authz.who_among(p_type text, p_id integer, p_perm text, p_users text[], p_principal_type text) | 3cbf9dbbd703 shape=21122f56
-function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 3051f8f59667 shape=17b9de43
+function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 4222125f156f shape=17b9de43
 function authz_gen."app.files:column owner_id:items"(p_row "app"."files") | 48a39bde05f6 shape=49ee3024 atomic
 function authz_gen."app.files:column owner_id:why"(p_row "app"."files") | b3b4d6a949b4 shape=03adb842
 function authz_gen."app.files:insert:items"(p_row "app"."files") | 5c3ae03e2b61 shape=4697daea atomic
@@ -129,11 +129,12 @@ function authz_gen."app.folders:update:items"(p_row "app"."folders") | 2c15489a3
 function authz_gen."app.folders:update:refuse"(p_row "app"."folders") | 7fe335da163e shape=023dccf5
 function authz_gen."app.folders:update:why"(p_row "app"."folders", p_stored boolean) | 17a5d785788b shape=77e73222
 function authz_gen."app.notes:rules:explain"(p_command text, p_id text, p_row jsonb) | 0467d9c6933e shape=0f580fa9
-function authz_int."app.files:column owner_id"() | e29bbe5b1cbf shape=a5f5dfca
+function authz_int."app.files:column owner_id"() | 6a713c9a5ae5 shape=a5f5dfca
 function authz_int."app.files:column owner_id:holds"(p_row "app"."files") | 0f23a834097f shape=19bb87a5 atomic
 function authz_int."app.files:seen"(p_id integer) | 3fadcc58b153 shape=67e27189
-function authz_int."app.folders:column parent_id after"() | 4e48bdc193fb shape=10156cb7
+function authz_int."app.folders:column parent_id after"() | 8518de175446 shape=10156cb7
 function authz_int."app.folders:column parent_id after:holds"(p_row "app"."folders") | a3e64414b529 shape=30910a42 atomic
+function authz_int."app.folders:column parent_id after:moved"() | 511da48d6687 shape=f0452de2
 function authz_int."app.folders:seen"(p_id integer) | 4dd85a054005 shape=f88c9f3d
 function authz_int."file__col_audit_del"() | 30f3d2e99762 shape=8d996d33
 function authz_int."file__col_audit_ins"() | 3c2c3afa7e35 shape=068f3854
@@ -312,7 +313,7 @@ step share_indexes | 0c43cf884c22
 step sweep | 1dfed05490f4
 step sync_base | eda14fe1b754
 step sync_refresh | f7ca7fe08318
-step tables | efb80f05cc5e
+step tables | 79b70018dbd2
 table authz_gen.policy_lines | dfb73b71db42 shape=dcfedc96
 table authz_int."folder__parent__tree" | 0761ea300228 shape=0761ea30 tree=folder__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
@@ -388,7 +389,8 @@ trigger "authz_team_col_audit_trunc" ON "app"."teams" | d51c81fdc419
 trigger "authz_team_col_audit_trunc_first" ON "app"."teams" | b68fb899fdc9
 trigger "authz_team_col_audit_upd" ON "app"."teams" | 5e13ce160b31
 trigger "authz_update owner_id" ON "app"."files" | 982c1094ea96
-trigger "authz_update_after parent_id" ON "app"."folders" | a9c62a4f7bda
+trigger "authz_update_after parent_id" ON "app"."folders" | b3fad81b1050
+trigger "authz_update_after_moved parent_id" ON "app"."folders" | c4ef53909485
 trigger "authz_user_col_audit_del" ON "app"."users" | 4c2a8d63f3db
 trigger "authz_user_col_audit_ins" ON "app"."users" | 690d0a527ea7
 trigger "authz_user_col_audit_trunc" ON "app"."users" | 6470f7ddbe35

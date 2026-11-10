@@ -59,7 +59,7 @@ function authz.delete_role(p_role bigint) | b4c64d8168eb shape=7c823e86
 function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9fc8335de7a shape=0a2287cd
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | c3488b9729fd shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | a8dc6b690a11 shape=1223ad2f
-function authz.lint() | ba1a13d7d052 shape=54cb1505
+function authz.lint() | 901b12fa4b5f shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 5a5b67782c12 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
@@ -104,7 +104,7 @@ function authz.view_as(p_user text, p_reason text) | bf76b2722b72 shape=5d7b6326
 function authz.who(p_type text, p_id bigint, p_perm text) | 2e6bf67dc8a8 shape=9a149138
 function authz.who(p_type text, p_id text, p_perm text) | 51c9162314be shape=1cf83af9
 function authz.who_among(p_type text, p_id bigint, p_perm text, p_users text[], p_principal_type text) | c12c43bbe47f shape=9f8e2d53
-function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 3051f8f59667 shape=17b9de43
+function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 4222125f156f shape=17b9de43
 function authz_gen."app.folders:column owner_id:items"(p_row "app"."folders") | 7149ea824e72 shape=f5084333 atomic
 function authz_gen."app.folders:column owner_id:why"(p_row "app"."folders") | 395c6d583b8c shape=a031ffc8
 function authz_gen."app.folders:rules:explain"(p_command text, p_id text, p_row jsonb) | ebdd13046dce shape=60afa031
@@ -125,7 +125,7 @@ function authz_gen."app.notes:update:items"(p_row "app"."notes") | 2e1e545d8f0a 
 function authz_gen."app.notes:update:refuse"(p_row "app"."notes") | b894d1874ffb shape=b9a31115
 function authz_gen."app.notes:update:why"(p_row "app"."notes", p_stored boolean) | 65caf8324b1f shape=95aad17a
 function authz_gen."app.projects:rules:explain"(p_command text, p_id text, p_row jsonb) | d2348a62fff8 shape=ff9a6d73
-function authz_int."app.folders:column owner_id"() | 29c8abf3ca70 shape=5c9800a4
+function authz_int."app.folders:column owner_id"() | ab19d31342d6 shape=5c9800a4
 function authz_int."app.folders:column owner_id:holds"(p_row "app"."folders") | 9c41042ed9b1 shape=f10e9383 atomic
 function authz_int."app.folders:seen"(p_id bigint) | 3460b1220427 shape=da914980
 function authz_int."app.inbox:seen"(p_id bigint) | b5bc45f0d8a8 shape=4454b51e
@@ -284,7 +284,7 @@ step grant_views | 90e185585d2a
 step mask_privileges | ef21e3cee165
 step share_indexes | 8fce60b5d213
 step sweep | 617caa4e7bfd
-step tables | f98969829e70
+step tables | 9203b47ccf21
 table authz_gen.policy_lines | 786151685f19 shape=dcfedc96
 table authz_int."folder__parent__tree" | 533ed647de51 shape=533ed647 tree=folder__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
