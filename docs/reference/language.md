@@ -75,6 +75,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   The type is the column's own: a 32-bit key, as Prisma's `Int` or a `serial` makes, is `(id int)`.
   `rowstile init` writes it, and applying says so when it is missing (AZ602). <!-- answer: keys -->
   A key can't be a date, a time, an interval or money (AZ206): ids are kept as text, and these write theirs by the session's settings. <!-- checked: tests/policy_errors.py "a key that is a date" -->
+  Nor can it be a `numeric`, a float or a `bytea` (AZ206): these write one value several ways, as `2` and `2.0` are one numeric. <!-- checked: tests/policy_errors.py "a key that is numeric"; tests/policy_errors.py "a key that is a float"; tests/policy_errors.py "a key that is a bytea" -->
+  Its type is one of Postgres's own: applying refuses a key of an extension's type (`citext`), of a domain or of an enum (AZ629). <!-- checked: tests/policy_errors.py "a key of a domain of the app's, whatever type the policy writes for it"; tests/policy_errors.py "a key of an enum of the app's, found on the path of the session that applies" -->
   After a key changes type, applying refuses while shares name ids the new type can't read (AZ627: delete them, then apply again). <!-- checked: tests/apply.sh "applying after a key's type changed is refused while shares name ids it can't read" -->
   A relation points at such an object with its columns in square brackets:
   `parent : folder = [org_id, parent_id]`, `app.folder_teams([org_id, folder_id] -> user_id)`,

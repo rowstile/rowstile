@@ -9535,11 +9535,11 @@ class Confidence(unittest.TestCase):
         )
         a, b = (parse_policy(text + x, "p.authz") for x in ("owner\n", "owner and {owner_id <> 'root'}\n"))
         self.assertIsNotNone(evaluate.compare(a, b, 200))
-        # on a key of whole numbers, no id lies between two: `> 7` and `>= 8` are one; on a numeric one, 7.5
+        # on a key of whole numbers, no id lies between two: `> 7` and `>= 8` are one (and no key is a number that
+        # isn't whole: a numeric key, where 7.5 would lie between them, is refused)
         self.assertTrue(self.same(folder + "viewer and {owner_id > 7}\n", folder + "viewer and {owner_id >= 8}\n"))
-        numeric = text.replace("(id text)", "(id numeric)")
-        a, b = (parse_policy(numeric + f"viewer and {{owner_id {x}}}\n", "p.authz") for x in ("> 7", ">= 8"))
-        self.assertIsNotNone(evaluate.compare(a, b, 200))
+        with self.assertRaisesRegex(PolicyError, r"id is numeric: a key can't be a numeric.*\[AZ206\]"):
+            parse_policy(text.replace("(id text)", "(id numeric)") + "viewer\n", "p.authz")
         # the listed worlds hold them too: every one of up to 3 rows of each type tells these apart
         a = parse_policy(self.HEAD + folder + "owner\n", "a.authz")
         b = parse_policy(self.HEAD + folder + "owner and {owner_id <> 7}\n", "b.authz")
