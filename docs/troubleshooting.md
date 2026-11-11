@@ -132,7 +132,8 @@ met a row the user may not update or may not see. MERGE says `target row violate
 all three with a 403: `Refused` names the select rule for the first, the update rule for an upsert, and no
 command for MERGE, whose words don't say which rule. On a server whose `lc_messages` isn't English the words are
 another language's: the SDKs still answer 403, told by the function that raised it, and name no table or rule
-([What every SDK reads of an error](reference/app-code.md); PHP reads the English words alone).
+([What every SDK reads of an error](reference/app-code.md)). PHP's driver and Prisma's adapters give the words
+alone: there a refusal in another language stays a database error, a 500.
 
 ## Your app's role sees everything
 
