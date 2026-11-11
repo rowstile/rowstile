@@ -22,7 +22,8 @@ again after a few random changes. A policy fails when
   - the review says the rewrite grants the same, and the database's answers change;
   - a rewrite that changes nothing is given a difference by the review, or changes the database's answers;
   - the compiler refuses a rewrite that changes nothing, for anything but a shape the language limits (SHAPES: how
-    a permission recurses or inherits, where `roles` is said).
+    a permission recurses or inherits, where `roles` is said; and the one shape only applying refuses, APPLYING:
+    what narrows inheritance is IMMUTABLE).
 
 A rewrite that may change something, and for which the review shows a difference, is counted: with the database's
 answers changing too, or on data that doesn't show it. And the first such difference of each policy is replayed in a
@@ -258,6 +259,10 @@ SLOW = 5.0  # seconds for one diff: such a policy's rewrites would take minutes,
 # `not`, AZ304, on the row alone, AZ305; a deny's permission inherits as the one it takes from does, AZ306; `roles` is
 # said in a permission's top `or`, AZ210). Any other refusal of such a rewrite is a problem
 SHAPES = {"AZ210", "AZ302", "AZ304", "AZ305", "AZ306"}
+# and one more shape, which applying alone refuses, the database being the one that knows: inheritance is narrowed
+# only by a condition that is IMMUTABLE (AZ603). A rewrite brings one that isn't beside an inherited part: a part
+# absorbed, `{c} or ({c} and parent.p)`
+APPLYING = re.compile(r"\[(AZ603)\]$")
 
 
 class Tally:
@@ -344,6 +349,10 @@ def replay(
     assert first is not None and first[0] == found, (first, found)  # (the review's own, found again)
     _, world_a, world_b = first
     tname, perm = found["what"].split(".")
+    # the rewrite's world holds what the policy's doesn't read: a custom role with a permission that says `roles`
+    # only once rewritten (`can manage_roles = roles`). load_sql sees the policy's world alone, and rows make no role
+    if any(world_b.rolepairs.values()):
+        raise Unloadable("custom roles")
     rows, shares = load_sql(base.pol, world_a, rows_decide=True)
     user = "" if found["user"].startswith("(") else found["user"]
     kind, pid = evaluate.principal_of(user, base.pol.types)
@@ -440,13 +449,25 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
     slow = False  # (a diff took more than SLOW: the rest isn't asked)
     try:
         for n in range(rounds):
-            for rw, new, m in tried:
+            for rw, new, m in list(tried):
 
                 def diff(d: rowstile_cli.Db, new: str = new) -> list[database.DiffRow]:
                     return database.diff(d, new)
 
                 started = time.monotonic()
-                rows = rowstile_cli.transaction(conn, diff, keep=False)
+                try:
+                    rows = rowstile_cli.transaction(conn, diff, keep=False)
+                except pgwire.PgError as e:
+                    # what only applying refuses (APPLYING): counted as the compiler's refusals are, and asked no more
+                    code = APPLYING.search(e.message)
+                    if not code:
+                        raise
+                    tried.remove((rw, new, m))
+                    if rw.same:
+                        tally.shapes[code.group(1)] += 1
+                    else:
+                        tally.refused += 1
+                    continue
                 slow = time.monotonic() - started > SLOW
                 first = (
                     f"{rows[0]['change']} {rows[0]['what']} on {rows[0]['type']} {rows[0]['id']} "
