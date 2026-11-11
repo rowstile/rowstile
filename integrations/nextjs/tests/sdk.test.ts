@@ -864,9 +864,12 @@ describe("@rowstile/vitest", () => {
       } finally {
         await holding.end();
       }
-      // the database's own errors: a role that may not create databases, an original that isn't there
-      const asApp = new URL(APP);
-      asApp.pathname = new URL(tests).pathname;
+      // the database's own errors: a role that may not create databases, an original that isn't there (the app
+      // role straight to Postgres, as the owner: PgBouncer would keep its own connection to the original for
+      // minutes, and nothing after this could copy it)
+      const asApp = new URL(tests);
+      asApp.username = new URL(APP).username;
+      asApp.password = new URL(APP).password;
       await expect(databasePerWorker(asApp.toString())).rejects.toMatchObject({ code: "42501" });
       const gone = new URL(tests);
       gone.pathname += "_gone";
