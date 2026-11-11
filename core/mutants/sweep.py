@@ -61,6 +61,13 @@ def head(root: str) -> str:
     return p.stdout.strip() or "?"
 
 
+def same_commit(a: str, b: str) -> bool:
+    """Whether two short hashes (head's) name one commit. Git writes as many characters as the clone's objects ask
+    for: the queue is made in a full clone (prepare reads the history), a shard runs in a shallow one, and its
+    hash is the shorter since the repository grew past what seven characters tell apart."""
+    return a == b or (min(len(a), len(b)) >= 7 and (a.startswith(b) or b.startswith(a)))
+
+
 def read_jsonl(path: str) -> list[Record]:
     if not os.path.exists(path):
         return []
@@ -406,7 +413,7 @@ def run(args: argparse.Namespace) -> None:
     with open(os.path.join(args.prepared, "queue.json"), encoding="utf-8") as fh:
         queue = json.load(fh)
     i, n = (int(x) for x in args.shard.split("/"))
-    if queue["commit"] != head(args.root):
+    if not same_commit(queue["commit"], head(args.root)):
         sys.exit(f"the queue was made at {queue['commit']}, this checkout is at {head(args.root)}")
     mine = [q for q in queue["mutants"] if q["shard"] == i]
     by_id = {m.id: m for m in mutants.generate(os.path.join(args.root, "core"))}
