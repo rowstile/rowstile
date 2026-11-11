@@ -19862,6 +19862,16 @@ class Mutants(unittest.TestCase):
         self.assertLessEqual(max(load) - min(load), 6)
         self.assertEqual(sweep.deal({}, 3), {})
 
+    def test_a_shard_knows_the_queues_commit_however_long_git_wrote_it(self) -> None:
+        # (2026-11-07: the queue's job, a full clone, wrote c6f8fb73; each shard's, a shallow one, c6f8fb7: none ran)
+        self.assertTrue(sweep.same_commit("c6f8fb73", "c6f8fb7"))
+        self.assertTrue(sweep.same_commit("c6f8fb7", "c6f8fb73"))
+        self.assertTrue(sweep.same_commit("c6f8fb7", "c6f8fb7"))
+        self.assertFalse(sweep.same_commit("c6f8fb73", "c6f8fb8"))
+        self.assertFalse(sweep.same_commit("c6f8fb73", "c6f8fb74"))
+        self.assertFalse(sweep.same_commit("c6f8", "c6f8fb7"))  # (too short to tell)
+        self.assertTrue(sweep.same_commit("?", "?"))  # (no git on either side: as before)
+
     def test_a_spread_takes_every_kind_first(self) -> None:
         made = self.made(self.SAMPLE)
         order = mutants.spread(made, 1)
