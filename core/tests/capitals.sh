@@ -18,10 +18,11 @@ T=$(mktemp -d)
 # whatever way the suite ends: its databases, the role it made, its files
 cleanup() {
   if [ -z "${KEEP:-}" ]; then
-    for d in "$DB" "$DB2" authz_capitals_link authz_capitals_approle authz_capitals_roles authz_capitals_accents authz_capitals_cross; do
+    for d in "$DB" "$DB2" authz_capitals_link authz_capitals_approle authz_capitals_roles authz_capitals_accents authz_capitals_cross authz_capitals_sync; do
       dropdb --force --if-exists "$d" 2>/dev/null
     done
     psql -X -q -d postgres -c 'DROP ROLE IF EXISTS "AppUser"' >/dev/null 2>&1
+    psql -X -q -d postgres -c 'DROP ROLE IF EXISTS authz_capitals_sync' >/dev/null 2>&1
   fi
   rm -rf "$T"
 }
@@ -170,6 +171,11 @@ run apply; is unchanged && ok "apply after it: unchanged" || bad "apply after pu
 PSQL -c 'CREATE TABLE "FolderArchive" () INHERITS ("Folder")'
 run apply; is applied && [ "$(PSQL -c "SELECT relrowsecurity FROM pg_class WHERE oid = '\"FolderArchive\"'::regclass")" = t ] &&
   ok "... until a table inherits from Folder: applied again, its rows under row-level security" || bad "apply after a child table" "$out"
+# lint finds the tables under a governed table by its quoted name: one the app role may make foreign keys to
+PSQL -c 'GRANT REFERENCES ON "FolderArchive" TO app_user'
+[ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'info' AND object = 'public.\"FolderArchive\"' AND problem LIKE 'is a partition of public.\"Folder\" (or inherits from it), and app_user may make foreign keys to it %'")" = 1 ] &&
+  ok "... and lint says the app role may make foreign keys to it, under Folder as Postgres writes it" ||
+  bad "lint, a table under Folder" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE object LIKE '%Archive%'")"
 PSQL -c 'DROP TABLE "FolderArchive"'
 
 echo "-- migrations: a second database takes them, and holds what this one holds"
@@ -331,7 +337,10 @@ psql -X -q -d postgres -c 'DO $o$ BEGIN
 dropdb --if-exists "$DB5" 2>/dev/null; createdb "$DB5" || exit 1
 sed '/^DO \$r\$/,/^END \$r\$;/d; s/app_user/"AppUser"/g' tests/prisma_schema.sql |
   PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB5" >/dev/null || exit 1
-sed 's/^app role app_user$/app role AppUser/' tests/prisma.authz > "$T/approle.authz"
+# (and a rule on a whole note after an update, whose policy names the role and the table too)
+sed -e 's/^app role app_user$/app role AppUser/' \
+    -e 's/^  update folderId after : folder.edit$/&\n  update after          : folder.view/' tests/prisma.authz > "$T/approle.authz"
+grep -q '^  update after          : folder.view$' "$T/approle.authz" || bad "prisma.authz has no rule on Note's folderId after to add one beside"
 run --db "dbname=$DB5" apply "$T/approle.authz"
 case "$out" in *"approle.authz: applied")
   [ "$(A -c "SELECT string_agg(DISTINCT r.rolname, ' ') FROM pg_policy p CROSS JOIN unnest(p.polroles) o JOIN pg_roles r ON r.oid = o")" = AppUser ] &&
@@ -599,6 +608,27 @@ got=$(psql -X -q -At -d "$DB6" -c "SELECT string_agg(w, ',') FROM authz.who('Tea
 got=$(psql -X -q -At -d "$DB6" -c "SET authz.user_id = 2" -c "SELECT concat_ws(',', authz.can('Folder', '4', 'view'), authz.can('Team', '1', 'view'), authz.can('Team', '2', 'view'))" 2>&1)
 [ "$got" = "t,t,f" ] && ok "can: bo views her folder and Team 1 inside it, not Team 2" || bad "can across Folder and Team" "$got"
 [ -z "${KEEP:-}" ] && dropdb "$DB6"
+
+echo "-- the sync index over a table named with capitals"
+# lint finds the governed tables by their quoted names: Folder, given to the sync role (by the superuser: the owner
+# may give a table only to a role it may act as)
+DB7=authz_capitals_sync
+psql -X -q -d postgres -c 'DO $o$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = $$authz_capitals_sync$$) THEN CREATE ROLE authz_capitals_sync NOLOGIN; END IF;
+  END $o$' >/dev/null
+dropdb --if-exists "$DB7" 2>/dev/null; createdb "$DB7" || exit 1; schema "$DB7" || exit 1
+printf '%s\n' "sync role authz_capitals_sync" "sync public.Folder : view" | cat tests/prisma.authz - > "$T/synced.authz"
+run --db "dbname=$DB7" apply "$T/synced.authz"
+case "$out" in *"synced.authz: applied") ;; *) bad "apply with Folder synced" "$out";; esac
+if [ -n "${PGSUPERUSER:-}" ]; then
+  psql -X -q -U "$PGSUPERUSER" -d "$DB7" -c 'ALTER TABLE "Folder" OWNER TO authz_capitals_sync' >/dev/null
+  got=$(psql -X -q -At -d "$DB7" -c "SELECT object FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'is owned by the sync role%'")
+  [ "$got" = 'public."Folder"' ] && ok "lint finds Folder, synced and owned by the sync role, by its quoted name" ||
+    bad "lint, Folder owned by the sync role" "$got"
+else
+  ok "lint finds Folder, synced and owned by the sync role, by its quoted name (skipped: needs PGSUPERUSER)"
+fi
+[ -z "${KEEP:-}" ] && dropdb "$DB7"
 
 rm -rf "$T"
 [ -z "${KEEP:-}" ] && dropdb "$DB" && dropdb "$DB2"

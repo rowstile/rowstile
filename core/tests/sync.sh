@@ -147,6 +147,12 @@ check "authz.sync_tick() works out again the readers of the shares that ended or
 [ "$(reads 6 13)$(reads 6 12)" = ft ] && ok "after the tick: file 13 is gone, file 12 is there" || bad "after the tick" "$(reads 6 13)$(reads 6 12)"
 same "... and the index holds what authz.list gives, after the tick"
 check "run again, it finds nothing new" "SELECT authz.sync_tick() = 0"
+# (a share whose end is due, as the commit that made it left it, and a tick at that very time: in one transaction)
+got=$(PSQL -c "BEGIN" -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
+                           VALUES ('file', '14', 'viewer', 'user', '6', now())" \
+           -c "INSERT INTO authz_sync.due VALUES ('file', '14', now()) ON CONFLICT (object_type, object_id) DO UPDATE SET at = now()" \
+           -c "SELECT authz.sync_tick()" -c "ROLLBACK")
+[ "$got" = 1 ] && ok "... a share ending at the very moment it runs has ended: counted then" || bad "a share ending as sync_tick runs" "$got"
 PSQL -c "DELETE FROM authz.shares WHERE subject_id = '6' AND (expires_at IS NOT NULL OR starts_at IS NOT NULL)"
 # a writer's transaction open while a share ends or begins, and a tick meanwhile: the writer works the share out as
 # of when it began, after the tick (which can't see a share not committed yet); the next tick works it out again

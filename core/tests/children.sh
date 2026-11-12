@@ -452,7 +452,10 @@ dropdb --if-exists "$DB4" 2>/dev/null; createdb "$DB4" && schema "$DB4" || exit 
 D=$DB4 PSQL -c "CREATE TABLE ch.jobs (id bigint PRIMARY KEY, state text NOT NULL DEFAULT 'open', owner_id bigint,
                   is_done boolean GENERATED ALWAYS AS (state = 'done') $KIND) PARTITION BY RANGE (id)" \
   -c "CREATE TABLE ch.jobs_low PARTITION OF ch.jobs FOR VALUES FROM (0) TO (100)" -c "CREATE TABLE ch.jobs_high PARTITION OF ch.jobs FOR VALUES FROM (100) TO (1000)" \
-  -c "GRANT SELECT, UPDATE ON ch.jobs TO app_user" -c "INSERT INTO ch.jobs VALUES (1, 'open', 1), (2, 'done', 1), (3, 'kept', 1)"
+  -c "GRANT SELECT, UPDATE ON ch.jobs TO app_user" -c "INSERT INTO ch.jobs VALUES (1, 'open', 1), (2, 'done', 1), (3, 'kept', 1)" \
+  -c "CREATE TABLE ch.tallies (a int, b int, c int, twice int GENERATED ALWAYS AS (c * 2) STORED)"
+# (another table's column worked out, numbered as is_done is: what works is_done out is is_done's own alone, not this
+# one's, which names a column jobs doesn't have)
 { cat tests/children.authz; printf '\ntype job = ch.jobs\n  owner : user = owner_id\n\nrules ch.jobs\n  select : owner or {this.state <> \x27hid\x27}\n  update : signed_in\n  update state after : owner or not {this.is_done}\n'; } > "$T/virtual.authz"
 out=$(python3 cli/rowstile_cli.py --db "dbname=$DB4" apply "$T/virtual.authz" --force 2>&1) || bad "a rule on the row after, on a table with such a column: applying" "$out"
 # (the statement's trigger asks what the app role may ask of a row, which answers for a row the user may select, and

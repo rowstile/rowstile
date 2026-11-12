@@ -2154,6 +2154,9 @@ class ClientNames(unittest.TestCase):
         )
         made = database.client("zero", keyed)
         self.assertIn("export const syncTables = [keys, fileReaders, folderReaders, inherits, given] as const;", made)
+        # each table it lists is declared, the two of the inheritance too
+        self.assertIn('const inherits = table("rowstile_inherits").from("authz_sync.inherits")', made)
+        self.assertIn('const given = table("rowstile_given").from("authz_sync.given")', made)
         self.assertIn('given: many({sourceField: ["source"], destField: ["source"], destSchema: given}),', made)
         files = made[made.index('  "app.files": <Q') : made.index('  "app.folders": <Q')]
         self.assertIn('exists("inherits", (i: Sub) => i.whereExists("given", (g: Sub) =>', files)
