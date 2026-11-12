@@ -2230,6 +2230,14 @@ INSERT INTO cn.board_admins VALUES (1, 1), (1, 2), (1, 5);
 CREATE TABLE cn.crates (id bigint PRIMARY KEY, owner_id bigint REFERENCES cn.users, weight int NOT NULL);
 GRANT SELECT ON cn.crates TO app_user;
 INSERT INTO cn.crates VALUES (1, 1, 10), (2, NULL, 0);
+-- crew 2's members are shared (agent zed among them); van 1 is ann's
+CREATE TABLE cn.agents (id text PRIMARY KEY);
+CREATE TABLE cn.crews (id bigint PRIMARY KEY);
+CREATE TABLE cn.vans (id bigint PRIMARY KEY, owner_id bigint REFERENCES cn.users);
+GRANT SELECT ON cn.agents, cn.crews, cn.vans TO app_user;
+INSERT INTO cn.agents VALUES ('zed');
+INSERT INTO cn.crews VALUES (1), (2);
+INSERT INTO cn.vans VALUES (1, 1);
 """
 WHY_POLICY = """app role app_user
 
@@ -2329,6 +2337,18 @@ type board = cn.boards
   helper : user shared if {subject_id in (select id::text from cn.users where active)}
   can share = admin
   can view  = viewer or helper
+
+type agent = cn.agents (id text) principal
+
+type crew = cn.crews
+  member : agent shared
+  can share = {false}
+
+type van = cn.vans
+  owner : user = owner_id
+  rider : crew#member shared
+  can share = owner
+  can ride  = owner or rider
 """
 
 
@@ -2354,7 +2374,9 @@ def corners(db: str) -> None:
         "SELECT authz.share('room', '3', 'host', 'user', '5'); SELECT authz.share('room', '3', 'guest', 'user', '5'); "
         "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) "
         "VALUES ('page', '2', 'reader', 'user', '*'); "
-        "SELECT authz.share('doc', '7', 'viewer', 'grp', '4', 'belong')",
+        "SELECT authz.share('doc', '7', 'viewer', 'grp', '4', 'belong'); "
+        "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) "
+        "VALUES ('crew', '2', 'member', 'agent', 'zed')",
     )
     data = "SELECT (SELECT string_agg(s::text, ' ' ORDER BY s::text) FROM authz.shares s), " + ", ".join(
         f"(SELECT string_agg(x::text, ' ' ORDER BY x::text) FROM {t} x)"
@@ -2702,6 +2724,13 @@ def corners(db: str) -> None:
         and ways == [],
         said,
     )
+    # a group the one asking is in by a share, who signs in with an id of text: the groups are looked up by that id
+    rc, said, ways, _ = why(db, "--as", "agent:zed", "van", "1", "ride")
+    check(
+        "a group a principal with a text id is in by a share: a share with its members",
+        rc == 0 and "share rider on van 1 with crew#member 2  [line 108]" in ways,
+        said,
+    )
     # what isn't a permission of the policy (a type it doesn't have, a permission, a relation, one the compiler made
     # for a deny): refused as authz.can and authz.explain refuse it
     for question in (
@@ -2888,6 +2917,20 @@ def corners(db: str) -> None:
         and sum("authz.who(" in x for x in asked) == 1
         and sum("share_if(" in x for x in asked) == 4,
         (board.notes, asked),
+    )
+    # judged as exactly as many as may share: all of them were asked
+    conn = pgwire.connect(**pgwire.parse_dsn(f"dbname={db}"))
+    with mock.patch.object(grant, "SHARERS", 3):
+        board = rowstile_cli.transaction(conn, lambda d: database.why(d, "user", "4", "board", "1", "view"), keep=False)
+    conn.close()
+    check(
+        "... and as all of them when they are as many as it asks: the note says everyone",
+        board.notes[:1]
+        == [
+            "board.viewer wasn't tried with user 4: its shared if {subject_id in (select id::text from cn.users "
+            "where active)} refuses it to everyone who may share board 1"
+        ],
+        board.notes,
     )
     check("... and nothing it tried stays", psql(db, data) == before, (before, psql(db, data)))
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)

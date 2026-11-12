@@ -1110,6 +1110,8 @@ COMPILE = [
         "AZ104",
     ),
     ("... nor its name", "  can = owner\n", "write permissions as: can name = expression", 10, "AZ104"),
+    ("... nor anything after its =", "  can view =\n", "write permissions as: can name = expression", 10, "AZ104"),
+    ("a scope with nothing after its =", "scope s =\n", "write scopes as: scope name = select, view", 10, "AZ101"),
     (
         "a block's word misspelt: the words a block starts with",
         "tpye thing = alt.things\n",

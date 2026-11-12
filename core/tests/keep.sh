@@ -116,5 +116,15 @@ apply "$(echo "$SYNCED" | sed 's/^  can break_glass = org.member$/  can break_gl
   ok "a new permission keeps the trees and the sync index's rows" || bad "the sync index kept"
 [ "$(PSQL -c 'SELECT authz.sync_verify()')" = t ] && ok "...and the index matches a rebuild" || bad "sync_verify after keeping"
 
+# a tree whose table holds one row: verify compares that row's ancestors (itself) with what is stored for it alone
+PSQL -c "CREATE TABLE app.solos (id bigint PRIMARY KEY, parent_id bigint REFERENCES app.solos, owner_id bigint);
+         INSERT INTO app.solos VALUES (1, NULL, 1)"
+apply "$DOCS
+type solo = app.solos
+  parent : solo = parent_id
+  owner  : user = owner_id
+  can view = owner or parent.view"
+verify && ok "a tree of one row: verify finds it current" || bad "verify, a tree of one row"
+
 echo "keep: $fails failure(s)"
 exit $((fails > 0))

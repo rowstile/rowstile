@@ -565,16 +565,24 @@ privs() { psql -X -q -At -d "$1" -c "
     SELECT 'default ' || d.defaclobjtype::text, a.grantee, a.privilege_type FROM pg_default_acl d, aclexplode(d.defaclacl) a)
   SELECT what || ' ' || CASE grantee WHEN 0 THEN 'PUBLIC' ELSE grantee::regrole::text END || ' ' || privilege_type
     FROM acl WHERE what !~ '^[a-z]+ (pg_|information_schema)' ORDER BY 1"; }
-for pair in "example/app_schema.sql example/docs.authz" "tests/multi_schema.sql tests/multi.authz"; do
+# (the third: the app role reaches the app's schema through PUBLIC, so it holds no grant on any schema but authz's)
+for pair in "example/app_schema.sql example/docs.authz" "tests/multi_schema.sql tests/multi.authz" \
+  "example/app_schema.sql example/docs.authz REVOKE USAGE ON SCHEMA app FROM app_user; GRANT USAGE ON SCHEMA app TO PUBLIC"; do
   set -- $pair
   fresh "${DB}_privs"
   quiet -d "${DB}_privs" -f "$1" >/dev/null || exit 1
+  policy=$2 label=$2
+  if [ $# -gt 2 ]; then
+    shift 2
+    quiet -d "${DB}_privs" -c "$*" >/dev/null || exit 1
+    label="$policy, the app's schema used through PUBLIC"
+  fi
   before=$(privs "${DB}_privs")
-  out=$(python3 cli/rowstile_cli.py --db "dbname=${DB}_privs" apply "$2" 2>&1 &&
-        python3 cli/rowstile_cli.py --db "dbname=${DB}_privs" remove --yes 2>&1) || bad "apply and remove $2" "$out"
+  out=$(python3 cli/rowstile_cli.py --db "dbname=${DB}_privs" apply "$policy" 2>&1 &&
+        python3 cli/rowstile_cli.py --db "dbname=${DB}_privs" remove --yes 2>&1) || bad "apply and remove $label" "$out"
   left=$(diff <(echo "$before") <(privs "${DB}_privs") | grep '^[<>]' | tr '\n' ';')
-  [ -n "$before" ] && [ -z "$left" ] && ok "$2: after remove, every privilege is as it was before the first apply" ||
-    bad "$2: privileges after remove, against before the first apply" "$left"
+  [ -n "$before" ] && [ -z "$left" ] && ok "$label: after remove, every privilege is as it was before the first apply" ||
+    bad "$label: privileges after remove, against before the first apply" "$left"
 done
 dropdb "${DB}_privs"
 

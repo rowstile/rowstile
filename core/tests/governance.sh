@@ -363,6 +363,17 @@ same_as "... and the next one, after it, the writer's share that ended since" \
   "$(PSQL -c "SELECT authz.announce_timed_shares()" -c "$(fed $POS share_ended)" | tr '\n' '|')" "1|file 14|"
 expect_code "the app role cannot run it" "42501: permission denied for function announce_timed_shares" -c "SELECT authz.announce_timed_shares()"
 PSQL -c "DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id IN ('6', '7') AND (expires_at IS NOT NULL OR starts_at IS NOT NULL)" >/dev/null
+# a database made before authz.shares_due, whose last run kept the time it announced up to (timed_shares_to):
+# applying makes the table from the times after it; a share that ended at that very time was announced then
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
+         VALUES ('file', '12', 'viewer', 'user', '6', '2099-01-01T00:00:00Z'), ('file', '13', 'viewer', 'user', '6', '2099-01-02T00:00:00Z')" \
+     -c "DROP TABLE authz.shares_due" \
+     -c "INSERT INTO authz.settings VALUES ('timed_shares_to', '2099-01-01T00:00:00Z') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value" >/dev/null
+reapply $T/governance.sql
+admin "applying a database made before shares_due: the times after the last run's, not the one it announced" "file 13 2099-01-02|0" \
+  "SELECT string_agg(object_type || ' ' || object_id || ' ' || to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), ',') || '|' ||
+          (SELECT count(*) FROM authz.settings WHERE key = 'timed_shares_to') FROM authz.shares_due WHERE at >= '2099-01-01'"
+PSQL -c "DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id = '6' AND expires_at >= '2099-01-01'" >/dev/null
 
 # custom roles, a type whose condition reads its own columns (no relation kept in them), and one whose rows only links
 # name
