@@ -71,6 +71,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `WHEN` holds a value of the table's row type (CVE-2026-6460). The functions that check a rule on a row are now
   bodies Postgres keeps no parse of, run as the policy's owner, reading only that row, and the triggers hand them
   the row as JSON. A condition's `current_user` there is still the role that writes.
+- The Go SDK asks for `golang.org/x/text` v0.41.0 or newer, which fixes an infinite loop and a panic on crafted
+  input (GO-2026-5970, GO-2026-6629). The Elixir SDK is checked against Ecto 3.14.3, which bounds a query cache that
+  could grow without end (EEF-CVE-2026-118391).
 
 ### Upgrading
 
