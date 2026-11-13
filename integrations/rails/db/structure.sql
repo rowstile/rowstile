@@ -59,28 +59,6 @@ CREATE TABLE app.notes (
 
 
 --
--- Name: projects; Type: TABLE; Schema: app; Owner: -
---
-
-CREATE TABLE app.projects (
-    id bigint NOT NULL,
-    owner_id bigint NOT NULL,
-    name text NOT NULL,
-    public boolean DEFAULT false NOT NULL
-);
-
-
---
--- Name: members; Type: TABLE; Schema: app; Owner: -
---
-
-CREATE TABLE app.members (
-    project_id bigint NOT NULL,
-    user_id bigint NOT NULL
-);
-
-
---
 -- Name: inbox_id_seq; Type: SEQUENCE; Schema: app; Owner: -
 --
 
@@ -97,6 +75,16 @@ CREATE SEQUENCE app.inbox_id_seq
 --
 
 ALTER SEQUENCE app.inbox_id_seq OWNED BY app.inbox.id;
+
+
+--
+-- Name: members; Type: TABLE; Schema: app; Owner: -
+--
+
+CREATE TABLE app.members (
+    project_id bigint NOT NULL,
+    user_id bigint NOT NULL
+);
 
 
 --
@@ -125,6 +113,18 @@ ALTER SEQUENCE app.notes_id_seq OWNED BY app.notes.id;
 CREATE TABLE app.project_services (
     project_id bigint NOT NULL,
     service_id bigint NOT NULL
+);
+
+
+--
+-- Name: projects; Type: TABLE; Schema: app; Owner: -
+--
+
+CREATE TABLE app.projects (
+    id bigint NOT NULL,
+    owner_id bigint NOT NULL,
+    name text NOT NULL,
+    public boolean DEFAULT false NOT NULL
 );
 
 
@@ -1084,6 +1084,7 @@ ALTER TABLE app.projects ENABLE ROW LEVEL SECURITY;
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261113055515'),
 ('20261110193249'),
 ('20261110161145'),
 ('20261110125928'),
