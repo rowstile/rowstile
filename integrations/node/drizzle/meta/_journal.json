@@ -204,6 +204,13 @@
       "when": 1794339165791,
       "tag": "0028_authz_keys_revoked_by_scope_inherited_rules_lint_collation",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794549313540,
+      "tag": "0029_authz_row_checks_for_new_postgres",
+      "breakpoints": true
     }
   ]
 }
