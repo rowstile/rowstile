@@ -5,5 +5,5 @@
 # test policy's own lines, in a database that never asks them); a kind no suite calls at all is counted.
 # A count: a change that leaves one statement more never run and runs one that wasn't passes it (the report's
 # lists say which). A function of these schemas whose source can't be read fails it (its branches would count as none).
-authz 206 302
+authz 205 301
 authz_gen 11 20

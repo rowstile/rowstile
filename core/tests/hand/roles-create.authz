@@ -1,7 +1,8 @@
 -- answer: roles-create, runtime-manage-roles
 -- Creating a role needs manage_roles on its owner; the role is shared as role:<id>, by someone who holds share on
 -- the object and everything the role grants. Changing what it gives needs manage_roles, and each permission it
--- adds held on each object it is given on.
+-- adds held on each object it is given on, whether the caller may select its row or not (erin, an org admin, holds
+-- archive on folder f but can't see it).
 app role app_user
 
 type user = app.users
@@ -16,6 +17,9 @@ type folder = app.folders
   can view    = owner or roles
   can edit    = owner or roles
   can archive = org.admin or roles
+
+rules app.folders
+  select : view
 
 test "making a role and giving it"
   given alice = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
@@ -38,6 +42,8 @@ test "making a role and giving it"
   as user $erin sees 1 {SELECT FROM authz.roles_of('org', 1) WHERE name = 'reviewer' AND permissions = ARRAY['view']}
   as user $erin sees 1 {SELECT FROM authz.roles_of('org', 1) WHERE name = 'archivist' AND permissions = ARRAY['archive']}
   as user $erin refused {SELECT authz.set_role_permissions($reviewer, ARRAY['view', 'edit'])}
+  as user $erin sees 0 {SELECT FROM app.folders WHERE id = $f}
+  as user $erin sees 0 {SELECT WHERE authz.can('folder', $f, 'archive')}
   as user $erin allowed {SELECT authz.set_role_permissions($reviewer, ARRAY['view', 'archive'])}
   as user $erin allowed {SELECT authz.set_role_permissions($reviewer, ARRAY[]::text[])}
   user $bo cannot view folder $f
