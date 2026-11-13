@@ -211,6 +211,13 @@
       "when": 1794549313540,
       "tag": "0029_authz_row_checks_for_new_postgres",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794569195718,
+      "tag": "0030_authz_role_permissions_unseen_rows",
+      "breakpoints": true
     }
   ]
 }
