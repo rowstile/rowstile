@@ -91,7 +91,7 @@ function authz.revoke_link(p_type text, p_id text, p_link text) | 9f1e3334d1ec s
 function authz.roles_of(p_owner_type text, p_owner_id integer) | 54870d3667c5 shape=1679f0a4
 function authz.roles_of(p_owner_type text, p_owner_id text) | 3f395238b63f shape=e439cd41
 function authz.session_limited() | 5a874cdc8846 shape=5f278327
-function authz.set_role_permissions(p_role bigint, p_permissions text[]) | 8a2c50ce96df shape=3cffc528
+function authz.set_role_permissions(p_role bigint, p_permissions text[]) | f38be6496224 shape=3cffc528
 function authz.share(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 890550356463 shape=3259edea
 function authz.share(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 5d82a913c811 shape=126ff5f2
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | cc5687ceb3a8 shape=a6e2bc4c
