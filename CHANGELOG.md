@@ -11,6 +11,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- `authz.set_role_permissions` lets the caller add a permission they hold on an object the role is given on, even
+  where they may not select its row, as `authz.share` lets them give the role there. It asked `authz.can`, which
+  answers only for rows the caller may select, and refused: "you cannot give role reviewer on a folder you cannot
+  see".
 - A policy with a rule on the row after a change (`update status after : ...`) applies to a table with a generated
   column, and the rule reads that column. Applying stopped there on Postgres's own words (`BEFORE trigger's WHEN
   condition cannot reference NEW generated columns`): with a `STORED` column, and on PostgreSQL 18 with any

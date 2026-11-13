@@ -5989,13 +5989,14 @@ BEGIN
   IF v_bad IS NOT NULL THEN RAISE EXCEPTION 'custom roles on % cannot grant %', v.object_type, v_bad USING HINT = 'rowstile help AZ706'; END IF;
   -- each permission added must be one the caller holds on each object the role is given on (by a share not expired:
   -- an expired one gives again only through authz.share, which weighs it), as authz.share asks of whoever gives it
-  -- there; removing one needs nothing more. Locked first: a share of it meanwhile waits, then weighs what it gives
-  -- now. An object the caller can't see is not named (as authz.explain doesn't)
+  -- there; removing one needs nothing more. Held, as authz.share weighs it: whether the caller may select the row
+  -- or not (authz_int.can). Locked first: a share of it meanwhile waits, then weighs what it gives now. An object the
+  -- caller can't see is not named (as authz.explain doesn't)
   PERFORM 1 FROM authz.roles WHERE id = p_role FOR UPDATE;
   SELECT o.id, o.need INTO v_obj, v_need
   FROM (SELECT g.id, (SELECT string_agg(p, ', ' ORDER BY p) FROM unnest(p_permissions) p
                       WHERE p NOT IN (SELECT r.permission FROM authz.role_permissions r WHERE r.role_id = p_role)
-                        AND NOT authz.can(v.object_type, g.id, p)) AS need
+                        AND NOT authz_int.can(v.object_type, g.id, p)) AS need
         FROM (SELECT DISTINCT s.object_id AS id FROM authz.shares s
               WHERE s.object_type = v.object_type AND s.relation = 'role:' || p_role
                 AND (s.expires_at IS NULL OR s.expires_at > now())) g) o

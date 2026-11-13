@@ -380,7 +380,10 @@ if grep -q "you cannot give role r on folder 2: you do not hold archive" "$out.b
   echo "ok    a change to what a role gives waits for a share of it, then weighs where it is given then"
 else echo "FAIL  a role changed while it is shared: $(tr '\n' ' ' < "$out.b")"; fails=$((fails + 1)); fi
 [ "$(psql -X -Atq -d "$X" -c "SELECT string_agg(permission, ',') FROM authz.role_permissions WHERE role_id = $ROLE")" = edit ] &&
-  echo "ok    ... and the role gives what it gave" || { echo "FAIL  the role after the race"; fails=$((fails + 1)); }
+  [ "$(psql -X -Atq -d "$X" -c "SET ROLE app_user; SET authz.user_id = 3;" \
+         -c "SELECT authz.can('folder', 1, 'edit'), authz.can('folder', 1, 'archive')")" = "t|f" ] &&
+  echo "ok    ... and the role gives what it gave: user 3 edits folder 1 through it, and doesn't archive it" ||
+  { echo "FAIL  the role after the race"; fails=$((fails + 1)); }
 dropdb "$X"; rm -f "$T/roles.authz" "$T/roles.sql"
 
 rm -f "$out" "$out.b"
