@@ -523,6 +523,12 @@ def others(spec: Spec) -> list[str]:
     return ["users", *(["bots"] if spec.bot else []), *link_tables(spec)]
 
 
+def fitted(spec: Spec, w: World) -> World:
+    """The world with the layout of only the tables spec makes: a policy shrunk from the seed's has fewer."""
+    tables = {o.name for o in spec.objs} | set(others(spec))
+    return dataclasses.replace(w, layout={t: how for t, how in w.layout.items() if t in tables})
+
+
 def laid(n: Spelling, name: str, head: str, line: str, how: str, by: str, column: str, last: str) -> list[str]:
     """One of genpolicy's CREATE TABLEs (line, which starts with head), laid out as the world says: partitioned by
     hash (by: its key's columns), by range (of column: two partitions, the second ending at last), or with a
@@ -1768,7 +1774,8 @@ def main() -> None:
                         if fails(dataclasses.replace(spec, spelling=spelling), w):
                             spec, changed = dataclasses.replace(spec, spelling=spelling), True
                             break
-                spec = genpolicy.shrink(spec, lambda s, w=w: fails(s, w))
+                spec = genpolicy.shrink(spec, lambda s, w=w: fails(s, fitted(s, w)))
+                w = fitted(spec, w)
                 print(f"  the plainest world and the smallest policy found that still fail (seed {seed}):")
                 print(f"    world: {described(spec, w)}")
                 print("    " + policy_text(spec, w).replace("\n", "\n    ").rstrip())
