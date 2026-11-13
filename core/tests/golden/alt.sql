@@ -3735,9 +3735,8 @@ BEGIN
     OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = "docs"."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint))), false)));
 END $f$;
 
-CREATE FUNCTION authz_gen."alt.docs:insert:items"(p_row "alt"."docs") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."alt.docs:insert:items"(p_row "alt"."docs", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce((coalesce(("docs".owner_id = (SELECT authz.uid())), false)
     AND (coalesce((up is null), false)
@@ -3753,13 +3752,13 @@ BEGIN ATOMIC
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")), false),
     coalesce(coalesce((up is null), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[7]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+$f$;
 
 CREATE FUNCTION authz_gen."alt.docs:insert:why"(p_row "alt"."docs") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."alt.docs:insert:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."alt.docs:insert:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'insert : {this.owner_id = authz.uid()} and (parent.edit or {up is null})  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs insert'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -3796,9 +3795,8 @@ BEGIN
     HINT = 'rowstile help AZ709';
 END $f$;
 
-CREATE FUNCTION authz_gen."alt.docs:update:items"(p_row "alt"."docs") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."alt.docs:update:items"(p_row "alt"."docs", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
     OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = "docs"."doc_no")
@@ -3843,13 +3841,13 @@ BEGIN ATOMIC
     AND (authz_int."doc__edit__has"("docs"."up")
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+$f$;
 
 CREATE FUNCTION authz_gen."alt.docs:update:why"(p_row "alt"."docs", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."alt.docs:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."alt.docs:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -3876,9 +3874,8 @@ BEGIN
     HINT = 'the update rule must hold on the row after the change too (Postgres checks both) (rowstile help AZ709)';
 END $f$;
 
-CREATE FUNCTION authz_gen."alt.docs:delete:items"(p_row "alt"."docs") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."alt.docs:delete:items"(p_row "alt"."docs", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
     AND NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false)), false),
@@ -3887,13 +3884,13 @@ BEGIN ATOMIC
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false),
     coalesce(NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+$f$;
 
 CREATE FUNCTION authz_gen."alt.docs:delete:why"(p_row "alt"."docs") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."alt.docs:delete:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."alt.docs:delete:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'delete : share and not blocked  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs delete'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4010,22 +4007,21 @@ CREATE POLICY "authz_delete" ON "alt"."docs" FOR DELETE TO "app_user"
 
 COMMENT ON POLICY "authz_delete" ON "alt"."docs" IS 'rowstile';
 
-CREATE FUNCTION authz_gen."alt.docs:column owner_id:items"(p_row "alt"."docs") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."alt.docs:column owner_id:items"(p_row "alt"."docs", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false),
     coalesce((SELECT authz_int.scope_cmd('alt.docs', 'update')), false),
     coalesce(true, false),
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+$f$;
 
 CREATE FUNCTION authz_gen."alt.docs:column owner_id:why"(p_row "alt"."docs") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."alt.docs:column owner_id:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."alt.docs:column owner_id:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update owner_id : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs update owner_id'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4039,12 +4035,12 @@ END $f$;
 
 -- alt.docs update owner_id (line 46): share
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION authz_int."alt.docs:column owner_id:holds"(p_row "alt"."docs") RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
-  SELECT coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
-END;
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION authz_int."alt.docs:column owner_id:holds"(p_row jsonb, authz__role name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+  SELECT coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false) FROM pg_catalog.jsonb_populate_record(NULL::"alt"."docs", p_row) AS "docs"
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."alt.docs:column owner_id"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -4076,12 +4072,11 @@ END $f$;
 CREATE TRIGGER "authz_update owner_id" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
   WHEN ((OLD."owner_id" IS DISTINCT FROM NEW."owner_id")
     AND pg_catalog.row_security_active('"alt"."docs"'::pg_catalog.regclass)
-    AND NOT authz_int."alt.docs:column owner_id:holds"(pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(OLD))))
+    AND NOT authz_int."alt.docs:column owner_id:holds"(pg_catalog.to_jsonb(OLD), current_user))
   EXECUTE FUNCTION authz_int."alt.docs:column owner_id"();
 
-CREATE FUNCTION authz_gen."alt.docs:column up after:items"(p_row "alt"."docs") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."alt.docs:column up after:items"(p_row "alt"."docs", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce((coalesce((up is null), false)
     OR (authz_int."doc__edit__has"("docs"."up")
@@ -4092,13 +4087,13 @@ BEGIN ATOMIC
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")), false),
     coalesce(coalesce((up is null), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+$f$;
 
 CREATE FUNCTION authz_gen."alt.docs:column up after:why"(p_row "alt"."docs") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."alt.docs:column up after:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."alt.docs:column up after:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update up after : parent.edit or {up is null}  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs update up after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4118,14 +4113,14 @@ END $f$;
 
 -- alt.docs update up after (line 47): parent.edit or {up is null}
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION authz_int."alt.docs:column up after:holds"(p_row "alt"."docs") RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION authz_int."alt.docs:column up after:holds"(p_row jsonb, authz__role name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT coalesce((coalesce((up is null), false)
     OR (authz_int."doc__edit__has"("docs"."up")
-    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
-END;
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))), false) FROM pg_catalog.jsonb_populate_record(NULL::"alt"."docs", p_row) AS "docs"
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."alt.docs:column up after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -4161,13 +4156,13 @@ DO $tr$ BEGIN
     EXECUTE 'CREATE TRIGGER "authz_update_after up" AFTER UPDATE ON "alt"."docs" FOR EACH ROW
   WHEN ((OLD."up" IS DISTINCT FROM NEW."up")
     AND pg_catalog.row_security_active(''"alt"."docs"''::pg_catalog.regclass)
-    AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."alt.docs:column up after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after up" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
   WHEN ((OLD."up" IS DISTINCT FROM NEW."up")
     AND pg_catalog.row_security_active(''"alt"."docs"''::pg_catalog.regclass)
-    AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."alt.docs:column up after"()';
   END IF;
 END $tr$;
@@ -4204,7 +4199,7 @@ BEGIN
       EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
         || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
     END IF;
-    IF NOT (authz_gen."alt.docs:column up after:items"(v_row))[1] THEN
+    IF NOT (authz_gen."alt.docs:column up after:items"(v_row, current_user))[1] THEN
       BEGIN
         v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:column up after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN

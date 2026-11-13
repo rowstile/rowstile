@@ -997,7 +997,8 @@ class ColumnRules(unittest.TestCase):
         # The app role may not use authz_int by name. A policy or a BEGIN ATOMIC body names it once, when the owner
         # makes it; a body in a string is read each time, as whoever runs it. A rule on a column is checked by
         # a trigger that runs as the app role: where the rule names a service (authz_int."bot__me"), the rule
-        # is behind a BEGIN ATOMIC function, or every update of the column fails for want of the schema
+        # is behind a function that runs as the owner (its WHEN names it once, parsed when the owner made it), or
+        # every update of the column fails for want of the schema
         ruled = read(POLICIES["composite"]).replace(
             "  update folder_id after : folder.edit\n",
             "  update folder_id after : folder.edit\n  update name : uploader\n",
@@ -1016,7 +1017,8 @@ class ColumnRules(unittest.TestCase):
                 if name not in owners:
                     self.assertNotRegex(body, r"\bauthz_int\.", f"{name} runs as its caller and names authz_int")
         sql = Compiler(parse_policy(ruled)).compile("x")
-        holds = re.findall(r'CREATE FUNCTION authz_int\."cx\.\w+:column [\w, ]+:holds".*?END;', sql, re.S)
+        holds = re.findall(r'CREATE FUNCTION authz_int\."cx\.\w+:column [\w, ]+:holds".*?\n\$f\$;', sql, re.S)
+        self.assertTrue(holds and all("SECURITY DEFINER SET search_path FROM CURRENT" in fn for fn in holds), holds)
         # (each called by its trigger's WHEN; a rule on the row after is written for before the update and for after it)
         self.assertEqual(len(holds), len(set(re.findall(r'AND NOT authz_int\."cx\.\w+:column [\w, ]+:holds"\(', sql))))
         self.assertTrue(any('"bot__me"' in fn for fn in holds), "the rule that names the bot is behind no function")

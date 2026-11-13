@@ -210,7 +210,10 @@ def qt(table: str) -> str:
 
 # Postgres keeps a policy, a view and a BEGIN ATOMIC body as parsed, with a dependency on each column they name, and
 # `.*` names every column there: what passes or reads a whole row of the app's table must not spell it out, or no
-# column of the table could be dropped, not even one no rule reads.
+# column of the table could be dropped, not even one no rule reads. And from 16.16, 17.12 and 18.7 on, a value of
+# the table's row type in a BEGIN ATOMIC body or a trigger's WHEN (its parameter read, a NULL::table) stops every
+# ALTER TABLE that changes how its rows are laid out (a column added NOT NULL or generated, a column's type): what
+# reads a row in a function is a body in a string, which Postgres keeps no parse of, and a WHEN hands it on as jsonb.
 
 
 def from_row(param: str, alias: str) -> str:
@@ -221,6 +224,20 @@ def from_row(param: str, alias: str) -> str:
 def whole_row(alias: str, table: str) -> str:
     """The row of alias, as the table's type, to pass to a function: no column is named."""
     return f"({alias}.*)::{qt(table)}"
+
+
+# A function that checks a rule as its owner (the rule's names resolved on the path the policy was applied with,
+# authz_int among them) is handed the role of who called it: a condition's current_user, current_role and user say
+# that role there, as they do in the policy, and not the owner (session_user and system_user are the same for both)
+ROLE_PARAM = "authz__role"  # (a condition writes no name that starts authz__, AZ113: RESERVED)
+ROLE_WORDS = re.compile(
+    rf"{NOT_AFTER_NAME}(?<![.\"])(?:current_user|current_role|user){NOT_BEFORE_NAME}(?!\s*\.)", re.IGNORECASE
+)
+
+
+def as_caller(sql: str) -> str:
+    """SQL with the words that name the current role naming ROLE_PARAM instead, in its code (not in quotes)."""
+    return "".join(ROLE_WORDS.sub(ROLE_PARAM, text) if code else text for code, text in sql_code(sql))
 
 
 def lit(s: object) -> str:

@@ -19,10 +19,11 @@ from .sqlutil import (
     GIVE_BACK_MASKED,
     LOST_RULES,
     POLICY_MARKS,
+    ROLE_PARAM,
     STUB_COLUMNS,
     VIEW_MARKS,
+    as_caller,
     below_too,
-    from_row,
     ident,
     lit,
     on_row,
@@ -370,7 +371,7 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
             f"CREATE TRIGGER {q(trigger)} BEFORE UPDATE ON {qt(rule.table)} FOR EACH ROW\n"
             f"  WHEN (({when})\n"
             f"    AND pg_catalog.row_security_active({tbl})\n"
-            f"    AND NOT {holds}(pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb({row}))))\n"
+            f"    AND NOT {holds}(pg_catalog.to_jsonb({row}), current_user))\n"
             f"  EXECUTE FUNCTION {fn}()"
         )
         # A rule on the row after the change, on a table with a generated column: only once the row is written does
@@ -392,12 +393,12 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
 
 -- {rule.table} update {cols}{" after" if new else ""} ({rule.loc}): {rule.src}
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION {holds}(p_row {qt(rule.table)}) RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
-  SELECT coalesce({cond}, false) FROM {from_row("p_row", alias)};
-END;
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION {holds}(p_row jsonb, {ROLE_PARAM} name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+  SELECT coalesce({as_caller(cond)}, false) FROM pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, p_row) AS {alias}
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -475,7 +476,7 @@ BEGIN
                            AND NOT EXISTS (SELECT 1 FROM new_rows m WHERE {self.key_text(t, "m")} = {key_o})))
   LOOP
     {fill_virtual}
-    IF NOT ({items}(v_row))[1] THEN
+    IF NOT ({items}(v_row, current_user))[1] THEN
       BEGIN
         v_lines := (SELECT string_agg(l, E'\\n') FROM {why}(v_row) l);
       EXCEPTION WHEN OTHERS THEN

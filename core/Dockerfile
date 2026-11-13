@@ -14,9 +14,9 @@
 # each); PG_MAJOR picks one, and BuildKit builds only that one. Another version (a beta) has no stage here: ci.sh
 # names its image for it (--build-context pg19beta4=docker-image://postgres:19beta4).
 ARG PG_MAJOR=16
-FROM postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d AS pg16
-FROM postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3 AS pg17
-FROM postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336 AS pg18
+FROM postgres:16@sha256:63e83b5a3dc36a917dccb76fe1bd2ac51f1ec9c1deb47ff20d4f04233bf6eae9 AS pg16
+FROM postgres:17@sha256:846a7ddaa67a4b354ae1d21087b683901aa6113a4ed626d3787cfbf6c85e3e07 AS pg17
+FROM postgres:18@sha256:b9f6b8ff03b62f3cfd9d9ba3fe56226a9991c79d3fb46fd46536263bf02be553 AS pg18
 FROM pg${PG_MAJOR}
 ARG COVERAGE=
 RUN apt-get update \

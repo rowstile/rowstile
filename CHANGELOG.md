@@ -64,6 +64,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   Postgres what the rules and the views they read call, and refuses a function of the app's there that may read
   data (AZ628), and so does every migration. A call written by its name with parentheses runs with the policy's
   rights, as before.
+- On PostgreSQL 16.16, 17.12 and 18.7 (released on 2026-11-12), an app's migration could no longer add a column
+  `NOT NULL` with a default, add a stored generated column, or change a column's type, on a table with rules on
+  writes or on a column: `cannot alter table "files" because function authz_gen."app.files:insert:items"(app.files)
+  uses its row type`. Those releases refuse it where a function's body kept parsed (`BEGIN ATOMIC`) or a trigger's
+  `WHEN` holds a value of the table's row type (CVE-2026-6460). The functions that check a rule on a row are now
+  bodies Postgres keeps no parse of, run as the policy's owner, reading only that row, and the triggers hand them
+  the row as JSON. A condition's `current_user` there is still the role that writes.
 
 ### Upgrading
 
@@ -80,6 +87,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A policy whose condition reads a function of the row as a column, where the function isn't IMMUTABLE, no longer
   applies (AZ628): call it by its name on the row's columns, `{app.blocked_doc(this.id)}`, or mark it IMMUTABLE if
   it reads nothing.
+- On Postgres 16.16, 17.12 or 18.7, or before upgrading to them, apply the policy with this release (`rowstile
+  apply`, or the migration `rowstile migrate` writes): what an earlier release applied stops the migrations above
+  there.
 
 ## 0.1.0-beta.4 (2026-11-09)
 

@@ -3771,9 +3771,8 @@ BEGIN
     OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))));
 END $f$;
 
-CREATE FUNCTION authz_gen."mt.docs:update:items"(p_row "mt"."docs") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."mt.docs:update:items"(p_row "mt"."docs", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."mt.docs:seen"("docs"."id") THEN ARRAY[
     coalesce((coalesce("docs"."author_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
@@ -3786,13 +3785,13 @@ BEGIN ATOMIC
     OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
     OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+$f$;
 
 CREATE FUNCTION authz_gen."mt.docs:update:why"(p_row "mt"."docs", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."mt.docs:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."mt.docs:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule mt.docs update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''

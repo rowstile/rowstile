@@ -2497,9 +2497,8 @@ BEGIN
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")));
 END $f$;
 
-CREATE FUNCTION authz_gen."lp.orgs:update:items"(p_row "lp"."orgs") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."lp.orgs:update:items"(p_row "lp"."orgs", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."lp.orgs:seen"("orgs"."id") THEN ARRAY[
     coalesce((coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")), false),
@@ -2508,13 +2507,13 @@ BEGIN ATOMIC
     coalesce((coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "orgs";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "orgs"
+$f$;
 
 CREATE FUNCTION authz_gen."lp.orgs:update:why"(p_row "lp"."orgs", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."lp.orgs:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."lp.orgs:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule lp.orgs update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -2591,9 +2590,8 @@ BEGIN
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")));
 END $f$;
 
-CREATE FUNCTION authz_gen."lp.settings:update:items"(p_row "lp"."settings") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."lp.settings:update:items"(p_row "lp"."settings", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."lp.settings:seen"("settings"."id") THEN ARRAY[
     coalesce((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")), false),
@@ -2602,13 +2600,13 @@ BEGIN ATOMIC
     coalesce((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "settings";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "settings"
+$f$;
 
 CREATE FUNCTION authz_gen."lp.settings:update:why"(p_row "lp"."settings", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."lp.settings:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."lp.settings:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule lp.settings update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -2714,22 +2712,21 @@ BEGIN
         AND (SELECT authz_int.scope_cmd('lp.domains', 'select')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"));
 END $f$;
 
-CREATE FUNCTION authz_gen."lp.domains:update:items"(p_row "lp"."domains") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."lp.domains:update:items"(p_row "lp"."domains", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."lp.domains:seen"("domains"."id") THEN ARRAY[
     coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false),
     coalesce((SELECT authz_int.scope_cmd('lp.domains', 'update')), false),
     coalesce(true, false),
     coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains"
+$f$;
 
 CREATE FUNCTION authz_gen."lp.domains:update:why"(p_row "lp"."domains", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."lp.domains:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."lp.domains:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule lp.domains update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -2791,22 +2788,21 @@ CREATE POLICY "authz_update" ON "lp"."domains" FOR UPDATE TO "app_user"
 
 COMMENT ON POLICY "authz_update" ON "lp"."domains" IS 'rowstile';
 
-CREATE FUNCTION authz_gen."lp.domains:column org_id after:items"(p_row "lp"."domains") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."lp.domains:column org_id after:items"(p_row "lp"."domains", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."lp.domains:seen"("domains"."id") THEN ARRAY[
     coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false),
     coalesce((SELECT authz_int.scope_cmd('lp.domains', 'update')), false),
     coalesce(true, false),
     coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains"
+$f$;
 
 CREATE FUNCTION authz_gen."lp.domains:column org_id after:why"(p_row "lp"."domains") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."lp.domains:column org_id after:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."lp.domains:column org_id after:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update org_id after : org.edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule lp.domains update org_id after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -2822,12 +2818,12 @@ END $f$;
 
 -- lp.domains update org_id after (line 42): org.edit
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION authz_int."lp.domains:column org_id after:holds"(p_row "lp"."domains") RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
-  SELECT coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains";
-END;
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION authz_int."lp.domains:column org_id after:holds"(p_row jsonb, authz__role name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+  SELECT coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false) FROM pg_catalog.jsonb_populate_record(NULL::"lp"."domains", p_row) AS "domains"
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."lp.domains:column org_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -2863,13 +2859,13 @@ DO $tr$ BEGIN
     EXECUTE 'CREATE TRIGGER "authz_update_after org_id" AFTER UPDATE ON "lp"."domains" FOR EACH ROW
   WHEN ((OLD."org_id" IS DISTINCT FROM NEW."org_id")
     AND pg_catalog.row_security_active(''"lp"."domains"''::pg_catalog.regclass)
-    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."lp.domains:column org_id after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after org_id" BEFORE UPDATE ON "lp"."domains" FOR EACH ROW
   WHEN ((OLD."org_id" IS DISTINCT FROM NEW."org_id")
     AND pg_catalog.row_security_active(''"lp"."domains"''::pg_catalog.regclass)
-    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."lp.domains:column org_id after"()';
   END IF;
 END $tr$;
@@ -2906,7 +2902,7 @@ BEGIN
       EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
         || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
     END IF;
-    IF NOT (authz_gen."lp.domains:column org_id after:items"(v_row))[1] THEN
+    IF NOT (authz_gen."lp.domains:column org_id after:items"(v_row, current_user))[1] THEN
       BEGIN
         v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."lp.domains:column org_id after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN

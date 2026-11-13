@@ -3,12 +3,13 @@ true, so the refuse function runs only when a write is refused. It raises insuff
 rule, with the explanation in DETAIL. authz.explain_rule() gives the same explanation on request: for an
 update or delete that changed no rows, or an insert before trying it.
 
-Everything here runs as the app role, like the policies themselves, and checks the rows the way they do: what
+The explanations run as the app role, like the policies themselves, and check the rows the way they do: what
 reads other rows (a condition with a subquery, a link table, shares) is read by the same functions the policies
 call, with the policy's rights, so the explanation says yes and no where the check did. Nothing is explained that
-the user couldn't ask authz.explain about. The checks are compiled into BEGIN ATOMIC functions, whose names are
-resolved when the policy is applied (as in the policies), so they reach what the policies reach without the app
-role using authz_int.
+the user couldn't ask authz.explain about. The checks themselves are compiled into functions that run as the owner
+on the path the policy was applied with (they name authz_int, which the app role can't), reading only the row they
+are handed, and the caller's role for current_user: a BEGIN ATOMIC body that reads the row would stop the table's
+ALTERs from PostgreSQL 16.16, 17.12 and 18.7 on (sqlutil.from_row).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from __future__ import annotations
 from .compiler import Core, only_on, rule_name
 from .insight import expr_text
 from .parse import And, Arrow, ArrowOn, Expr, Or, Ref, Rule, Type
-from .sqlutil import from_row, lit, q, qt, reads_more, row_cond, whole_row
+from .sqlutil import ROLE_PARAM, as_caller, from_row, lit, q, qt, reads_more, row_cond, whole_row
 
 EXPLAIN_LINES = 20  # lines of authz.explain per object, at most
 TARGETS = 3  # objects explained per relation, at most
@@ -56,15 +57,19 @@ class RefusalMixin(Core):
         for item, kids in self.rule_nodes(rule):
             for node in [item, *kids]:
                 exprs.append(self.row_sql(t, alias, node, rule.loc, point=True, invoker=True))
-        body = ",\n    ".join(f"coalesce({e}, false)" for e in exprs)
+        body = as_caller(",\n    ".join(f"coalesce({e}, false)" for e in exprs))
         # the app role may call this by name, on any row it builds: it answers for a new row or one the user may
-        # select (output.seen_sql), and says no to everything for the rest
+        # select (output.seen_sql), and says no to everything for the rest. It runs as the owner, on the path the
+        # policy was applied with (sqlutil.from_row: a BEGIN ATOMIC body would stop the table's ALTERs), reading
+        # only the row: what reads other rows is in views and functions that run as the owner wherever the rule is
+        # checked (row_sql's invoker), and the role words name the caller's role
         return (
-            f"CREATE FUNCTION {self.rule_fn(table, name or rule.command, 'items')}(p_row {qt(table)}) RETURNS boolean[]\n"
-            f"LANGUAGE sql STABLE\nBEGIN ATOMIC\n"
+            f"CREATE FUNCTION {self.rule_fn(table, name or rule.command, 'items')}(p_row {qt(table)}, "
+            f"{ROLE_PARAM} name) RETURNS boolean[]\n"
+            f"LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
             f"  SELECT CASE WHEN authz_int.{q(table + ':seen')}({self.key(t, alias)}) THEN ARRAY[\n    {body}]\n"
             f"    ELSE pg_catalog.array_fill(false, ARRAY[{len(exprs)}]) END\n"
-            f"  FROM {from_row('p_row', alias)};\nEND;"
+            f"  FROM {from_row('p_row', alias)}\n$f$;"
         )
 
     def row_targets_sql(self, t: Type, alias: str, node: Expr, rel: str) -> list[tuple[str, str]]:
@@ -165,7 +170,7 @@ class RefusalMixin(Core):
         return f"""CREATE FUNCTION {self.rule_fn(table, name or rule.command, "why")}(p_row {qt(table)}{stored}) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := {self.rule_fn(table, name or rule.command, "items")}(p_row); v_t record;
+DECLARE v boolean[] := {self.rule_fn(table, name or rule.command, "items")}(p_row, current_user); v_t record;
 BEGIN
 {body}
 END $f$;"""
