@@ -427,6 +427,17 @@ echo '  insert : view and {not exists (select 1 from ch.holds h where h.shelf_id
 run push; is pushed || bad "push after columns were added" "$out"
 same "the rules' functions, policies and views depend on the columns the rules read, not on the others" \
   "$(reads ch.notes)|$(reads ch.docs)|$(reads ch.topics)|$(reads ch.posts)" "id owner_id parent_id|id owner_id|id owner_id parent_id|id shelf_id topic_id"
+# (from 16.16, 17.12 and 18.7 on, Postgres refuses these where a BEGIN ATOMIC body or a trigger's WHEN holds a value
+# of the table's row type: the rules' functions read the row from a body in a string, the triggers pass it as jsonb)
+laid_out() {
+  PSQL -c "ALTER TABLE $1 ADD COLUMN size int NOT NULL DEFAULT 0" \
+       -c "ALTER TABLE $1 ADD COLUMN twice bigint GENERATED ALWAYS AS (id * 2) STORED" \
+       -c "ALTER TABLE $1 ALTER COLUMN body TYPE varchar(200)" 2>&1
+}
+same "a column added NOT NULL with a default, and one generated and stored, and a type changed where no rule reads it, on tables with rules on inserts, updates and columns" \
+  "$(laid_out ch.notes)$(laid_out ch.docs)$(laid_out ch.topics)$(laid_out ch.posts)" ""
+same "... after which the rules depend on the same columns" \
+  "$(reads ch.notes)|$(reads ch.docs)|$(reads ch.topics)|$(reads ch.posts)" "id owner_id parent_id|id owner_id|id owner_id parent_id|id shelf_id topic_id"
 same "a column no rule reads is dropped, from a table that has rules on inserts, updates and a column" \
   "$(PSQL -c "ALTER TABLE ch.notes DROP COLUMN title" -c "ALTER TABLE ch.notes DROP COLUMN body" 2>&1)" ""
 same "... from one whose rows are in part stored in a table that inherits" "$(PSQL -c "ALTER TABLE ch.docs DROP COLUMN body" 2>&1)" ""
@@ -456,7 +467,7 @@ D=$DB4 PSQL -c "CREATE TABLE ch.jobs (id bigint PRIMARY KEY, state text NOT NULL
   -c "CREATE TABLE ch.tallies (a int, b int, c int, twice int GENERATED ALWAYS AS (c * 2) STORED)"
 # (another table's column worked out, numbered as is_done is: what works is_done out is is_done's own alone, not this
 # one's, which names a column jobs doesn't have)
-{ cat tests/children.authz; printf '\ntype job = ch.jobs\n  owner : user = owner_id\n\nrules ch.jobs\n  select : owner or {this.state <> \x27hid\x27}\n  update : signed_in\n  update state after : owner or not {this.is_done}\n'; } > "$T/virtual.authz"
+{ cat tests/children.authz; printf '\ntype job = ch.jobs\n  owner : user = owner_id\n\nrules ch.jobs\n  select : owner or {this.state <> \x27hid\x27}\n  update : signed_in\n  update state after : owner or not {this.is_done}\n  update owner_id : {current_user = \x27app_user\x27} and {this.state <> \x27kept\x27}\n'; } > "$T/virtual.authz"
 out=$(python3 cli/rowstile_cli.py --db "dbname=$DB4" apply "$T/virtual.authz" --force 2>&1) || bad "a rule on the row after, on a table with such a column: applying" "$out"
 # (the statement's trigger asks what the app role may ask of a row, which answers for a row the user may select, and
 # it asks it of every row whose state changed, moved or not. An update with a WHERE or a RETURNING that hides a row
@@ -490,6 +501,12 @@ same "lint says, of the tables whose rule on the row after is checked after the 
 D=$DB4 PSQL -c "GRANT REFERENCES ON ch.jobs_low TO app_user"
 same "... and that the app role may make foreign keys to a partition, with what to take back: an info" \
   "$(D=$DB4 PSQL -c "SELECT severity FROM authz.lint() WHERE object = 'ch.jobs_low' AND problem LIKE 'is a partition of ch.jobs (or inherits from it), and app_user may make foreign keys to it (REFERENCES, which GRANT ALL gives)%REVOKE REFERENCES ON ch.jobs_low FROM app_user'")" info
+# (the functions that check a rule run as the owner: they are handed the role that writes)
+same "a rule's current_user is the role that writes, as in a policy, where a rule on a column is checked" \
+  "$(D=$DB4 as 1 -c "BEGIN" -c "$(changed "UPDATE ch.jobs SET owner_id = 2 WHERE id = 501")" -c "ROLLBACK")" 1
+same "... and where its refusal says why" \
+  "$(D=$DB4 PSQL -v VERBOSITY=default -c "SET authz.user_id = 1" -c "SET ROLE app_user" -c "UPDATE ch.jobs SET owner_id = 2 WHERE id = 3" 2>&1 | grep -E 'current_user|state' | tr '\n' '|')" \
+  "ERROR:  changing owner_id of ch.jobs 3 needs: {current_user = 'app_user'} and {this.state <> 'kept'}|DETAIL:  no   update owner_id : {current_user = 'app_user'} and {this.state <> 'kept'}  (line 91)|  yes  {current_user = 'app_user'}|  no   {this.state <> 'kept'}|"
 dropdb --if-exists "$DB4" 2>/dev/null
 
 echo "-- the sync index (a preview): what is written through a partition, or a table that inherits, reaches it"

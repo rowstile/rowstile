@@ -416,10 +416,18 @@ For one suite, start a container and run it inside:
   (a plpgsql body, dynamic SQL). `tests/own_ids.sql` (`adversarial.sh`) checks that nothing the app role may name
   tells apart two objects the API can't.
 - Refused writes: every `WITH CHECK` is `check OR authz_gen."<table>:<cmd>:refuse"((t.*)::table)` (a whole-row
-  value: it names no column, so a column no rule reads can be dropped); the explaining functions are BEGIN ATOMIC in
+  value: it names no column, so a column no rule reads can be dropped); the explaining functions are PL/pgSQL in
   `authz_gen`, run as the app role, answer only for a new row or one the user may select
   (`authz_int."<table>:seen"`), and must never leak what `authz.explain` wouldn't. Anything that evaluates a
   policy's `with_check` text on rows (difftest) must drop the refuse call (`without_refusals`).
+- No value of an app table's row type in a BEGIN ATOMIC body or a trigger's `WHEN` (a row parameter read, a
+  `NULL::table`): from PostgreSQL 16.16, 17.12 and 18.7 on (CVE-2026-6460) it stops the app's `ALTER TABLE`s that lay
+  the rows out again (a column added `NOT NULL` with a default or generated, a column's type). The functions that
+  check a rule on a row (`<table>:<cmd>:items`, `<table>:column ...:holds`) are bodies in a string that run as the
+  owner (`SECURITY DEFINER SET search_path FROM CURRENT`), reading only the row: what reads more is in definer views
+  and functions already. They take the caller's role (`authz__role`), which a condition's `current_user`,
+  `current_role` and `user` name there (`sqlutil.as_caller`); a trigger's `WHEN` passes the row as `to_jsonb(NEW)`.
+  `tests/children.sh` runs those ALTERs.
 - Named tests never run on `apply` (they write); each runs in a subtransaction that always rolls back. New test
   syntax gets a case in `tests/policy_errors.py` and the grammars: `editor/syntaxes/` (TextMate) and
   `editor/tree-sitter-authz/` (Tree-sitter: `grammar.js`, then `npx tree-sitter generate`, a corpus case).

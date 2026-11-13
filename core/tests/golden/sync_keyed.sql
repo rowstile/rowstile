@@ -3820,9 +3820,8 @@ BEGIN
     OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = "folders"."id" AND authz_int."folder__view__has"(s."parent_id"))));
 END $f$;
 
-CREATE FUNCTION authz_gen."app.folders:insert:items"(p_row "app"."folders") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.folders:insert:items"(p_row "app"."folders", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     AND authz_int."folder__edit__has"("folders"."parent_id")), false),
@@ -3831,13 +3830,13 @@ BEGIN ATOMIC
     coalesce(authz_int."folder__edit__has"("folders"."parent_id"), false),
     coalesce(coalesce("folders"."owner_id" = (SELECT authz.uid()), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders"
+$f$;
 
 CREATE FUNCTION authz_gen."app.folders:insert:why"(p_row "app"."folders") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.folders:insert:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.folders:insert:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'insert : parent.edit and owner  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders insert'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -3867,9 +3866,8 @@ BEGIN
     HINT = 'rowstile help AZ709';
 END $f$;
 
-CREATE FUNCTION authz_gen."app.folders:update:items"(p_row "app"."folders") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.folders:update:items"(p_row "app"."folders", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
@@ -3884,13 +3882,13 @@ BEGIN ATOMIC
     OR (coalesce((inherit), false)
     AND authz_int."folder__edit__has"("folders"."parent_id"))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders"
+$f$;
 
 CREATE FUNCTION authz_gen."app.folders:update:why"(p_row "app"."folders", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.folders:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.folders:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -3917,9 +3915,8 @@ BEGIN
     HINT = 'the update rule must hold on the row after the change too (Postgres checks both) (rowstile help AZ709)';
 END $f$;
 
-CREATE FUNCTION authz_gen."app.folders:delete:items"(p_row "app"."folders") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.folders:delete:items"(p_row "app"."folders", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
@@ -3932,13 +3929,13 @@ BEGIN ATOMIC
     OR (coalesce((inherit), false)
     AND authz_int."folder__share__has"("folders"."parent_id"))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders"
+$f$;
 
 CREATE FUNCTION authz_gen."app.folders:delete:why"(p_row "app"."folders") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.folders:delete:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.folders:delete:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'delete : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders delete'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4032,9 +4029,8 @@ BEGIN
     AND authz_int."folder__view__has"("files"."folder_id"))));
 END $f$;
 
-CREATE FUNCTION authz_gen."app.files:insert:items"(p_row "app"."files") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.files:insert:items"(p_row "app"."files", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     AND authz_int."folder__edit__has"("files"."folder_id")), false),
@@ -4043,13 +4039,13 @@ BEGIN ATOMIC
     coalesce(authz_int."folder__edit__has"("files"."folder_id"), false),
     coalesce(coalesce("files"."owner_id" = (SELECT authz.uid()), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files"
+$f$;
 
 CREATE FUNCTION authz_gen."app.files:insert:why"(p_row "app"."files") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.files:insert:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.files:insert:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'insert : folder.edit and owner  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files insert'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4079,9 +4075,8 @@ BEGIN
     HINT = 'rowstile help AZ709';
 END $f$;
 
-CREATE FUNCTION authz_gen."app.files:update:items"(p_row "app"."files") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.files:update:items"(p_row "app"."files", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__edit__has"("files"."folder_id")), false),
@@ -4090,13 +4085,13 @@ BEGIN ATOMIC
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__edit__has"("files"."folder_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files"
+$f$;
 
 CREATE FUNCTION authz_gen."app.files:update:why"(p_row "app"."files", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.files:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.files:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4123,9 +4118,8 @@ BEGIN
     HINT = 'the update rule must hold on the row after the change too (Postgres checks both) (rowstile help AZ709)';
 END $f$;
 
-CREATE FUNCTION authz_gen."app.files:delete:items"(p_row "app"."files") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.files:delete:items"(p_row "app"."files", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__edit__has"("files"."folder_id")), false),
@@ -4134,13 +4128,13 @@ BEGIN ATOMIC
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__edit__has"("files"."folder_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files"
+$f$;
 
 CREATE FUNCTION authz_gen."app.files:delete:why"(p_row "app"."files") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.files:delete:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.files:delete:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'delete : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files delete'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4210,9 +4204,8 @@ CREATE POLICY "authz_delete" ON "app"."files" FOR DELETE TO "app_user"
 
 COMMENT ON POLICY "authz_delete" ON "app"."files" IS 'rowstile';
 
-CREATE FUNCTION authz_gen."app.folders:column parent_id after:items"(p_row "app"."folders") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.folders:column parent_id after:items"(p_row "app"."folders", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
     coalesce((authz_int."folder__edit__has"("folders"."parent_id")
     OR (coalesce((parent_id is null), false)
@@ -4234,13 +4227,13 @@ BEGIN ATOMIC
     OR (coalesce((inherit), false)
     AND authz_int."folder__share__has"("folders"."parent_id"))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[7]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders"
+$f$;
 
 CREATE FUNCTION authz_gen."app.folders:column parent_id after:why"(p_row "app"."folders") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.folders:column parent_id after:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.folders:column parent_id after:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update parent_id after : parent.edit or ({parent_id is null} and share)  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders update parent_id after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4261,17 +4254,17 @@ END $f$;
 
 -- app.folders update parent_id after (line 74): parent.edit or ({parent_id is null} and share)
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION authz_int."app.folders:column parent_id after:holds"(p_row "app"."folders") RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION authz_int."app.folders:column parent_id after:holds"(p_row jsonb, authz__role name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT coalesce((authz_int."folder__edit__has"("folders"."parent_id")
     OR (coalesce((parent_id is null), false)
     AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_int."folder__share__has"("folders"."parent_id"))))), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+    AND authz_int."folder__share__has"("folders"."parent_id"))))), false) FROM pg_catalog.jsonb_populate_record(NULL::"app"."folders", p_row) AS "folders"
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.folders:column parent_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -4307,13 +4300,13 @@ DO $tr$ BEGIN
     EXECUTE 'CREATE TRIGGER "authz_update_after parent_id" AFTER UPDATE ON "app"."folders" FOR EACH ROW
   WHEN ((OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
     AND pg_catalog.row_security_active(''"app"."folders"''::pg_catalog.regclass)
-    AND NOT authz_int."app.folders:column parent_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."app.folders:column parent_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."app.folders:column parent_id after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after parent_id" BEFORE UPDATE ON "app"."folders" FOR EACH ROW
   WHEN ((OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
     AND pg_catalog.row_security_active(''"app"."folders"''::pg_catalog.regclass)
-    AND NOT authz_int."app.folders:column parent_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."app.folders:column parent_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."app.folders:column parent_id after"()';
   END IF;
 END $tr$;
@@ -4350,7 +4343,7 @@ BEGIN
       EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
         || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
     END IF;
-    IF NOT (authz_gen."app.folders:column parent_id after:items"(v_row))[1] THEN
+    IF NOT (authz_gen."app.folders:column parent_id after:items"(v_row, current_user))[1] THEN
       BEGIN
         v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.folders:column parent_id after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
@@ -4370,9 +4363,8 @@ DO $tr$ BEGIN
   END IF;
 END $tr$;
 
-CREATE FUNCTION authz_gen."app.folders:column id, owner_id, org_id, inherit:items"(p_row "app"."folders") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.folders:column id, owner_id, org_id, inherit:items"(p_row "app"."folders", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
@@ -4385,13 +4377,13 @@ BEGIN ATOMIC
     OR (coalesce((inherit), false)
     AND authz_int."folder__share__has"("folders"."parent_id"))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders"
+$f$;
 
 CREATE FUNCTION authz_gen."app.folders:column id, owner_id, org_id, inherit:why"(p_row "app"."folders") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.folders:column id, owner_id, org_id, inherit:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.folders:column id, owner_id, org_id, inherit:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update id, owner_id, org_id, inherit : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders update id, owner_id, org_id, inherit'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4405,15 +4397,15 @@ END $f$;
 
 -- app.folders update id, owner_id, org_id, inherit (line 75): share
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit:holds"(p_row "app"."folders") RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit:holds"(p_row jsonb, authz__role name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_int."folder__share__has"("folders"."parent_id"))), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+    AND authz_int."folder__share__has"("folders"."parent_id"))), false) FROM pg_catalog.jsonb_populate_record(NULL::"app"."folders", p_row) AS "folders"
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -4448,25 +4440,24 @@ CREATE TRIGGER "authz_update id, owner_id, org_id, inherit" BEFORE UPDATE ON "ap
      OR OLD."org_id" IS DISTINCT FROM NEW."org_id"
      OR OLD."inherit" IS DISTINCT FROM NEW."inherit")
     AND pg_catalog.row_security_active('"app"."folders"'::pg_catalog.regclass)
-    AND NOT authz_int."app.folders:column id, owner_id, org_id, inherit:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(OLD))))
+    AND NOT authz_int."app.folders:column id, owner_id, org_id, inherit:holds"(pg_catalog.to_jsonb(OLD), current_user))
   EXECUTE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit"();
 
-CREATE FUNCTION authz_gen."app.files:column folder_id after:items"(p_row "app"."files") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.files:column folder_id after:items"(p_row "app"."files", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
     coalesce(authz_int."folder__edit__has"("files"."folder_id"), false),
     coalesce((SELECT authz_int.scope_cmd('app.files', 'update')), false),
     coalesce(true, false),
     coalesce(authz_int."folder__edit__has"("files"."folder_id"), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files"
+$f$;
 
 CREATE FUNCTION authz_gen."app.files:column folder_id after:why"(p_row "app"."files") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.files:column folder_id after:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.files:column folder_id after:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update folder_id after : folder.edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files update folder_id after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4482,12 +4473,12 @@ END $f$;
 
 -- app.files update folder_id after (line 82): folder.edit
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION authz_int."app.files:column folder_id after:holds"(p_row "app"."files") RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
-  SELECT coalesce(authz_int."folder__edit__has"("files"."folder_id"), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION authz_int."app.files:column folder_id after:holds"(p_row jsonb, authz__role name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+  SELECT coalesce(authz_int."folder__edit__has"("files"."folder_id"), false) FROM pg_catalog.jsonb_populate_record(NULL::"app"."files", p_row) AS "files"
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.files:column folder_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -4523,13 +4514,13 @@ DO $tr$ BEGIN
     EXECUTE 'CREATE TRIGGER "authz_update_after folder_id" AFTER UPDATE ON "app"."files" FOR EACH ROW
   WHEN ((OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
     AND pg_catalog.row_security_active(''"app"."files"''::pg_catalog.regclass)
-    AND NOT authz_int."app.files:column folder_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."app.files:column folder_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."app.files:column folder_id after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after folder_id" BEFORE UPDATE ON "app"."files" FOR EACH ROW
   WHEN ((OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
     AND pg_catalog.row_security_active(''"app"."files"''::pg_catalog.regclass)
-    AND NOT authz_int."app.files:column folder_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."app.files:column folder_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."app.files:column folder_id after"()';
   END IF;
 END $tr$;
@@ -4566,7 +4557,7 @@ BEGIN
       EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
         || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
     END IF;
-    IF NOT (authz_gen."app.files:column folder_id after:items"(v_row))[1] THEN
+    IF NOT (authz_gen."app.files:column folder_id after:items"(v_row, current_user))[1] THEN
       BEGIN
         v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.files:column folder_id after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
@@ -4586,9 +4577,8 @@ DO $tr$ BEGIN
   END IF;
 END $tr$;
 
-CREATE FUNCTION authz_gen."app.files:column id, owner_id, confidential:items"(p_row "app"."files") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."app.files:column id, owner_id, confidential:items"(p_row "app"."files", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__share__has"("files"."folder_id")), false),
@@ -4597,13 +4587,13 @@ BEGIN ATOMIC
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__share__has"("files"."folder_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files"
+$f$;
 
 CREATE FUNCTION authz_gen."app.files:column id, owner_id, confidential:why"(p_row "app"."files") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.files:column id, owner_id, confidential:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.files:column id, owner_id, confidential:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update id, owner_id, confidential : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files update id, owner_id, confidential'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4617,13 +4607,13 @@ END $f$;
 
 -- app.files update id, owner_id, confidential (line 83): share
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION authz_int."app.files:column id, owner_id, confidential:holds"(p_row "app"."files") RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION authz_int."app.files:column id, owner_id, confidential:holds"(p_row jsonb, authz__role name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_int."folder__share__has"("files"."folder_id")), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+    OR authz_int."folder__share__has"("files"."folder_id")), false) FROM pg_catalog.jsonb_populate_record(NULL::"app"."files", p_row) AS "files"
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.files:column id, owner_id, confidential"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -4657,7 +4647,7 @@ CREATE TRIGGER "authz_update id, owner_id, confidential" BEFORE UPDATE ON "app".
      OR OLD."owner_id" IS DISTINCT FROM NEW."owner_id"
      OR OLD."confidential" IS DISTINCT FROM NEW."confidential")
     AND pg_catalog.row_security_active('"app"."files"'::pg_catalog.regclass)
-    AND NOT authz_int."app.files:column id, owner_id, confidential:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(OLD))))
+    AND NOT authz_int."app.files:column id, owner_id, confidential:holds"(pg_catalog.to_jsonb(OLD), current_user))
   EXECUTE FUNCTION authz_int."app.files:column id, owner_id, confidential"();
 
 -- Foreign keys that delete or change governed rows skip row-level security, unless a `cascade from` line

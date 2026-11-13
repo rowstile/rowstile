@@ -4851,22 +4851,21 @@ BEGIN
   RETURN NOT EXISTS (SELECT 1 FROM "cx"."notes" o WHERE o."id" = p_id);
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.notes:insert:items"(p_row "cx"."notes") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.notes:insert:items"(p_row "cx"."notes", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.notes:seen"("notes"."id") THEN ARRAY[
     coalesce(coalesce("notes"."author_id" = (SELECT authz.uid()), false), false),
     coalesce((SELECT authz_int.scope_cmd('cx.notes', 'insert')), false),
     coalesce(true, false),
     coalesce(coalesce("notes"."author_id" = (SELECT authz.uid()), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "notes";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "notes"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.notes:insert:why"(p_row "cx"."notes") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.notes:insert:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.notes:insert:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'insert : write  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.notes insert'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4936,9 +4935,8 @@ BEGIN
     AND coalesce((not archived), false)));
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.folders:update:items"(p_row "cx"."folders") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.folders:update:items"(p_row "cx"."folders", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.folders:seen"("folders"."id") THEN ARRAY[
     coalesce(((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR (authz_int."folder__check_383ac878f2"(("folders".*)::"cx"."folders")
@@ -4952,13 +4950,13 @@ BEGIN ATOMIC
     AND (("folders"."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN "folders"."parent_id" END)::bigint))))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.folders:update:why"(p_row "cx"."folders", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.folders:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.folders:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.folders update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4986,9 +4984,8 @@ BEGIN
     HINT = 'the update rule must hold on the row after the change too (Postgres checks both) (rowstile help AZ709)';
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.folders:delete:items"(p_row "cx"."folders") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.folders:delete:items"(p_row "cx"."folders", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.folders:seen"("folders"."id") THEN ARRAY[
     coalesce(((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR (coalesce((owner_id is null /* this.owner_id: nobody's */ and parent_type <> $$this.id$$ and parent_type <> e'it\'s' and parent_type <> 'this.id''s' and id <>-1), false)
@@ -5002,13 +4999,13 @@ BEGIN ATOMIC
     AND (("folders"."parent_type" = 'folder' AND authz_int."folder__file__has"((CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__file" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN "folders"."parent_id" END)::bigint))))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.folders:delete:why"(p_row "cx"."folders") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.folders:delete:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.folders:delete:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'delete : file  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.folders delete'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -5094,9 +5091,8 @@ BEGIN
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = "regions"."id")));
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.regions:update:items"(p_row "cx"."regions") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.regions:update:items"(p_row "cx"."regions", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.regions:seen"("regions"."id") THEN ARRAY[
     coalesce((coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = "regions"."id")), false),
@@ -5105,13 +5101,13 @@ BEGIN ATOMIC
     coalesce((coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = "regions"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "regions";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "regions"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.regions:update:why"(p_row "cx"."regions", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.regions:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.regions:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : rename  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.regions update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -5189,9 +5185,8 @@ BEGIN
     AND coalesce((not exists (select 1 from cx.closed c where c.site_id = "sites".id)), false)));
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.sites:update:items"(p_row "cx"."sites") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.sites:update:items"(p_row "cx"."sites", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.sites:seen"("sites"."id") THEN ARRAY[
     coalesce(((EXISTS (SELECT 1 FROM authz_int."region__chief" v WHERE v.id = "sites"."region_id")
     OR EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = "sites"."id"))
@@ -5201,13 +5196,13 @@ BEGIN ATOMIC
     coalesce((EXISTS (SELECT 1 FROM authz_int."region__chief" v WHERE v.id = "sites"."region_id")
     OR EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = "sites"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "sites";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "sites"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.sites:update:why"(p_row "cx"."sites", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.sites:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.sites:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : guard  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.sites update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -5288,9 +5283,8 @@ BEGIN
     OR EXISTS (SELECT 1 FROM authz_int."project__host__view" v WHERE v.id = "projects"."id")));
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.projects:update:items"(p_row "cx"."projects") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.projects:update:items"(p_row "cx"."projects", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.projects:seen"("projects"."id") THEN ARRAY[
     coalesce((coalesce("projects"."lead_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."project__inside__edit" v WHERE v.id = "projects"."id")
@@ -5301,13 +5295,13 @@ BEGIN ATOMIC
     OR EXISTS (SELECT 1 FROM authz_int."project__inside__edit" v WHERE v.id = "projects"."id")
     OR EXISTS (SELECT 1 FROM authz_int."project__host__edit" v WHERE v.id = "projects"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "projects";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "projects"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.projects:update:why"(p_row "cx"."projects", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.projects:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.projects:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.projects update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -5334,9 +5328,8 @@ BEGIN
     HINT = 'the update rule must hold on the row after the change too (Postgres checks both) (rowstile help AZ709)';
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.projects:update_after:items"(p_row "cx"."projects") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.projects:update_after:items"(p_row "cx"."projects", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.projects:seen"("projects"."id") THEN ARRAY[
     coalesce((coalesce("projects"."lead_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."project__inside__edit" v WHERE v.id = "projects"."id")
@@ -5347,13 +5340,13 @@ BEGIN ATOMIC
     OR EXISTS (SELECT 1 FROM authz_int."project__inside__edit" v WHERE v.id = "projects"."id")
     OR EXISTS (SELECT 1 FROM authz_int."project__host__edit" v WHERE v.id = "projects"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "projects";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "projects"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.projects:update_after:why"(p_row "cx"."projects") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.projects:update_after:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.projects:update_after:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update after : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.projects update after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -5377,9 +5370,8 @@ BEGIN
     HINT = 'rowstile help AZ709';
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.projects:delete:items"(p_row "cx"."projects") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.projects:delete:items"(p_row "cx"."projects", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.projects:seen"("projects"."id") THEN ARRAY[
     coalesce((coalesce("projects"."lead_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."project__backer__fund" v WHERE v.id = "projects"."id")), false),
@@ -5388,13 +5380,13 @@ BEGIN ATOMIC
     coalesce((coalesce("projects"."lead_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."project__backer__fund" v WHERE v.id = "projects"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "projects";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "projects"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.projects:delete:why"(p_row "cx"."projects") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.projects:delete:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.projects:delete:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'delete : fund  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.projects delete'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''

@@ -118,10 +118,8 @@ def read(path: str) -> str:
 REFUSE = re.compile(r'authz_gen\."[^"]*:refuse"\(')
 # a column rule's check, in its trigger's WHEN (kept parsed, as a policy is, so it may call what is in authz_int): the
 # function that says whether the rule holds (`<table>:column_<n>:holds`, or that name shortened with a hash when it is
-# longer than Postgres allows), and the row it checks
-COLUMN_WHEN = re.compile(
-    r"NOT (authz_int\.\"[^\"]+\")\(jsonb_populate_record\(NULL::[^,]+, to_jsonb\((old|new)(?:\.\*)?\)\)\)", re.I
-)
+# longer than Postgres allows), and the row it checks (as jsonb, with the role that writes)
+COLUMN_WHEN = re.compile(r"NOT (authz_int\.\"[^\"]+\")\(to_jsonb\((old|new)(?:\.\*)?\), CURRENT_USER\)", re.I)
 
 
 def refusals_of(pol: Policy) -> re.Pattern[str]:
@@ -658,7 +656,8 @@ class Checker:
                     f"{r.table}, the rule on {', '.join(r.columns)}: its trigger {name} is missing, or doesn't "
                     f"check the row {'after' if r.command == 'update after' else 'before'} the change"
                 )
-            self.column_rules.append((r, f"{w.group(1)}(the_row)"))  # asked of each row, FROM <table> the_row
+            # asked of each row, FROM <table> the_row, as the app role
+            self.column_rules.append((r, f"{w.group(1)}(to_jsonb(the_row), current_user)"))
         self.checks = 0  # how many snapshots so far: who is asked with a scope, and which
         self.scoped: tuple[str, str] = ("", "read")
         # the change feed: where it was after the last snapshot, what each user held then, and who signed in

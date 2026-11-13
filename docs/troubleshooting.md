@@ -187,6 +187,15 @@ it in two steps: change the policy so it doesn't use the column and write its mi
 migrate`), then drop the column in a later migration. Don't add `CASCADE`: it drops what rowstile made
 with the column, the table's row-level security policies among them.
 
+## "cannot alter table ... because function ... uses its row type" in a schema migration
+
+PostgreSQL 16.16, 17.12 and 18.7 refuse to add a column `NOT NULL` with a default or a stored generated one, or
+to change a column's type, where a function made with `BEGIN ATOMIC` or a trigger's `WHEN` uses the table's row
+type. Rowstile releases before 0.1.0-beta.5 made such functions and triggers for the tables with rules on writes
+or on a column: the message names one (`authz_gen."app.files:insert:items"(app.files)`, or a trigger
+`authz_update ...`). Upgrade rowstile and apply the policy again (`rowstile apply`, or the migration `rowstile
+migrate` writes), then run the schema migration. Don't drop what the message names: the rule is checked there.
+
 ## A named test fails with "given x = {...} returned 0 rows"
 
 A `given` that names a value must return exactly one row: end the statement with `RETURNING id` (or the key's

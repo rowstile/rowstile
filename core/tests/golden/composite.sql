@@ -4512,9 +4512,8 @@ BEGIN
     OR authz_int."user__oversee__has"("files"."owner_id")));
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.files:insert:items"(p_row "cx"."files") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.files:insert:items"(p_row "cx"."files", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.files:seen"(ROW("files"."org_id"::bigint, "files"."id"::bigint)::text) THEN ARRAY[
     coalesce((coalesce((owner_id = (SELECT authz.uid())), false)
     AND authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END))), false),
@@ -4523,13 +4522,13 @@ BEGIN ATOMIC
     coalesce(authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END)), false),
     coalesce(coalesce((owner_id = (SELECT authz.uid())), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.files:insert:why"(p_row "cx"."files") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.files:insert:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.files:insert:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'insert : folder.edit and {owner_id = authz.uid()}  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.files insert'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4559,9 +4558,8 @@ BEGIN
     HINT = 'rowstile help AZ709';
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.files:update:items"(p_row "cx"."files") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.files:update:items"(p_row "cx"."files", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.files:seen"(ROW("files"."org_id"::bigint, "files"."id"::bigint)::text) THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR coalesce("files"."uploaded_by" = (SELECT authz_int."bot__me"()), false)
@@ -4572,13 +4570,13 @@ BEGIN ATOMIC
     OR coalesce("files"."uploaded_by" = (SELECT authz_int."bot__me"()), false)
     OR authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.files:update:why"(p_row "cx"."files", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.files:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.files:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.files update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4605,9 +4603,8 @@ BEGIN
     HINT = 'the update rule must hold on the row after the change too (Postgres checks both) (rowstile help AZ709)';
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.files:delete:items"(p_row "cx"."files") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.files:delete:items"(p_row "cx"."files", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.files:seen"(ROW("files"."org_id"::bigint, "files"."id"::bigint)::text) THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR coalesce("files"."uploaded_by" = (SELECT authz_int."bot__me"()), false)
@@ -4618,13 +4615,13 @@ BEGIN ATOMIC
     OR coalesce("files"."uploaded_by" = (SELECT authz_int."bot__me"()), false)
     OR authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.files:delete:why"(p_row "cx"."files") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.files:delete:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.files:delete:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'delete : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.files delete'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4712,9 +4709,8 @@ BEGIN
     OR EXISTS (SELECT 1 FROM authz_int."folder__parent__view:ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text))));
 END $f$;
 
-CREATE FUNCTION authz_gen."cx.folders:update:items"(p_row "cx"."folders") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.folders:update:items"(p_row "cx"."folders", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.folders:seen"(ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text) THEN ARRAY[
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
@@ -4731,13 +4727,13 @@ BEGIN ATOMIC
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN (CASE WHEN ("folders"."org_id", "folders"."parent_id") IS NOT NULL THEN ROW("folders"."org_id"::bigint, "folders"."parent_id"::bigint)::text END) END)))
     OR EXISTS (SELECT 1 FROM authz_int."folder__parent__edit:ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.folders:update:why"(p_row "cx"."folders", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.folders:update:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.folders:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.folders update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4815,22 +4811,21 @@ CREATE POLICY "authz_update" ON "cx"."folders" FOR UPDATE TO "app_user"
 
 COMMENT ON POLICY "authz_update" ON "cx"."folders" IS 'rowstile';
 
-CREATE FUNCTION authz_gen."cx.files:column folder_id after:items"(p_row "cx"."files") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.files:column folder_id after:items"(p_row "cx"."files", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.files:seen"(ROW("files"."org_id"::bigint, "files"."id"::bigint)::text) THEN ARRAY[
     coalesce(authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END)), false),
     coalesce((SELECT authz_int.scope_cmd('cx.files', 'update')), false),
     coalesce(true, false),
     coalesce(authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END)), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.files:column folder_id after:why"(p_row "cx"."files") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.files:column folder_id after:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.files:column folder_id after:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update folder_id after : folder.edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.files update folder_id after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4846,12 +4841,12 @@ END $f$;
 
 -- cx.files update folder_id after (line 54): folder.edit
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION authz_int."cx.files:column folder_id after:holds"(p_row "cx"."files") RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
-  SELECT coalesce(authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END)), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
-END;
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION authz_int."cx.files:column folder_id after:holds"(p_row jsonb, authz__role name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+  SELECT coalesce(authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END)), false) FROM pg_catalog.jsonb_populate_record(NULL::"cx"."files", p_row) AS "files"
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."cx.files:column folder_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -4887,13 +4882,13 @@ DO $tr$ BEGIN
     EXECUTE 'CREATE TRIGGER "authz_update_after folder_id" AFTER UPDATE ON "cx"."files" FOR EACH ROW
   WHEN ((OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
     AND pg_catalog.row_security_active(''"cx"."files"''::pg_catalog.regclass)
-    AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"cx"."files", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."cx.files:column folder_id after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after folder_id" BEFORE UPDATE ON "cx"."files" FOR EACH ROW
   WHEN ((OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
     AND pg_catalog.row_security_active(''"cx"."files"''::pg_catalog.regclass)
-    AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"cx"."files", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."cx.files:column folder_id after"()';
   END IF;
 END $tr$;
@@ -4930,7 +4925,7 @@ BEGIN
       EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
         || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
     END IF;
-    IF NOT (authz_gen."cx.files:column folder_id after:items"(v_row))[1] THEN
+    IF NOT (authz_gen."cx.files:column folder_id after:items"(v_row, current_user))[1] THEN
       BEGIN
         v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.files:column folder_id after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
@@ -4950,9 +4945,8 @@ DO $tr$ BEGIN
   END IF;
 END $tr$;
 
-CREATE FUNCTION authz_gen."cx.folders:column parent_type, parent_id after:items"(p_row "cx"."folders") RETURNS boolean[]
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+CREATE FUNCTION authz_gen."cx.folders:column parent_type, parent_id after:items"(p_row "cx"."folders", authz__role name) RETURNS boolean[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT CASE WHEN authz_int."cx.folders:seen"(ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text) THEN ARRAY[
     coalesce((coalesce((parent_id is null), false)
     OR (("folders"."parent_type" = 'folder' AND authz_int."folder__edit__has"((CASE WHEN "folders"."parent_type" = 'folder' THEN (CASE WHEN ("folders"."org_id", "folders"."parent_id") IS NOT NULL THEN ROW("folders"."org_id"::bigint, "folders"."parent_id"::bigint)::text END) END)))
@@ -4965,13 +4959,13 @@ BEGIN ATOMIC
     OR EXISTS (SELECT 1 FROM authz_int."folder__parent__edit:ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text)), false),
     coalesce(coalesce((parent_id is null), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders"
+$f$;
 
 CREATE FUNCTION authz_gen."cx.folders:column parent_type, parent_id after:why"(p_row "cx"."folders") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."cx.folders:column parent_type, parent_id after:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."cx.folders:column parent_type, parent_id after:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update parent_type, parent_id after : parent.edit or {parent_id is null}  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.folders update parent_type, parent_id after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT CASE WHEN coalesce(pg_catalog.current_setting('authz.acting_user', true), '') <> ''
@@ -4994,15 +4988,15 @@ END $f$;
 
 -- cx.folders update parent_type, parent_id after (line 60): parent.edit or {parent_id is null}
 -- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
--- role uses it without naming it (authz_int)
-CREATE FUNCTION authz_int."cx.folders:column parent_type, parent_id after:holds"(p_row "cx"."folders") RETURNS boolean
-LANGUAGE sql STABLE
-BEGIN ATOMIC
+-- role uses it without naming it (authz_int). The row comes as jsonb, read by column name (a partition's columns may
+-- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
+CREATE FUNCTION authz_int."cx.folders:column parent_type, parent_id after:holds"(p_row jsonb, authz__role name) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT coalesce((coalesce((parent_id is null), false)
     OR (("folders"."parent_type" = 'folder' AND authz_int."folder__edit__has"((CASE WHEN "folders"."parent_type" = 'folder' THEN (CASE WHEN ("folders"."org_id", "folders"."parent_id") IS NOT NULL THEN ROW("folders"."org_id"::bigint, "folders"."parent_id"::bigint)::text END) END)))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN (CASE WHEN ("folders"."org_id", "folders"."parent_id") IS NOT NULL THEN ROW("folders"."org_id"::bigint, "folders"."parent_id"::bigint)::text END) END)))
-    OR EXISTS (SELECT 1 FROM authz_int."folder__parent__edit:ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text))), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
-END;
+    OR EXISTS (SELECT 1 FROM authz_int."folder__parent__edit:ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text))), false) FROM pg_catalog.jsonb_populate_record(NULL::"cx"."folders", p_row) AS "folders"
+$f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
@@ -5039,14 +5033,14 @@ DO $tr$ BEGIN
   WHEN ((OLD."parent_type" IS DISTINCT FROM NEW."parent_type"
      OR OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
     AND pg_catalog.row_security_active(''"cx"."folders"''::pg_catalog.regclass)
-    AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"cx"."folders", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after parent_type, parent_id" BEFORE UPDATE ON "cx"."folders" FOR EACH ROW
   WHEN ((OLD."parent_type" IS DISTINCT FROM NEW."parent_type"
      OR OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
     AND pg_catalog.row_security_active(''"cx"."folders"''::pg_catalog.regclass)
-    AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"cx"."folders", pg_catalog.to_jsonb(NEW))))
+    AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
   EXECUTE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"()';
   END IF;
 END $tr$;
@@ -5083,7 +5077,7 @@ BEGIN
       EXECUTE 'SELECT (pg_catalog.jsonb_populate_record($1, pg_catalog.jsonb_build_object(' || v_virtual
         || '))).* FROM (SELECT ($1).*) AS r' INTO v_row USING v_row;
     END IF;
-    IF NOT (authz_gen."cx.folders:column parent_type, parent_id after:items"(v_row))[1] THEN
+    IF NOT (authz_gen."cx.folders:column parent_type, parent_id after:items"(v_row, current_user))[1] THEN
       BEGIN
         v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.folders:column parent_type, parent_id after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
