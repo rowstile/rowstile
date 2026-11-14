@@ -134,6 +134,17 @@ def search(pattern: str, text: str, flags: int = 0) -> re.Match[str]:
     return m
 
 
+def conventions() -> str:
+    """The rules for working on the repository: CLAUDE.md, then each area's file in .claude/rules/."""
+    repo = os.path.dirname(ROOT)
+    paths = [os.path.join(repo, "CLAUDE.md"), *sorted(glob.glob(os.path.join(repo, ".claude", "rules", "*.md")))]
+    texts: list[str] = []
+    for path in paths:
+        with open(path, encoding="utf-8") as fh:
+            texts.append(fh.read())
+    return "\n".join(texts)
+
+
 class KeyTypeChecks(unittest.TestCase):
     """pg_input_is_valid(text, type name) is given the type by a literal or a subquery, never a PL/pgSQL variable:
     Postgres keeps the type it looked up for the first value of a variable there, for each later call from the same
@@ -15208,7 +15219,8 @@ class Lists(unittest.TestCase):
         self.assertEqual(sorted(self.TOOLS), sorted(migrations.TOOLS))
         # the list in parentheses that names Alembic, on each page that has one
         for rel in ("README.md", "llms.txt", "site/index.md", "CLAUDE.md"):
-            listed = search(r"\(([^()]*\bAlembic\b[^()]*)\)", self.page(*rel.split("/"))).group(1)
+            text = conventions() if rel == "CLAUDE.md" else self.page(*rel.split("/"))
+            listed = search(r"\(([^()]*\bAlembic\b[^()]*)\)", text).group(1)
             self.assertEqual(self.missing(listed, self.TOOLS.values()), [], rel)
         said = search(r'\n  "reference/migrations\.md": "([^"]*)",\n', self.page("site", "pages.mjs")).group(1)
         self.assertEqual(self.missing(said, self.TOOLS.values()), [], "site/pages.mjs")
@@ -15232,13 +15244,13 @@ class Lists(unittest.TestCase):
         at = lines.index("  tools:")
         above = list(itertools.takewhile(lambda x: x.startswith("  #"), reversed(lines[:at])))
         core = search(r"\n\| `tests/migration_tools\.sh` \|(.*)\n", self.page("core", "README.md")).group(1)
-        layout = search(r"migrations `rowstile migrate` writes run by ([^(]*)\(", self.page("CLAUDE.md")).group(1)
+        layout = search(r"migrations `rowstile migrate` writes run by ([^(]*)\(", conventions()).group(1)
         for where, text in [
             ("its header", header.split("(")[0]),
             ("nightly.yml's top", search(r"\A((?:#.*\n)+)", nightly).group(1)),
             ("nightly.yml's tools job", "\n".join(reversed(above))),
             ("core/README.md", core),
-            ("CLAUDE.md", layout),
+            (".claude/rules/delivery.md", layout),
         ]:
             self.assertEqual(self.missing(text, names), [], where)
 
@@ -15256,10 +15268,10 @@ class Lists(unittest.TestCase):
                 self.assertIn(f"sdk/{folder}/README.md)", text, f"{rel} links the {name} SDK's README")
 
     def test_the_conventions_file_maps_each_part(self) -> None:
-        # the layout CLAUDE.md gives: each module of authzlib and cli, each SDK, each example, each reference page,
+        # the layout CLAUDE.md and .claude/rules/ give: each module of authzlib and cli, each SDK, each example, each reference page,
         # each TypeScript package and npm workspace, each language of rowstile client, each project ty checks with
         # its own environment and each folder tsc checks
-        layout = self.page("CLAUDE.md")
+        layout = conventions()
         names: list[str] = []
         for folder in ("authzlib", "cli"):
             names += [f"`{f}`" for f in sorted(os.listdir(os.path.join(ROOT, folder))) if f.endswith(".py")]
@@ -15284,10 +15296,10 @@ class Lists(unittest.TestCase):
         apps = search(r"for app in ([a-z ]+); do", ci).group(1).split()
         projects = [p for p in re.findall(r"ty@\S+ check --project (\S+)", ci) if "$" not in p]
         projects += [f"examples/{a}" for a in apps]
-        types = search(r"\n- Types: (.*?)\n- ", layout, re.S).group(1)
+        types = search(r"\n- Types: (.*?)(?=\n- |\n---\n|\Z)", layout, re.S).group(1)
         self.assertEqual(self.missing(types, projects), [])
         checked = search(r"for p in ([^;]*); do\n\s*npx tsc -p", ci).group(1).split()
-        javascript = search(r"\n- JavaScript is typed too: (.*?)\n- ", layout, re.S).group(1)
+        javascript = search(r"\n- JavaScript is typed too: (.*?)(?=\n- |\n---\n|\Z)", layout, re.S).group(1)
         self.assertEqual(self.missing(javascript, checked), [])
 
 
@@ -18891,7 +18903,7 @@ class Delivery(unittest.TestCase):
                     self.assertIsNone(limit, f"{path}: {name}")
                 else:
                     self.assertIsNotNone(limit, f"{path}: {name}: timeout-minutes")
-                    # ten at least (CLAUDE.md): a short limit fails a slow but healthy run on a busy runner
+                    # ten at least (.claude/rules/delivery.md): a short limit fails a slow but healthy run on a busy runner
                     self.assertGreaterEqual(int(limit.group(1)) if limit else 0, 10, f"{path}: {name}: timeout-minutes")
         # a part's suites get more than ci.sh gives them: ci.sh stops them first, and says what was still running
         part = int(search(r"then LIMIT=(\d+); fi", read("ci.sh")).group(1))
@@ -20412,7 +20424,13 @@ class Layout(unittest.TestCase):
     that only laid code out, which `git blame` skips, are commits of this history."""
 
     REPO = os.path.dirname(ROOT)
-    NAMED_IN = (".github/workflows/ci.yml", ".githooks/pre-commit", "CONTRIBUTING.md", "CLAUDE.md", "ruff.toml")
+    NAMED_IN = (
+        ".github/workflows/ci.yml",
+        ".githooks/pre-commit",
+        "CONTRIBUTING.md",
+        ".claude/rules/python.md",
+        "ruff.toml",
+    )
 
     def test_one_ruff_everywhere(self) -> None:
         versions: dict[str, set[str]] = {}
@@ -20489,11 +20507,12 @@ class Private(unittest.TestCase):
     SKIP: ClassVar[set[str]] = {"node_modules", "generated", "__pycache__", "dist", "out", "grammars"}
     # where git isn't asked (a checkout the suites' containers don't trust), the folders are walked: those whose
     # name starts with a dot are a tool's own (git's, an editor's, a cache), but for these
-    DOTTED: ClassVar[set[str]] = {".github", ".vitepress", ".githooks", ".mvn"}
-    # (two names that stay out of the repository too, in a file or a pull request; the conventions file keeps its own)
+    DOTTED: ClassVar[set[str]] = {".github", ".vitepress", ".githooks", ".mvn", ".claude"}
+    # (two names that stay out of the repository too, in a file or a pull request; the conventions keep theirs: the
+    # file at the root, and the folder of each area's rules, `.<name>/rules/`)
     WORDS = re.compile(
         r"\bADRs?" + r" ?\d{4}|docs/" + r"adr\b|\b(roadmap|v1-design|developer-experience|"
-        r"language-review)" + r"\.md\b|rowstile-" + r"internal|(?i:cl" + r"aude(?!\.md\b)|anth" + r"ropic)"
+        r"language-review)" + r"\.md\b|rowstile-" + r"internal|(?i:(?<!\.)cl" + r"aude(?!\.md\b)|anth" + r"ropic)"
     )
 
     def test_nothing_points_at_them(self) -> None:
