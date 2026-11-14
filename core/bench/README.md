@@ -12,6 +12,8 @@ writes, and the run reports for how long.
                                               # 16 GB for Docker (8 GB of shared buffers)
     KEEP=1 core/bench/scale.sh                # leave the container up (database authz_bench)
     core/bench/regress.sh                     # small run compared with this machine's baseline (CI runs it)
+    gh workflow run nightly.yml -f only=scale -f size=large   # a size (dev, large, medium, full) on one of
+                                              # GitHub's runners; the result is the run's `scale` file
 
 Each run starts a fresh Postgres container from `../Dockerfile` (4 GB shared buffers, 8 GB for `--full`; JIT
 off), loads

@@ -7,7 +7,7 @@
 #   3. the gate: 20 tree writes/s arriving steadily, with 400 reads/s at the same time (READ_RATE: another rate)
 #   4. one big move (a top folder) during steady writes: how long it takes, and how long others wait
 # Settings (environment, all set by scale.sh, which holds the sizes): FILES FOLDERS LEVELS USERS TEAMS DURATION
-# GATE_DURATION READ_RATE OUT
+# GATE_DURATION READ_RATE OUT, and BUILD_COMMIT (the commit that runs, for the result's first line; none: not said)
 # Exits 1 when a gate fails, when a read or a write of any step failed, was aborted or timed out, when the big move
 # failed, when authz.verify() doesn't say true after the writes, or when a listing fails.
 set -u
@@ -25,8 +25,11 @@ since() { python3 -c "print(f'{($(now) - $1):.2f}')"; }
 wrong=0
 : > "$OUT"; rm -rf "$LOGS"; mkdir -p "$LOGS"
 
-say "# rowstile scale benchmark ($(date -u +%Y-%m-%d), $(psql -X -At -d postgres -c 'SHOW server_version' | cut -d' ' -f1), rowstile $(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' authzlib/__init__.py))"
-say "# $FILES files, $FOLDERS folders $LEVELS levels deep, $USERS users, $TEAMS nested teams; $(nproc) CPUs shared by server and pgbench"
+# a result is quoted by its day, its build and its machine: its first lines say all three
+cpu=$(sed -n 's/^model name[^:]*: *//p' /proc/cpuinfo 2>/dev/null | head -n 1)
+mem=$(awk '/^MemTotal:/ {printf "%d", $2 / 1048576 + 0.5}' /proc/meminfo 2>/dev/null)
+say "# rowstile scale benchmark ($(date -u +%Y-%m-%d), $(psql -X -At -d postgres -c 'SHOW server_version' | cut -d' ' -f1), rowstile $(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' authzlib/__init__.py)${BUILD_COMMIT:+, commit $BUILD_COMMIT})"
+say "# $FILES files, $FOLDERS folders $LEVELS levels deep, $USERS users, $TEAMS nested teams; $(nproc) CPUs${cpu:+ ($cpu)}, ${mem:-?} GB of memory, shared by server and pgbench"
 say "# $(psql -X -At -d postgres -c "SELECT string_agg(name || '=' || current_setting(name), ', ' ORDER BY name) FROM pg_settings WHERE name IN ('shared_buffers', 'work_mem', 'max_connections', 'jit', 'synchronous_commit')")"
 say
 
