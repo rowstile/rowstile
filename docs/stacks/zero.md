@@ -12,7 +12,7 @@ index of who may read each row ([the sync index](../reference/sync.md)), and the
 index's filter to each query, for whoever the request signs in as.
 
 Everything here comes from [`integrations/zero`](../../integrations/zero), the conformance suite: a small Express
-app with Zero's two endpoints, zero-cache 1.11.0, and the checks on Zero's own client, in Node
+app with Zero's two endpoints, zero-cache 1.11.4, and the checks on Zero's own client, in Node
 ([`integrations/zero/test.sh`](../../integrations/zero/test.sh)). The reference is
 [Zero](../reference/sync.md#zero), in the sync index's page.
 
@@ -78,7 +78,7 @@ client's mutations, which the mutate endpoint keeps in each mutation's transacti
 docker run -e ZERO_UPSTREAM_DB="postgresql://conf_zero:...@db:5432/app" \
   -e ZERO_CVR_DB="postgresql://conf_zero:...@db:5432/app" -e ZERO_CHANGE_DB="postgresql://conf_zero:...@db:5432/app" \
   -e ZERO_APP_PUBLICATIONS=zero_data -e ZERO_QUERY_URL=https://app/api/zero/query \
-  -e ZERO_MUTATE_URL=https://app/api/zero/mutate -e ZERO_ADMIN_PASSWORD=... rocicorp/zero:1.11.0
+  -e ZERO_MUTATE_URL=https://app/api/zero/mutate -e ZERO_ADMIN_PASSWORD=... rocicorp/zero:1.11.4
 psql -U conf_zero -c "GRANT USAGE ON SCHEMA zero_0 TO conf_app" \
   -c "GRANT SELECT, INSERT, UPDATE ON zero_0.clients, zero_0.mutations TO conf_app"
 ```
