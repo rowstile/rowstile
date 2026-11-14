@@ -19,10 +19,19 @@ INSERT INTO app.users SELECT i, 'user_' || i FROM generate_series(1, :users) i;
 INSERT INTO app.orgs VALUES (1, 'Acme');
 -- users 1..10 are org admins (they may edit every folder); everyone is a member
 INSERT INTO app.org_members SELECT 1, i, CASE WHEN i <= 10 THEN 'admin' ELSE 'member' END FROM generate_series(1, :users) i;
+-- six more members, past the ones the workload draws from: step 6's readers (bench/run.sh). The first three are
+-- shared many folders (shares.sql); the last three are each the one member of a team of their own, which is given
+-- many folders (the end of this file). No folder or file of their own; nothing here draws a random number, so
+-- the rest of the data is what it was without them
+INSERT INTO app.users SELECT :users + k, 'holder_' || k FROM generate_series(1, 6) k;
+INSERT INTO app.org_members SELECT 1, :users + k, 'member' FROM generate_series(1, 6) k;
 -- teams: a tenth are top level, the rest nest under a lower-numbered team; 3 teams per user
 INSERT INTO app.teams SELECT i, 1, CASE WHEN i > :teams / 10 THEN 1 + floor(random() * (i - 1))::int END, 'team_' || i
 FROM generate_series(1, :teams) i;
 INSERT INTO app.team_members SELECT DISTINCT 1 + floor(random() * :teams)::int, u FROM generate_series(1, :users) u, generate_series(1, 3);
+-- step 6's three teams, top level, one member each (the last three of its readers)
+INSERT INTO app.teams SELECT :teams + k, 1, NULL, 'holders_' || k FROM generate_series(1, 3) k;
+INSERT INTO app.team_members SELECT :teams + k, :users + 3 + k FROM generate_series(1, 3) k;
 
 CREATE SCHEMA bench;
 CREATE TABLE bench.levels (level int PRIMARY KEY, first_id bigint, last_id bigint);
@@ -64,6 +73,12 @@ SELECT DISTINCT x.f, 1 + floor(random() * (l.first_id - 1))::bigint
 FROM (SELECT 1 + floor(random() * :folders)::bigint f FROM generate_series(1, :folders / 20)) x
 JOIN bench.levels l ON x.f BETWEEN l.first_id AND l.last_id
 WHERE l.level > 1;
+-- step 6's teams are given 100, 1,000 and 4,000 folders to view, anywhere in the tree (as many as there are, where
+-- the tree has fewer). These are the last random numbers drawn: the data above is what it was without these rows
+INSERT INTO app.folder_team_access
+SELECT x.id, :teams + h.k, 'view'
+FROM (VALUES (1, 100), (2, 1000), (3, 4000)) h(k, n)
+CROSS JOIN LATERAL (SELECT f.id FROM app.folders f ORDER BY random() LIMIT h.n) x;
 -- runs one write of the workload; a move that would put a folder inside itself, or a link that exists,
 -- is refused (as an app's UI would refuse it) and counts as done
 CREATE FUNCTION bench.try(stmt text) RETURNS void LANGUAGE plpgsql AS $$

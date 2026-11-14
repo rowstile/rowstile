@@ -6,6 +6,8 @@
 #   2. tree writes as clients go from 1 to 50: how far does throughput go?
 #   3. the gate: 20 tree writes/s arriving steadily, with 400 reads/s at the same time (READ_RATE: another rate)
 #   4. one big move (a top folder) during steady writes: how long it takes, and how long others wait
+#   5. authz.list of every file a user can see, whole and in pages
+#   6. opening a folder as readers who hold 100, 1,000 and 4,000 folders directly: shared, and through a team
 # Settings (environment, all set by scale.sh, which holds the sizes): FILES FOLDERS LEVELS USERS TEAMS DURATION
 # GATE_DURATION READ_RATE OUT, and BUILD_COMMIT (the commit that runs, for the result's first line; none: not said)
 # Exits 1 when a gate fails, when a read or a write of any step failed, was aborted or timed out, when the big move
@@ -181,6 +183,28 @@ for who in "3 org admin" "500 member"; do
     [ -n "$n" ] || wrong=1
     say "$(printf '%-10s %-66s %9s rows %8s s' "$*" "${q#SELECT count(*) FROM }" "$n" "$(since "$t")")"
   done
+done
+say
+
+# A read by key costs what its reader holds: a rule builds the folders where the reader's permission starts for
+# each query. Six members made for this step (load.sql) each open folders one after the other: three are shared
+# 100, 1,000 and 4,000 folders (shares.sql), three are the one member of a team given as many. The same read, by a
+# reader who holds more, each way of holding
+say "== 6. Opening a folder, by how many folders its reader holds directly (1 client, $DURATION s each)"
+say "$(printf '%-26s%8s%8s%11s%11s%11s' reader txns failed 'p50 ms' 'p95 ms' 'p99 ms')"
+for k in 1 2 3 4 5 6; do
+  u=$((USERS + k))
+  if [ "$k" -le 3 ]; then
+    how="shared"
+    held=$(PSQL -c "SELECT count(*) FROM authz.shares WHERE object_type = 'folder' AND subject_type = 'user' AND subject_id = '$u'")
+  else
+    how="a team's"
+    held=$(PSQL -c "SELECT count(*) FROM app.folder_team_access WHERE team_id = $((TEAMS + k - 3))")
+  fi
+  "${PGB[@]}" -c 1 -T "$DURATION" -D u="$u" -f "$W/read_folder_as.sql" -l --log-prefix="$LOGS/h$k" > "$LOGS/h$k.out" 2>&1
+  judge "$LOGS/h$k.out"
+  read -r txns nf p50 p95 p99 < <(python3 bench/latency.py "$LOGS/h$k" open_folder | awk '$1 == "all" {print $2, $3, $4, $5, $6}')
+  say "$(printf '%-26s%8s%8s%11s%11s%11s' "$how ${held:-?} folders" "$txns" "$nf" "$p50" "$p95" "$p99")"
 done
 say
 exit $wrong
