@@ -59,7 +59,8 @@ Fixes go to `main` first, then to the release branch.
   policy can cause names the policy line and has a code with its own page (`core/authzlib/errors.py`).
 
 The project's conventions (how the SQL is generated, locking, sessions, what must stay re-appliable) are in
-[CLAUDE.md](CLAUDE.md). It is written for coding agents and reads well for people too.
+[CLAUDE.md](CLAUDE.md) and, area by area, in `.claude/rules/` (`core.md` holds the compiler's). They are written
+for coding agents and read well for people too.
 
 ## Commits
 
