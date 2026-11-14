@@ -29,7 +29,11 @@ every size), applies `example/docs.authz` with `rowstile apply` as the tables' o
 2. tree writes with 1, 10 and 50 clients: how far does throughput go?
 3. the gate: 20 tree writes/s and 400 reads/s arriving steadily, together;
 4. one big move (the folder with the most below it, into another root) during steady writes;
-5. listing everything a user can see with `authz.list`, whole and in pages of 1,000.
+5. listing everything a user can see with `authz.list`, whole and in pages of 1,000;
+6. opening a folder as six members made for this step: three are shared 100, 1,000 and 4,000 folders, three are
+   the one member of a team given as many. One client each, one after the other. A read by key costs what its
+   reader holds ([the limits](../../docs/reference/limits.md)), and this step measures it, each way of holding.
+   The six are past the users the other steps draw from, so those steps' data is what it was without them.
 
 Results are written to `results/`. `latency.py` turns pgbench's per-transaction logs into percentiles; "e2e" adds
 the time a transaction waited to start, which is what a caller arriving at that rate sees. Any statement running

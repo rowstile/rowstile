@@ -15,3 +15,10 @@ ON CONFLICT DO NOTHING;
 INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id)
 SELECT 'file', 1 + floor(random() * :files)::bigint, 'viewer', 'user', 1 + floor(random() * :users)::int
 FROM generate_series(1, :files / 40) ON CONFLICT DO NOTHING;
+-- step 6's first three readers (load.sql's members past :users): shared 100, 1,000 and 4,000 folders each, as
+-- viewer, anywhere in the tree (as many as there are, where the tree has fewer)
+INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation)
+SELECT 'folder', x.id, 'viewer', 'user', :users + h.k, ''
+FROM (VALUES (1, 100), (2, 1000), (3, 4000)) h(k, n)
+CROSS JOIN LATERAL (SELECT f.id FROM app.folders f WHERE f.id <= :folders ORDER BY random() LIMIT h.n) x
+ON CONFLICT DO NOTHING;

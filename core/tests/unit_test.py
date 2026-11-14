@@ -18331,6 +18331,7 @@ class Benchmarks(unittest.TestCase):
                 '  *"--log-prefix=$LOGS/reads"*) [ -z "$READS_ABORT" ] || stop;;\n'
                 '  *"--log-prefix=$LOGS/w50"*) [ -z "$W50_ABORT" ] || stop;;\n'
                 '  *"--log-prefix=$LOGS/bw"*) [ -z "$MOVES_ABORT" ] || stop;;\n'
+                '  *"--log-prefix=$LOGS/h2"*) [ -z "$HOLDERS_ABORT" ] || stop;;\n'
                 "esac\n",
                 # the command's apply succeeds; anything else is Python's
                 "python3": f'[ "$1" = cli/rowstile_cli.py ] && exit 0\nexec {sys.executable} "$@"\n',
@@ -18344,7 +18345,7 @@ class Benchmarks(unittest.TestCase):
             settings = {"FILES": "2000", "FOLDERS": "100", "LEVELS": "5", "USERS": "20", "TEAMS": "4", "DURATION": "1"}
             env = dict(os.environ, **settings, GATE_DURATION="1", READ_RATE="10", SPEED_GATES="0", OUT=out)
             env.update(LOGS=os.path.join(d, "l"), PATH=stubs + os.pathsep + os.environ["PATH"])
-            for k in ("READS_ABORT", "W50_ABORT", "MOVES_ABORT", "MOVE_FAILS", "BUILD_COMMIT"):
+            for k in ("READS_ABORT", "W50_ABORT", "MOVES_ABORT", "MOVE_FAILS", "HOLDERS_ABORT", "BUILD_COMMIT"):
                 env.pop(k, None)
             env.update(dict.fromkeys(faults, "1"), **(more or {}))
             done = self.run_sh(env)
@@ -18367,6 +18368,38 @@ class Benchmarks(unittest.TestCase):
         self.assertEqual(code, 1, result)
         self.assertIn("the big move failed: folder 1 into folder 1:\nERROR:  no\n", result)
         self.assertNotIn("the big move: ", result, "no time for a move that didn't happen: regress.py would judge it")
+
+    def test_a_result_times_a_read_by_how_much_its_reader_holds(self) -> None:
+        # step 6: six readers made for it, who hold 100, 1,000 and 4,000 folders directly, three by shares and three
+        # through a team of their own. A read by key costs what its reader holds (docs/reference/limits.md), and
+        # this step is where that figure comes from
+        code, result = self.stubbed_run()
+        self.assertEqual(code, 0, result)
+        step = result[result.index("== 6. Opening a folder, by how many folders its reader holds directly") :]
+        rows = re.findall(r"^(shared|a team's) (\d+) folders +(\d+) +(\d+) ", step, re.M)
+        # (the stand-ins: psql says 1, pgbench logs nothing)
+        self.assertEqual(rows, [("shared", "1", "0", "0")] * 3 + [("a team's", "1", "0", "0")] * 3, step)
+        # one of the six stopped on an error: the run went wrong
+        code, result = self.stubbed_run("HOLDERS_ABORT")
+        self.assertEqual(code, 1, result)
+        # regress.py judges steps 1, 3 and 4 alone: this one's rows are not in a baseline
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "result.txt")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(self.result(14.0) + step.replace("shared 1 folders", "shared 4000 folders"))
+            numbers, _ = self.regress.numbers(path)
+        self.assertEqual([k for k in numbers if k.startswith("6")], [])
+        # the readers are users of their own, past the ones the other steps draw from; their folders are shares, or
+        # their team's
+        load, shares = read("bench/load.sql"), read("bench/shares.sql")
+        self.assertIn("INSERT INTO app.users SELECT :users + k, 'holder_' || k FROM generate_series(1, 6) k;", load)
+        self.assertIn(
+            "INSERT INTO app.team_members SELECT :teams + k, :users + 3 + k FROM generate_series(1, 3) k;", load
+        )
+        sizes = "(VALUES (1, 100), (2, 1000), (3, 4000)) h(k, n)"
+        self.assertIn("SELECT x.id, :teams + h.k, 'view'\nFROM " + sizes, load)
+        self.assertIn("SELECT 'folder', x.id, 'viewer', 'user', :users + h.k, ''\nFROM " + sizes, shares)
+        self.assertIn("SELECT authz.act_as('user', :u::text);", read("bench/workload/read_folder_as.sql"))
 
     def regress_sh(self, d: str, runs: list[tuple[int, float]]) -> tuple[subprocess.CompletedProcess[str], int]:
         """regress.sh in a copy of the folder, over a scale.sh that writes a result (its gate writes' p95) and exits as
