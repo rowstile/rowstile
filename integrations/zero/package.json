@@ -8,7 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@rocicorp/zero": "1.11.0",
+    "@rocicorp/zero": "1.11.4",
     "@rowstile/client": "*",
     "@rowstile/pg": "*",
     "express": "5.3.0",

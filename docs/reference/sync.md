@@ -383,7 +383,7 @@ query endpoint for its ZQL, runs it on its replica of the database, and keeps th
 change. <!-- checked: integrations/zero/tests/zero.test.ts "Z2: a share made: the row arrives live; revoked: it leaves" -->
 The app's endpoint adds the index's filter to each query, for the principal the request signs in as.
 rowstile writes the filters and the index's tables as Zero sees them. This is a preview too: `integrations/zero`
-runs it on zero-cache 1.11.0, in each of the index's modes (copied in, keyed by folder, after commit). The
+runs it on zero-cache 1.11.4, in each of the index's modes (copied in, keyed by folder, after commit). The
 [Zero stack page](../stacks/zero.md) shows the app's side from end to end.
 
 ### Zero's role and its publication
