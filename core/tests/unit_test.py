@@ -18264,6 +18264,29 @@ class Benchmarks(unittest.TestCase):
         self.assertEqual(done.returncode, 2)
         self.assertEqual(done.stderr, "run.sh: FILES is not set: start the benchmark with core/bench/scale.sh\n")
 
+    def test_scale_sh_refuses_a_size_it_does_not_name(self) -> None:
+        # a size it doesn't know must not start the default one: the run's figures would be quoted for another size
+        script = os.path.join(self.BENCH, "scale.sh")
+        done = subprocess.run(["bash", script, "--huge"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertEqual(done.stderr, f"usage: {script} [--dev|--large|--medium|--full]\n")
+        self.assertEqual(done.stdout, "", "nothing started")
+
+    def test_a_result_says_which_build_ran_and_on_what(self) -> None:
+        # the limits page quotes a result by its day, its build and its machine: the file's first lines say all three
+        code, result = self.stubbed_run(more={"BUILD_COMMIT": "0a1b2c3d"})
+        self.assertEqual(code, 0, result)
+        first, second = result.split("\n")[:2]
+        version = search(r'__version__ = "([^"]+)"', read("authzlib/__init__.py")).group(1)
+        self.assertRegex(
+            first,
+            rf"^# rowstile scale benchmark \(\d{{4}}-\d\d-\d\d, 1, rowstile {re.escape(version)}, commit 0a1b2c3d\)$",
+        )
+        self.assertRegex(second, r"; \d+ CPUs(?: \(.+\))?, \d+ GB of memory, shared by server and pgbench$")
+        # started without scale.sh's word on the commit (a copy of the folder, no git), it names none
+        code, result = self.stubbed_run()
+        self.assertRegex(result.split("\n")[0], rf"rowstile {re.escape(version)}\)$")
+
     def test_run_sh_says_why_apply_failed(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             stubs = os.path.join(d, "bin")
@@ -18284,11 +18307,11 @@ class Benchmarks(unittest.TestCase):
         self.assertIn(f"apply docs.authz failed:\ncan't connect to the socket {sock}: no such file", result)
         self.assertIn("apply docs.authz failed:\ncan't connect", done.stdout)
 
-    def stubbed_run(self, *faults: str) -> tuple[int, str]:
+    def stubbed_run(self, *faults: str, more: dict[str, str] | None = None) -> tuple[int, str]:
         """run.sh over stand-ins for the server, the command and pgbench, which say all went well but for the faults
         named: READS_ABORT (a read client of step 1 stopped on an error), W50_ABORT (a write client of step 2's 50),
-        MOVES_ABORT (a write client beside the big move), MOVE_FAILS (the big move's UPDATE refused). Its exit
-        code, and the result it wrote."""
+        MOVES_ABORT (a write client beside the big move), MOVE_FAILS (the big move's UPDATE refused). more: other
+        settings scale.sh hands it. Its exit code, and the result it wrote."""
         with tempfile.TemporaryDirectory() as d:
             stubs = os.path.join(d, "bin")
             os.mkdir(stubs)
@@ -18321,9 +18344,9 @@ class Benchmarks(unittest.TestCase):
             settings = {"FILES": "2000", "FOLDERS": "100", "LEVELS": "5", "USERS": "20", "TEAMS": "4", "DURATION": "1"}
             env = dict(os.environ, **settings, GATE_DURATION="1", READ_RATE="10", SPEED_GATES="0", OUT=out)
             env.update(LOGS=os.path.join(d, "l"), PATH=stubs + os.pathsep + os.environ["PATH"])
-            for k in ("READS_ABORT", "W50_ABORT", "MOVES_ABORT", "MOVE_FAILS"):
+            for k in ("READS_ABORT", "W50_ABORT", "MOVES_ABORT", "MOVE_FAILS", "BUILD_COMMIT"):
                 env.pop(k, None)
-            env.update(dict.fromkeys(faults, "1"))
+            env.update(dict.fromkeys(faults, "1"), **(more or {}))
             done = self.run_sh(env)
             with open(out, encoding="utf-8") as fh:
                 return done.returncode, fh.read()
@@ -18860,6 +18883,34 @@ class Delivery(unittest.TestCase):
         self.assertIn("      - run: bash core/ci.sh --full 16\n", self.job("nightly.yml", "full"))
         # ci.sh hands the part to the run in the container
         self.assertIn('-e ROWSTILE_PART="${ROWSTILE_PART:-}"', read("ci.sh"))
+
+    def test_the_scale_benchmark_runs_by_hand_at_a_size_scale_sh_takes(self) -> None:
+        # the limits page's scale figures are measured on a runner by a job started by hand (never each night: up to
+        # an hour of a runner), at one of scale.sh's sizes; its result is kept whether the run passed or not
+        nightly = "\n".join(self.workflows()[".github/workflows/nightly.yml"])
+        job = self.job("nightly.yml", "scale")
+        self.assertIn("    if: ${{ inputs.only == 'scale' }}\n", job)
+        sizes = re.findall(r"^  --(\w+)[|)]", read("bench/scale.sh"), re.M)
+        self.assertEqual(sorted(sizes), ["dev", "full", "large", "medium"])
+        size = search(r'\n      size:\n        description: "([^"]+)"\n        default: "(\w+)"\n', nightly)
+        self.assertEqual(sorted(re.findall(r"\b(?:" + "|".join(sizes) + r")\b", size.group(1))), sorted(sizes))
+        self.assertIn(size.group(2), sizes)
+        # the size reaches the script through the environment, never as text of the command
+        self.assertIn('      - run: bash core/bench/scale.sh "--$SIZE"\n', job)
+        self.assertIn('          SIZE: "${{ inputs.size }}"\n', job)
+        self.assertNotIn("inputs.size", job.replace('SIZE: "${{ inputs.size }}"', ""))
+        # a runner's CPUs are shared: the gate's speed limits are shown there, not judged (run.sh)
+        self.assertIn('          SPEED_GATES: "0"\n', job)
+        out = "core/bench/results/scale-latest.txt"
+        self.assertIn(f"          OUT: {out}\n", job)
+        self.assertIn("      - if: always()\n        uses: actions/upload-artifact@", job)
+        self.assertIn(f"          path: {out}\n", job)
+        self.assertIn(out + "\n", read("../.gitignore"), "a run here leaves nothing to commit by mistake")
+        # each job that runs when asked for alone is named where the choice is described
+        only = search(r'\n      only:\n        description: "([^"]+)"\n', nightly).group(1)
+        asked = set(re.findall(r"inputs\.only == '([\w-]+)'", nightly))
+        self.assertIn("scale", asked)
+        self.assertEqual(sorted(asked - set(re.findall(r"[\w-]+", only))), [])
 
     def test_jobs_run_on_githubs_own_runners(self) -> None:
         # each job on a machine of its own, GitHub's ubuntu-latest: no repository variable picks another runner (on a

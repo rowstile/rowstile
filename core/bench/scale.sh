@@ -1,6 +1,6 @@
 #!/bin/bash
 # scale.sh: the scale benchmark in a fresh Postgres container; see bench/run.sh.
-#   core/bench/scale.sh              # 400k files, 20k folders, 20 levels: the dev size, a few minutes
+#   core/bench/scale.sh              # 400k files, 20k folders, 20 levels: the dev size, a few minutes (--dev too)
 #   core/bench/scale.sh --large      # 1M files, 50k folders: the gate's size on the laptop of 2026-10 (out of use)
 #   core/bench/scale.sh --medium     # 5M files, 250k folders (long)
 #   core/bench/scale.sh --full       # 20M files, 1M folders: the scale gate's size; needs 16 GB for Docker
@@ -8,7 +8,8 @@
 # each)
 # Environment: KEEP=1 leaves the container running; PG (default 16), SHARED_BUFFERS, FILES FOLDERS LEVELS USERS TEAMS
 # DURATION GATE_DURATION (seconds per step, default 20 and 30), OUT. Results go to
-# core/bench/results/. Needs Docker and bash.
+# core/bench/results/. Needs Docker and bash. On GitHub's runners: `gh workflow run nightly.yml -f only=scale -f
+# size=large` (its file is the run's `scale` artifact).
 set -u
 cd "$(dirname "$0")/../.."
 REPO=$(pwd)
@@ -18,9 +19,13 @@ case "${1:-}" in
             SHARED_BUFFERS=${SHARED_BUFFERS:-8GB};;
   --medium) FILES=${FILES:-5000000} FOLDERS=${FOLDERS:-250000} USERS=${USERS:-10000} TEAMS=${TEAMS:-1000};;
   --large)  FILES=${FILES:-1000000} FOLDERS=${FOLDERS:-50000} USERS=${USERS:-2000} TEAMS=${TEAMS:-200};;
-  "")       FILES=${FILES:-400000} FOLDERS=${FOLDERS:-20000} USERS=${USERS:-1000} TEAMS=${TEAMS:-100};;
-  *)        echo "usage: $0 [--large|--medium|--full]" >&2; exit 2;;
+  --dev|"") FILES=${FILES:-400000} FOLDERS=${FOLDERS:-20000} USERS=${USERS:-1000} TEAMS=${TEAMS:-100};;
+  *)        echo "usage: $0 [--dev|--large|--medium|--full]" >&2; exit 2;;
 esac
+# the commit that runs, for the result's first line (run.sh runs in the container, where git doesn't read this
+# folder); "changed" when files git tracks differ from it
+BUILD_COMMIT=$(git rev-parse --short=8 HEAD 2>/dev/null)
+[ -z "$BUILD_COMMIT" ] || git diff --quiet HEAD 2>/dev/null || BUILD_COMMIT="$BUILD_COMMIT, changed"
 LEVELS=${LEVELS:-20} DURATION=${DURATION:-20} GATE_DURATION=${GATE_DURATION:-30}
 # memory for Postgres: 4 GB of shared buffers holds what the sizes up to --medium read; --full's database is 6 GB:
 # 8 GB, in a Docker VM of 16 GB (with less the reads fetch pages from the system on every query, and in a VM of
@@ -42,7 +47,7 @@ for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -h 127.0.0.1 2>/dev/nul
 docker exec -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core "$NAME" bash tests/make_owner.sh || exit 1
 docker exec -e PGHOST=/var/run/postgresql -e PGUSER=authz_owner -e FILES="$FILES" -e FOLDERS="$FOLDERS" \
   -e LEVELS="$LEVELS" -e USERS="$USERS" -e TEAMS="$TEAMS" -e DURATION="$DURATION" -e GATE_DURATION="$GATE_DURATION" \
-  -e SPEED_GATES="${SPEED_GATES:-1}" -e READ_RATE="${READ_RATE:-400}" \
+  -e SPEED_GATES="${SPEED_GATES:-1}" -e READ_RATE="${READ_RATE:-400}" -e BUILD_COMMIT="$BUILD_COMMIT" \
   -e OUT="/src/$OUT" -w /src/core "$NAME" bash bench/run.sh
 rc=$?
 if [ -n "${KEEP:-}" ]; then echo "kept container $NAME (database authz_bench)"; else docker rm -f -v "$NAME" >/dev/null; fi

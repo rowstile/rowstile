@@ -9,7 +9,8 @@
 # On GitHub's runners, as ci.yml. Run by hand too (workflow_dispatch), all of it or one job: `gh workflow run
 # nightly.yml -f only=bench`. And several soaks at once, each on a runner and with a seed of its own: `gh workflow
 # run nightly.yml -f only=soak -f soaks=7` (and `-f part=policies`: one part of each). And every small policy at
-# once, fourteen jobs, seven side by side (each night's soak checks a fourteenth): `-f only=small`.
+# once, fourteen jobs, seven side by side (each night's soak checks a fourteenth): `-f only=small`. And, by hand
+# alone, the figures the limits page quotes: `-f only=speed`, and `-f only=scale -f size=large`.
 name: nightly
 on:
   schedule:
@@ -17,8 +18,11 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run only this job (suites, proofs, soak, small, full, conformance, tools, grammar, fuzz, readings, bench, speed); empty: all of them"
+        description: "Run only this job (suites, proofs, soak, small, full, conformance, tools, grammar, fuzz, readings, bench, speed, scale); empty: all of them but speed and scale"
         default: ""
+      size:
+        description: "With scale: the benchmark's size (dev, large, medium or full)"
+        default: "large"
       soaks:
         description: "How many soaks to run at once (1 to 9), each with its own seed, on 16, 17 and 18 in turn"
         default: "1"
@@ -26,9 +30,9 @@ on:
         description: "With soak: only this part of each (changes-1, changes-2, policies, around, small, races); empty: all"
         default: ""
 # One nightly at a time. Several soaks asked for by hand are a run of their own beside it: each is on its own runner;
-# so are the small policies and the full run asked for alone
+# so are the small policies, the full run and the scale benchmark asked for alone
 concurrency:
-  group: ${{ (inputs.soaks > 1 || inputs.only == 'small' || inputs.only == 'full') && format('soaks-{0}', github.run_id) || 'nightly' }}
+  group: ${{ (inputs.soaks > 1 || inputs.only == 'small' || inputs.only == 'full' || inputs.only == 'scale') && format('soaks-{0}', github.run_id) || 'nightly' }}
   cancel-in-progress: false
 # what a job needs beyond reading the repository, it says itself
 permissions: {contents: read}
@@ -364,3 +368,25 @@ jobs:
         with:
           name: speed
           path: core/bench/results/benchmark-latest.txt
+  # The scale benchmark (core/bench/scale.sh) at one of its sizes: the scale figures of docs/reference/limits.md and
+  # core/bench/README.md, measured on a runner when they are measured again (by hand, never each night): `gh workflow
+  # run nightly.yml -f only=scale -f size=large`. The gate's speed limits are shown, not judged: they are for a
+  # machine of its own, and here the server shares 4 CPUs with pgbench. The run still fails when it went wrong (a
+  # read or a write failed, was aborted or timed out, verify() didn't say true), and its result is kept either way.
+  scale:
+    if: ${{ inputs.only == 'scale' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - run: bash core/bench/scale.sh "--$SIZE"
+        env:
+          SIZE: "${{ inputs.size }}"
+          SPEED_GATES: "0"
+          OUT: core/bench/results/scale-latest.txt
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: scale
+          path: core/bench/results/scale-latest.txt

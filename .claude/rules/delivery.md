@@ -56,7 +56,9 @@ The workflows, how rowstile is packaged and released, the review for CI, the dem
   PgBouncer (`integrations/pooler.sh`), the migrations `rowstile migrate` writes run by goose, dbmate, Flyway and
   Django (`tests/migration_tools.sh`), the grammar and the parser on every small policy, the fuzzer, the
   comparison pages' readings (`readings`), and the benchmark check (`-f only=bench`; it judges speed against the
-  runners' own baseline, not the gate's limits). `ci.sh` writes its logs to `/tmp`
+  runners' own baseline, not the gate's limits). By hand alone, the figures the limits page quotes: `-f
+  only=speed` (`benchmark.sql`) and `-f only=scale -f size=large` (the scale benchmark at one of `scale.sh`'s
+  sizes; the gate's speed limits shown, not judged). `ci.sh` writes its logs to `/tmp`
 - `.github/workflows/scorecard.yml` — the OpenSSF Scorecard, weekly and on `main`: published at scorecard.dev
   (the README's badge), each check's reason in the run's files, the findings under Security, Code scanning.
   Publishing restricts the workflow: only its listed actions, no `run` steps, no `env`
