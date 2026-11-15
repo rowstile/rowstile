@@ -332,8 +332,8 @@ FEATURES: list[Feature] = [
         "api.jwks",
         1,
         "Tokens an identity provider signs with its key (RS256): `authz.set_jwks` stores its key set, which "
-        "`authz.login_jwt` checks them against",
-        ("api.set_jwks", "err.AZ719"),
+        "`authz.login_jwt` checks them against; `rowstile jwks` fetches it and stores it",
+        ("api.set_jwks", "err.AZ719", "cli.jwks", "cli.jwks --check"),
         Doc(IDENT, "A provider that signs with a key pair"),
         (
             T("identity.sh", "a signature of a $bits-bit key is accepted"),
@@ -350,6 +350,17 @@ FEATURES: list[Feature] = [
             T("identity.sh", "a token signed by a key that left the set"),
             T("identity.sh", "a key set that leaves no key is refused"),
             T("identity.sh", "... and the stored keys stay as they were"),
+            T("cli.sh", "jwks stores the key set the provider serves: each key added, or skipped and why"),
+            T("cli.sh", "... and a token the provider signs with that key signs in"),
+            T("cli.sh", "jwks --check says what storing the provider's set would change, stores nothing, exit 1"),
+            T("cli.sh", "... and the key it retired is removed"),
+            T(
+                "cli.sh",
+                "a set with no RSA key for signatures is refused, saying why (AZ719), and the stored keys stay",
+            ),
+            T("cli.sh", "a redirect to another server is not followed"),
+            T("cli.sh", "plain http to another machine is refused before anything is fetched"),
+            T("unit_test.py", "test_a_server_that_takes_too_long_stores_nothing"),
         ),
         (
             T("around.py", "PERFORM authz.set_jwks("),

@@ -18,6 +18,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   itself chooses its check: an HS256 token is checked against `jwt_secret` alone, an RS256 one against the stored
   keys alone, the one its `kid` names. Keys of 2048 to 4096 bits; a check takes about 2 ms at 2048 bits and 7 ms
   at 4096. ES256 and EdDSA tokens still go through the backend ([Identity](docs/reference/identity.md)).
+- `rowstile jwks URL` fetches the key set an identity provider serves at `URL` and stores it with
+  `authz.set_jwks`, for a scheduled job or a deploy step: run it again when the provider's keys change. It fetches
+  over https, from that server alone, 64 KB and ten seconds at most. `--check` stores nothing and exits 1 if the
+  stored keys are no longer the provider's; without a URL it lists the stored keys
+  ([Tools](docs/reference/tools.md)).
 
 ### Fixed
 

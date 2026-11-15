@@ -42,6 +42,12 @@
                                                    names, else (and with --db) of the policy in force
     rowstile lint                                  the ways around row-level security the database leaves open
                                                    (authz.lint()); exit 1 if there are errors or warnings
+    rowstile jwks    [URL] [--check]               store the keys an identity provider signs its tokens with, as
+                                                   it serves them at URL (its JWKS, over https), in place of the
+                                                   stored ones: authz.login_jwt checks RS256 tokens with them. Run
+                                                   it again when the provider's keys change. --check: what would
+                                                   change, storing nothing; exit 1 if anything would. No URL:
+                                                   the stored keys
     rowstile indexes [--check]                     the lookups the policy makes into the app's tables that no
                                                    index serves, and the line to add for the migration tool
     rowstile plans   [--as WHO]                    each governed table read as someone (EXPLAIN ANALYZE): the
@@ -1116,6 +1122,7 @@ ARGUMENTS: dict[str, Takes] = {
     "test": Takes(0, None, "--db --coverage"),
     "graph": Takes(0, 1, "--db"),
     "lint": Takes(0, 0, "--db"),
+    "jwks": Takes(0, 1, "--db --check"),
     "indexes": Takes(0, 0, "--db --check"),
     "plans": Takes(0, 0, "--db --as"),
     "bench": Takes(0, 0, "--db --people --rounds"),
@@ -1408,6 +1415,11 @@ def run_command(argv: list[str]) -> None:
         problem = out_problem(opts.get("--out", "db")) or role_problem(opts.get("--role"))
         if problem:
             fail(problem, 2)
+    jwks: str | None = None
+    if cmd == "jwks":  # fetched before the database is asked anything: a set that can't be had changes nothing
+        if not args and "--check" in flags:
+            fail("rowstile jwks --check: against which key set? Give the URL the identity provider serves it at", 2)
+        jwks = fetch_jwks(args[0]) if args else None
     given = dsn
     dsn = dsn if dsn is not None else (cfg.database or os.environ.get("DATABASE_URL"))
     ENV.where = cfg.database_from(given)
@@ -1514,6 +1526,8 @@ def run_command(argv: list[str]) -> None:
                 )
             if any(r["severity"] in ("error", "warning") for r in found):
                 sys.exit(1)
+        elif cmd == "jwks":
+            jwks_cmd(conn, args[0] if args else "", jwks, "--check" in flags)
         elif cmd in ("indexes", "plans", "bench"):
             from authzlib import perf
 
@@ -2019,6 +2033,99 @@ def snapshot_path(cfg: Config, opts: dict[str, str]) -> str:
         return cfg.written(snapshot, "[review] snapshot")
     base = os.path.dirname(cfg.policy) if cfg.policy else "."
     return os.path.join(base, "access.snapshot")
+
+
+JWKS_BYTES = 64 * 1024  # a key set is a few keys: more than this is not one
+JWKS_SECONDS = 10  # how long the provider's server may take to answer
+
+
+def fetch_jwks(url: str) -> str:
+    """The key set an identity provider serves at url, as JSON text. What the server answers decides who signs in,
+    so it is fetched over https, the server checked against the machine's certificates (plain http for this
+    machine alone: a test's server), and a redirect is followed only on the same server; the answer is a JSON
+    object, of 64 KB at most, within ten seconds. Anything else ends the command (exit 2) before the database is
+    asked anything."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from http.client import HTTPException, HTTPMessage
+    from typing import IO
+
+    def stop(why: str) -> NoReturn:
+        fail(f"rowstile jwks: {why}\nNothing was stored: the keys in the database are as they were.", 2)
+
+    def server(address: str) -> tuple[str, str | None, int | None]:
+        parts = urllib.parse.urlsplit(address)
+        return parts.scheme, parts.hostname, parts.port
+
+    try:
+        scheme, host, _ = here = server(url)
+    except ValueError:  # (a port that is no number)
+        stop(f"{url} is no URL")
+    if not host or scheme not in ("https", "http"):
+        stop(f"{url} is no https URL")
+    if scheme == "http" and host not in ("localhost", "127.0.0.1", "::1"):
+        stop(f"{url} is plain http: whoever answers there, or on the way, would say who signs in. Give its https URL")
+
+    class SameServer(urllib.request.HTTPRedirectHandler):
+        def redirect_request(
+            self, req: urllib.request.Request, fp: IO[bytes], code: int, msg: str, headers: HTTPMessage, newurl: str
+        ) -> urllib.request.Request | None:
+            if server(newurl) != here:
+                stop(f"{url} sends elsewhere, to {newurl}: give the URL the keys are served at")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    ends = time.monotonic() + JWKS_SECONDS
+    body = b""
+    try:
+        request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "rowstile"})
+        opener = urllib.request.build_opener(SameServer)
+        with opener.open(request, timeout=JWKS_SECONDS) as answer:
+            while chunk := answer.read1(8192):
+                body += chunk
+                if len(body) > JWKS_BYTES or time.monotonic() > ends:
+                    much = f"more than {JWKS_BYTES // 1024} KB" if len(body) > JWKS_BYTES else ""
+                    stop(f"{url} answers {much or f'for more than {JWKS_SECONDS} seconds'}: that is no key set")
+    except urllib.error.HTTPError as e:
+        stop(f"{url} answers {e.code} {e.reason}")
+    except (OSError, HTTPException, ValueError) as e:
+        # (what kept the library from connecting is its error's reason; a server too slow is a timeout, there or here)
+        reason = getattr(e, "reason", e)
+        late = isinstance(reason, TimeoutError)
+        stop(f"{url} did not answer in {JWKS_SECONDS} seconds" if late else f"can't fetch {url}: {reason}")
+    try:
+        keys = json.loads(body)
+    except ValueError:  # (not UTF-8 too: UnicodeDecodeError is one)
+        keys = None
+    if not isinstance(keys, dict):
+        said = body[:60].decode("utf-8", "replace").strip()
+        stop(f"{url} does not answer a key set (a JSON object with its keys): it answers {said!r}")
+    return json.dumps(keys)
+
+
+def jwks_cmd(conn: pgwire.Connection, url: str, jwks: str | None, check: bool) -> None:
+    """`rowstile jwks`: the stored keys; or, with the key set fetched from url, what storing it changes, stored
+    unless check (then exit 1 if anything would change)."""
+    if jwks is None:
+        stored = transaction(conn, database.stored_keys, keep=False)
+        if not stored:
+            print("no keys stored: rowstile jwks URL stores those an identity provider serves there")
+            return
+        print(table([(k["kid"], k["bits"], k["stored"]) for k in stored], ["kid", "bits", "stored (UTC)"]))
+        return
+    rows = transaction(conn, lambda db: database.set_jwks(db, jwks), keep=not check)
+    # the keys tokens are checked with from now on first, then those that left, then those passed over
+    rows.sort(
+        key=lambda r: ("removed", "skipped").index(r["change"]) + 1 if r["change"] in ("removed", "skipped") else 0
+    )
+    changed = any(r["change"] in ("added", "replaced", "removed") for r in rows)
+    if check:
+        print(f"{url}: the stored keys {'differ (nothing was stored)' if changed else 'are these'}")
+    else:
+        print(f"{url}: {'stored' if changed else 'the stored keys are these already'}")
+    print(table([(r["kid"], r["change"], r["why"]) for r in rows], ["kid", "change", "why"]))
+    if check and changed:
+        sys.exit(1)
 
 
 def snapshot_cmd(conn: pgwire.Connection, cfg: Config, opts: dict[str, str], check: bool) -> None:
