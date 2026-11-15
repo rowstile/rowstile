@@ -1,0 +1,48 @@
+-- answer: follow-relation, runtime-share
+-- A relation to folders that sharing fills, of one name on two types: a doc and a project of one id each follow
+-- their own share. Doc 1 is put in cy's folder, project 1 in ann's: cy edits doc 1 alone, and authz.explain walks
+-- each through its own folder, never the other's.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner : user = owner_id
+  can edit = owner
+type doc = app.docs
+  owner : user = owner_id
+  in    : folder shared
+  can share = owner
+  can read  = signed_in
+  can edit  = owner or in.edit
+type project = app.projects
+  owner : user = owner_id
+  in    : folder shared
+  can share = owner
+  can read  = signed_in
+  can edit  = owner or in.edit
+
+rules app.docs
+  select : read
+rules app.projects
+  select : read
+
+test "a doc and a project of one id each follow their own share"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given cy  = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($cy) RETURNING id}
+  given g   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given {INSERT INTO app.docs (id, owner_id) VALUES (1, $ann)}
+  given {INSERT INTO app.projects (id, owner_id) VALUES (1, $ann)}
+  as user $ann allowed {SELECT authz.share('doc', 1, 'in', 'folder', $f)}
+  as user $ann allowed {SELECT authz.share('project', 1, 'in', 'folder', $g)}
+  user $cy can read doc 1
+  user $cy can read project 1
+  as user $cy sees 1 {SELECT WHERE authz.can('doc', 1, 'read') AND authz.can('project', 1, 'read')}
+  as user $cy sees 1 {SELECT FROM authz.explain('doc', 1, 'read') e WHERE e LIKE 'yes  user % holds read on doc 1'}
+  as user $cy sees 1 {SELECT FROM authz.explain('project', 1, 'read') e WHERE e LIKE 'yes  user % holds read on project 1'}
+  user $cy can edit doc 1
+  user $cy cannot edit project 1
+  as user $cy sees 1 {SELECT FROM authz.explain('doc', 1, 'edit') e WHERE e LIKE '%in is folder %'}
+  as user $cy sees 1 {SELECT FROM authz.explain('doc', 1, 'edit') e WHERE e = '    yes  in is folder ' || $f || ', which has edit'}
+  as user $cy sees 1 {SELECT FROM authz.explain('project', 1, 'edit') e WHERE e LIKE '%in is folder %'}
+  as user $cy sees 1 {SELECT FROM authz.explain('project', 1, 'edit') e WHERE e = '    no   in is folder ' || $g || ', without edit'}

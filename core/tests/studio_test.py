@@ -2443,6 +2443,21 @@ def corners(db: str) -> None:
         ],
         said,
     )
+    # ann holds each on as many docs as it counts (here 5) or more, dee on fewer: what the change takes from ann is
+    # no number to take from a count that stopped, so it is said as not counted, and what dee gains is counted
+    counted_conn = pgwire.connect(**pgwire.parse_dsn(f"dbname={db}"))
+    with mock.patch.object(grant, "COUNTED", 5):
+        capped = rowstile_cli.transaction(
+            counted_conn, lambda d: database.why(d, "user", "4", "doc", "5", "view"), keep=False
+        )
+    counted_conn.close()
+    said = grant.describe(capped, "user:4", "doc", "5", "view")
+    check(
+        "what a change takes from someone who holds as much as it counts: not counted, and said, whoever is asked about",
+        "set owner_id of doc 4 to 4 (also gives view, archive, edit, share on 1 more doc for user:4) (not counted: "
+        "view, archive, edit, share on docs, past 5)  [line 15]" in [x.strip() for x in said.splitlines()],
+        said,
+    )
     rc, said, _, after = why(db, "--as", "user:3", "doc", "5", "view")
     check(
         "a row the table refuses (a column no change fills): said, with the database's reason; for the doc and the "

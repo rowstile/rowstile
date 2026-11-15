@@ -1,7 +1,7 @@
 -- answer: conditions-null, inheritance, rows-hold-nothing
 -- A condition that is NULL holds nothing where inheritance stops either: a folder whose {org_id > 0} is NULL inherits
--- nothing from its parent, until the column says yes. A team whose where is NULL passes nothing on, also to the
--- teams that hold it.
+-- nothing from its parent, until the column says yes; negated, it is true there, and the folder inherits. A team
+-- whose where is NULL passes nothing on, also to the teams that hold it.
 app role app_user
 
 type user = app.users
@@ -14,9 +14,11 @@ type folder = app.folders
   viewer : team#member shared
   can share = owner
   can view  = owner or viewer or (parent.view and {org_id > 0})
+  can edit  = owner or (parent.edit and not {org_id > 0})
 
 rules app.folders
   select : view
+  update : edit
 
 test "a NULL condition stops inheritance"
   given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
@@ -36,6 +38,19 @@ test "a NULL condition stops inheritance"
   user $ann cannot view folder $nul
   user $ann cannot view folder $low
   as user $ann sees 0 {SELECT FROM app.folders WHERE id IN ($nul, $low)}
+
+test "negated, a NULL condition lets inheritance through"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given top = {INSERT INTO app.folders (owner_id, org_id) VALUES ($ann, 1) RETURNING id}
+  given yes = {INSERT INTO app.folders (parent_id, org_id) VALUES ($top, 1) RETURNING id}
+  given nul = {INSERT INTO app.folders (parent_id, org_id) VALUES ($top, NULL) RETURNING id}
+  given low = {INSERT INTO app.folders (parent_id, org_id) VALUES ($nul, NULL) RETURNING id}
+  user $ann cannot edit folder $yes
+  user $ann can edit folder $nul
+  user $ann can edit folder $low
+  given {UPDATE app.folders SET org_id = 1 WHERE id = $nul}
+  user $ann cannot edit folder $nul
+  user $ann cannot edit folder $low
 
 test "a team whose where is NULL passes nothing on"
   given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}

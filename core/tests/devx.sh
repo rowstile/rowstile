@@ -400,6 +400,17 @@ out=$(mkdir -p "$T/r3" && cd "$T/r3" && python3 "$OLDPWD/cli/rowstile_cli.py" --
 case "$out" in *"  2. The role your app connects as (${PGSUPERUSER:-postgres}) bypasses row-level security: nothing would be filtered.
        ALTER ROLE ${PGSUPERUSER:-postgres} NOSUPERUSER NOBYPASSRLS;"*) ok "... and a --role that bypasses row-level security: says what to change";;
   *) bad "init --role of a superuser" "$out";; esac
+# BYPASSRLS alone is enough for that: a role that is no superuser and has it (only a superuser may give it)
+if [ -n "${PGSUPERUSER:-}" ]; then
+  psql -X -q -U "$PGSUPERUSER" -d postgres -c "ALTER ROLE authz_devx_other BYPASSRLS" >/dev/null
+  out=$(mkdir -p "$T/r4" && cd "$T/r4" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --role authz_devx_other 2>&1)
+  psql -X -q -U "$PGSUPERUSER" -d postgres -c "ALTER ROLE authz_devx_other NOBYPASSRLS" >/dev/null
+  case "$out" in *"  2. The role your app connects as (authz_devx_other) bypasses row-level security: nothing would be filtered.
+       ALTER ROLE authz_devx_other NOSUPERUSER NOBYPASSRLS;"*) ok "... and so does a --role with BYPASSRLS that is no superuser";;
+    *) bad "init --role of a role with BYPASSRLS" "$out";; esac
+else
+  echo "skip  init --role of a role with BYPASSRLS: only a superuser may give it (PGSUPERUSER)"
+fi
 # in a Next.js app on Prisma: the tool, the generated names, the SDK packages and the setup line
 mkdir -p "$T/k/prisma" "$T/k/src"
 printf '{\n    "name": "shop",\n    "dependencies": {"next": "16", "@prisma/client": "7", "react": "19"}\n}\n' > "$T/k/package.json"

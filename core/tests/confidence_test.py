@@ -65,14 +65,15 @@ CREATE TABLE app.tags (id bigint PRIMARY KEY, owner_id bigint NOT NULL REFERENCE
 CREATE INDEX ON app.tags (owner_id);
 CREATE TABLE app."Notes" (slug text PRIMARY KEY, "Title" text NOT NULL, owner_id bigint NOT NULL REFERENCES app.users);
 CREATE INDEX ON app."Notes" (owner_id);
-CREATE TABLE app.labels (id bigint PRIMARY KEY, owner_id bigint NOT NULL REFERENCES app.users);
+CREATE TABLE app.labels (id bigint PRIMARY KEY, owner_id bigint NOT NULL REFERENCES app.users, name text);
 CREATE INDEX ON app.labels (owner_id);
 GRANT USAGE ON SCHEMA app TO app_user;
 GRANT SELECT, UPDATE ON ALL TABLES IN SCHEMA app TO app_user;
+REVOKE UPDATE ON app.labels FROM app_user;
 INSERT INTO app.users VALUES (1), (2);
 INSERT INTO app.tags VALUES (1, 1), (2, 2);
 INSERT INTO app."Notes" VALUES ('intro', 'Intro', 1);
-INSERT INTO app.labels VALUES (1, 1);
+INSERT INTO app.labels VALUES (1, 1, 'a');
 """
 TAGS_POLICY = """app role app_user
 type user = app.users
@@ -854,7 +855,7 @@ def main() -> None:
             out,
         )
         check(
-            "bench: a table whose only rule is select is read, and nothing else is timed of it",
+            "bench: a table whose only rule is select is read, and no update of it is tried (the app role may make none)",
             rc == 0 and "  read app.labels " in out and "update app.labels" not in out,
             out,
         )
