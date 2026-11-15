@@ -624,6 +624,18 @@ class SyncIndex(unittest.TestCase):
         )
         self.assertNotEqual(hashed(base), hashed(base + "sync after commit\n"))
 
+    def test_signed_in_and_anyone_are_keys_of_their_own(self) -> None:
+        """What everyone signed in may read is the key `user:*`'s, and what anyone may is `anyone`'s: neither is a
+        condition on the row, which the index couldn't hold (it reads who asks: AZ805)."""
+        text = (
+            "app role app_user\ntype user = f.users\ntype memo = f.memos\n  owner : user = owner_id\n"
+            "  can view = owner or signed_in\ntype vault = f.vaults\n  can view = anyone\n"
+            "sync role sync_engine\nsync f.memos : view\nsync f.vaults : view\n"
+        )
+        sql = Compiler(parse_policy(text, "p.authz")).compile("p.authz")
+        self.assertIn('SELECT r."id" AS id, \'user:*\'::text AS key, false AS d FROM "f"."memos" r', sql)
+        self.assertIn('SELECT r."id" AS id, \'anyone\'::text AS key, false AS d FROM "f"."vaults" r', sql)
+
 
 class Compiling(unittest.TestCase):
     def test_the_policy_compiled_stays_as_parsed(self) -> None:
@@ -1787,6 +1799,11 @@ class ClientNames(unittest.TestCase):
         self.assertEqual([x for x in lines if x.startswith("const OrgTeamEditAll")], [])
         self.assertIn("// org_team.edit_all and org_team.editAll would both be OrgTeamEditAll: neither has it", lines)
         self.assertEqual(sum("would both be" in x for x in lines), 3, "said once for each name")
+        # ... and at the first of the types that would share it: the type's constant, then its permissions' type
+        self.assertLess(
+            lines.index("// doc and Doc would both be TypeDoc: neither has it"),
+            lines.index("// doc and Doc would both be DocPermission: neither has it"),
+        )
         # object's permission type would be ObjectType, the file's own type: it has no name, and the file says so
         lines = database.client(
             "go", self.CASES + "type object = app.o\n  owner : user = owner_id\n  can type = owner\n"
@@ -1835,6 +1852,15 @@ class ClientNames(unittest.TestCase):
         # the match of none closes on its own line, and the function after it
         at = lines.index("        match self {}")
         self.assertEqual(lines[at + 1 : at + 3], ["    }", ""])
+
+    def test_each_languages_names_close_what_they_open(self) -> None:
+        """The files of names open and close their blocks line by line: in each, as many of every bracket close as
+        open (a line dropped from one is a file its compiler refuses, which only that language's app would say)."""
+        for policy in (self.CASES, read(POLICIES["docs"])):
+            for language in ("go", "csharp", "java", "rust", "elixir", "php", "ruby", "rbs"):
+                text = database.client(language, policy)
+                for opens, closes in ("{}", "()", "[]"):
+                    self.assertEqual(text.count(opens), text.count(closes), f"{language}: {opens} and {closes}")
 
     def test_csharp_names_are_each_types_class(self) -> None:
         # rowstile client csharp: a class for each type (its name in PascalCase), its ObjectType and permissions
@@ -2784,6 +2810,7 @@ class Command(unittest.TestCase):
         names = database.client("ruby", read(POLICIES["docs"]))
         self.assertIn("module Authz\n  PERMISSIONS = {\n", names)
         self.assertIn('  module Folder\n    TYPE = "folder"\n', names)
+        self.assertIn('    VIEW = "view"\n', names)  # (each permission's name, a string as the type's is)
         self.assertIn("  def self.queries = Rowstile::Queries.new\n", names)
         signatures = database.client("rbs", read(POLICIES["docs"]))
         self.assertIn("  type object_type = ", signatures)
@@ -5253,6 +5280,18 @@ rules app.folders
             r = self.small("can view = edit or viewer", "can view = edit or viewer or org.see")
         self.assertIsNone(r["meaning"]["equivalent"])
         self.assertIn("a permission widened", {f["why"] for f in r["risk"]})
+        # ... nor when what widened is a permission that didn't change, through one that narrowed (view holds
+        # without blocked): that flag alone overrules the comparison too
+        base = (
+            "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+            "  viewer : user = app.v(doc_id -> user_id)\n  banned : user = app.b(doc_id -> user_id)\n"
+            "  can blocked = banned or owner\n  can view = viewer and not blocked\n  can share = owner\n"
+        )
+        head = base.replace("can blocked = banned or owner\n", "can blocked = banned\n")
+        with mock.patch.object(self.review, "compare", return_value=None):
+            through = self.review.review((base, {}, {}), (head, {}, {}), worlds=40)
+        self.assertEqual([f["why"] for f in through["risk"]], ["a permission widened through what it uses"])
+        self.assertIsNone(through["meaning"]["equivalent"])
         md = self.review.markdown(r)
         self.assertIn("**Meaning**: 1 permission changed", md)
         # three flags: the summary names all three (no "..."), and the comment lists each under Risk
@@ -9066,6 +9105,11 @@ class Confidence(unittest.TestCase):
         world = evaluate.World("", 1)
         self.assertEqual(world.describe(pol, data), ["user: 1, 2", "org: 1", "doc: 1", *lines])
         self.assertEqual(evaluate.World.named(pol, data), {"user", "org", "doc"})
+        # ... a link or a role's permission nothing was given through names no type: the user's column alone is left
+        bare = dataclasses.replace(
+            data, pairs={k: [] for k in data.pairs}, rolepairs={k: [] for k in data.rolepairs}, cond={}
+        )
+        self.assertEqual(evaluate.World.named(pol, bare), {"user"})
         self.assertEqual(world.describe(pol, data, {"doc"}), ["doc: 1", *lines[2:]])
         # a text as SQL writes it, a quote in it doubled
         self.assertEqual([evaluate.shown(v) for v in ("it's", 2, True)], ["'it''s'", "2", "true"])
