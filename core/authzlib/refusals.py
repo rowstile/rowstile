@@ -168,7 +168,6 @@ class RefusalMixin(Core):
         stored = ", p_stored boolean" if both else ""
         return f"""CREATE FUNCTION {self.rule_fn(table, name or rule.command, "why")}(p_row {qt(table)}{stored}) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
-#variable_conflict use_column
 DECLARE v boolean[] := {self.rule_fn(table, name or rule.command, "items")}(p_row, current_user); v_t record;
 BEGIN
 {body}

@@ -220,7 +220,14 @@ For one suite, start a container and run it inside:
   each piece of a body apart, and `tests/hand_answers.sh --kept-names` runs the hand-answered policies again on
   tables that have a column of every name the generated SQL keeps and of every word it writes by itself (some 500 a
   table): a query's column or one of rowstile's own tables', written bare inside a query on a table of the app's, is
-  that table's column where it has one, so name it by its query (`c.id`).
+  that table's column where it has one, so name it by its query (`c.id`). Such a function then says that a column
+  wins (`#variable_conflict use_column`), so that a bare name in a condition is its row's column whatever the
+  function calls its own (`{found}`, `{p_id > 0}`): `sqlutil.column_wins` adds the line, where the parts are put
+  together, to every PL/pgSQL function and DO block with a piece that reads the app's columns (its notion of a
+  piece is the test's, in `sqlutil`); `share_if` and the block that reads each condition at apply, whose rows are
+  no table of the app's, say it in their own text. So write a function's header to a line that ends `AS $f$` and
+  its body on the lines after (a DO block: `DO $tag$` alone), or the line isn't added; and no table the policy
+  names may be called `authz__...` (AZ113), the label being a name SQL could take for a table's.
 - Mutating API functions call `authz_int.check_writable()` first (scopes / view-as are read-only).
 - Anything a later function calls must exist before it in `compile()` output order, or be plpgsql (bodies
   resolve at run time); SQL-language functions referencing later objects sit between

@@ -676,6 +676,7 @@ class Core:
         self.check_unused_relations()
         self.check_runtime_permissions()
         self.check_this()
+        self.check_table_names()
 
     def check_sources(self) -> None:
         """Each source names types and relations that exist, as many key columns as its types have, and a share
@@ -817,6 +818,21 @@ class Core:
                         )
                 if kind == "perm" and not qual and not any(word in self.public_perms(t) for t in self.types.values()):
                     fail(sc.loc, f"scope {sc.name}: no type has a permission '{word}'", "AZ404")
+
+    def check_table_names(self) -> None:
+        """No table the policy names is called by a name of rowstile's own. A generated function writes its own
+        variables by its block's label (`authz__.v_n`) where a table's columns are in scope, and a table is called by
+        its name where the SQL gives it no alias: one named so, with a column of the variable's name, would be read
+        in the variable's place (a column wins there, sqlutil.column_wins)."""
+        for table, _, loc in self.columns:
+            name = table.rsplit(".", 1)[-1].strip('"')
+            if name.lower().startswith(RESERVED):
+                fail(
+                    loc,
+                    f"{table}: names that start with {RESERVED} are rowstile's own (its functions call their own "
+                    f"variables so, and a table is called by its name): name a view of the table instead",
+                    "AZ113",
+                )
 
     def check_this(self) -> None:
         """`this.` names the row a condition is about; a caveat has none, and `this` is no other name."""
@@ -1913,14 +1929,13 @@ class Core:
             return fn
         views = self.start_sql(t, perm, flatten)
         body = self.reader_once(views)
-        # the query now holds the policy's own conditions, and no variable of the function: a column PL/pgSQL has
-        # a variable for (found) is the column
-        columns = "#variable_conflict use_column\n" if body != views else ""
+        # (the query holds the policy's own conditions: where it reads a table of the app's, the function says
+        # a column wins, sqlutil.column_wins: a column PL/pgSQL has a variable for, found, is the column)
         self.view_sql.append(
             f"-- {t.name}.{perm.name}: where inheritance starts, for the current user\n"
             f"CREATE FUNCTION {fn}() RETURNS SETOF {t.pktype}\n"
             f"LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$\n"
-            f"{columns}BEGIN\n  RETURN QUERY\n  {body};\nEND $f$;"
+            f"BEGIN\n  RETURN QUERY\n  {body};\nEND $f$;"
         )
         return fn
 

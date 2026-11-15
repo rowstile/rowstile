@@ -65,6 +65,18 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   function now writes a parameter by position (`$1`) and a variable by its block's label (`authz__.v_bigint`),
   which no column can be. And `authz.who` called each candidate `x` inside a query on the users table: on a users
   table with a column `x` it failed, or listed nobody; it calls it `c.id` now.
+- A condition may name a column called as PL/pgSQL or rowstile calls something of its own (`found`, `new`, `old`,
+  `p_id`): wherever a condition goes, the bare name is the row's column. Where the function that holds the
+  condition is written in PL/pgSQL, Postgres refused such a name as ambiguous: a link table whose relation said
+  `where {found}` took no insert, and a type's `where`, a permission, a rule or a `shared if` that named such a
+  column failed when the policy was applied or when it was asked. Every generated PL/pgSQL function that reads the
+  app's columns now says that a column wins there (`#variable_conflict use_column`), its own names being written
+  apart (above). Writing `this.found` was the way round, and still works.
+- The sync index's mirrors (a preview) are compared with their tables row by row whatever the columns are called.
+  On a mirrored table with columns called both `x` and `m`, bringing its mirror up to date (when the policy is
+  applied, or the index worked out again) compared two columns of one row in the rows' place: the mirror could
+  keep rows as they were, with the readers they had, or be written again whole, and `authz.sync_verify` could say
+  a mirror matches when it doesn't. The triggers that keep a mirror as rows change were not concerned.
 - `authz.set_role_permissions` lets the caller add a permission they hold on an object the role is given on, even
   where they may not select its row, as `authz.share` lets them give the role there. It asked `authz.can`, which
   answers only for rows the caller may select, and refused: "you cannot give role reviewer on a folder you cannot
@@ -135,6 +147,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Upgrading
 
+- A table the policy names can't have a name that starts with `authz__` (AZ113): the functions rowstile writes
+  call their own variables `authz__.name`. Name a view of the table instead.
 - Apply the policy with this release (`rowstile apply`, or the migrations `rowstile migrate` writes) for the fix
   to the write rules that inherit through a link table. The functions that work out an inheritance's rows changed
   with it, so each inheritance is worked out again: `rowstile migrate` writes two migrations, one that builds the

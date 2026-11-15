@@ -539,8 +539,8 @@ BEGIN
       EXECUTE pg_catalog.format('ALTER TABLE %s ADD COLUMN %I %s', {lit(mt)}, c, ty);
     END LOOP;
     -- ... then its rows are written again where they differ
-    DELETE FROM {mt} m WHERE NOT EXISTS (SELECT 1 FROM ({rows}) x WHERE x::text = m::text);
-    INSERT INTO {mt} SELECT x.* FROM ({rows}) x WHERE NOT EXISTS (SELECT 1 FROM {mt} m WHERE m::text = x::text);
+    DELETE FROM {mt} m WHERE NOT EXISTS (SELECT 1 FROM ({rows}) x WHERE (x.*)::text = (m.*)::text);
+    INSERT INTO {mt} SELECT x.* FROM ({rows}) x WHERE NOT EXISTS (SELECT 1 FROM {mt} m WHERE (m.*)::text = (x.*)::text);
     IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = {lit(mt)}::regclass AND k.contype = 'p') THEN
       ALTER TABLE {mt} ADD PRIMARY KEY ({pk});
     END IF;
@@ -1426,8 +1426,8 @@ END $f$;"""
     RETURN false;
   END IF;
   IF EXISTS (
-    WITH s AS MATERIALIZED (SELECT x::text FROM {self.mirror_table(t)} x),
-         f AS MATERIALIZED (SELECT x::text FROM ({self.mirror_rows_sql(t, qt(s.table), "f")}) x)
+    WITH s AS MATERIALIZED (SELECT (x.*)::text FROM {self.mirror_table(t)} x),
+         f AS MATERIALIZED (SELECT (x.*)::text FROM ({self.mirror_rows_sql(t, qt(s.table), "f")}) x)
     SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
     RAISE NOTICE 'the sync index differs from a rebuild: %', {lit(f"{s.table}'s mirror")};
     RETURN false;
@@ -1457,9 +1457,9 @@ END $f$;"""
             f"""
   IF p_force THEN
     DELETE FROM {self.mirror_table(t)} m WHERE NOT EXISTS (SELECT 1 FROM ({self.mirror_rows_sql(t, qt(s.table), "f")}) x
-                                                           WHERE x::text = m::text);
+                                                           WHERE (x.*)::text = (m.*)::text);
     INSERT INTO {self.mirror_table(t)} SELECT x.* FROM ({self.mirror_rows_sql(t, qt(s.table), "f")}) x
-      WHERE NOT EXISTS (SELECT 1 FROM {self.mirror_table(t)} m WHERE m::text = x::text);
+      WHERE NOT EXISTS (SELECT 1 FROM {self.mirror_table(t)} m WHERE (m.*)::text = (x.*)::text);
   END IF;"""
             for s, t in self.mirrored()
         )

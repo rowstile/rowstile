@@ -823,3 +823,116 @@ def check_stable_condition(cond: str, loc: Loc, what: str = "limit inheritance")
             f"at any time",
             "AZ305",
         )
+
+
+# --- PL/pgSQL: where a name is looked up, and the columns that win there --------------------------------------
+# A table's columns are the app's to name, as a generated function names a parameter or a variable too (p_id), or
+# as PL/pgSQL names its own (found, new). Where a statement of a PL/pgSQL function has such a column in scope and
+# writes the name bare, Postgres refuses it as ambiguous (42702). So a function that reads the app's columns says
+# that a column wins there (`#variable_conflict use_column`: a bare name in a policy's condition is the row's
+# column, whatever the function calls its own), and writes its own names so that no column can be meant: a
+# parameter by position (`$1`), a variable by its block's label (`<<authz__>>` before DECLARE, `authz__.v_n`).
+# `OwnNames` in tests/unit_test.py holds both, from the compiled SQL.
+COLUMN_WINS = "#variable_conflict use_column"
+PIECE_WORD = re.compile(rf'"(?:[^"]|"")*"|{NAME}|\S')
+# where a piece ends, outside parentheses and outside a CASE expression
+PIECE_ENDS = frozenset({";", "THEN", "ELSE", "LOOP", "BEGIN", "WHEN", "DECLARE", "EXCEPTION"})
+# a table of the app's ("app"."docs": not one of rowstile's schemas), the rows a statement changed in one (a
+# trigger's transition table), or a table's mirror in the sync index, which has its columns
+ROW_SOURCE = (
+    r'"(?!authz(?:_int|_gen|_sync)?")(?:[^"]|"")+"[.]"(?:[^"]|"")+"|\b(?:new|old|changed|role|new_role)_rows\b'
+    r'|\bauthz_sync[.]"(?:[^"]|"")+__mirror"'
+)
+# ... where a statement reads or writes it (not where it names its type, `NULL::"app"."docs"`, or grants on it),
+# or a row of one laid out as its columns: `(SELECT ($1).*)`
+APP_COLUMNS = re.compile(
+    rf"(?:\b(?:FROM|JOIN|UPDATE|INTO|USING)\s+(?:ONLY\s+)?|,\s*)(?:{ROW_SOURCE})|\)\s*[.]\s*[*]", re.IGNORECASE
+)
+READS = re.compile(r"\b(?:FROM|JOIN|UPDATE|INSERT|DELETE|MERGE)\b", re.IGNORECASE)
+FUNCTION_HEAD = re.compile(r"CREATE (?:OR REPLACE )?FUNCTION ")
+BODY_OPENS = re.compile(r"\bAS (\$\w*\$)$")
+BLOCK_OPENS = re.compile(r"DO (\$\w*\$)$")
+
+
+def plain_code(sql: str) -> str:
+    """sql without its comments, and each string an empty one, so a `;` or a name inside one isn't read. A name in
+    quotes stays: a table of the app's is written so."""
+    out: list[str] = []
+    for is_code, piece in sql_code(sql):
+        if is_code or piece.startswith('"'):
+            out.append(piece)
+        else:
+            out.append(" " if piece.startswith(("--", "/*")) else " '' ")
+    return "".join(out)
+
+
+def pieces(body: str) -> list[str]:
+    """A PL/pgSQL body's code (plain_code's) cut into the pieces PL/pgSQL hands to SQL one by one: a statement, or
+    the expression of an IF, a CASE, a WHILE, a FOR's query. A name is looked up in its piece alone: `IF tg_op =
+    'DELETE' THEN DELETE FROM "app"."t" ...` is two pieces, and only the second has the table's columns in scope."""
+    out: list[str] = []
+    depth = 0  # parentheses
+    cases = 0  # CASE expressions open: a CASE inside a statement, closed by its END
+    started = False  # the piece has a word already
+    prev = ""
+    pos = 0
+    for m in PIECE_WORD.finditer(body):
+        word = m.group(0)
+        up = word.upper()
+        if word == "(":
+            depth += 1
+        elif word == ")":
+            depth -= 1
+        elif depth == 0:
+            if up == "CASE" and prev != "END":
+                cases += started  # (one that starts a piece is a CASE statement: its WHEN and THEN cut it)
+            elif up == "END" and cases:
+                cases -= 1
+            elif up in PIECE_ENDS and not cases:
+                if body[pos : m.start()].strip():
+                    out.append(body[pos : m.start()])
+                pos, started, prev = m.end(), False, up
+                continue
+        started, prev = True, up
+    if body[pos:].strip():
+        out.append(body[pos:])
+    return out
+
+
+def reads_app_columns(piece: str) -> bool:
+    """Whether a piece may have columns of the app's in scope: it reads or writes a table of the app's, a
+    statement's rows or a row's columns. (A cast to a table's type, a variable declared with one, a REVOKE on one
+    have none.) Said of the whole piece, a query inside it that has none counted too: one name too many written
+    out does no harm."""
+    return READS.search(piece) is not None and APP_COLUMNS.search(piece) is not None
+
+
+def column_wins(sql: str) -> str:
+    """Generated SQL with `#variable_conflict use_column` at the head of each PL/pgSQL function and DO block that
+    has a piece which reads the app's columns, and doesn't say it already. A function is written `CREATE FUNCTION
+    ...` with its header up to a line that ends `AS $tag$`, a block `DO $tag$` on a line of its own; then the body,
+    to the line that has `$tag$` again."""
+    lines = sql.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        opens = BLOCK_OPENS.match(lines[i])
+        j = i
+        if FUNCTION_HEAD.match(lines[i]):
+            # the header: to the line that opens the body (a body on the header's own lines is no PL/pgSQL here)
+            while j < len(lines) and not (opens := BODY_OPENS.search(lines[j])) and not lines[j].endswith(";"):
+                j += 1
+        if opens is None:
+            out.append(lines[i])
+            i += 1
+            continue
+        k = j + 1
+        while k < len(lines) and opens.group(1) not in lines[k]:
+            k += 1
+        out += lines[i : j + 1]
+        header = "\n".join(lines[i : j + 1])
+        plpgsql = ("LANGUAGE plpgsql" in header or header.startswith("DO ")) and lines[j + 1] != COLUMN_WINS
+        if plpgsql and any(reads_app_columns(p) for p in pieces(plain_code("\n".join(lines[j + 1 : k + 1])))):
+            out.append(COLUMN_WINS)
+        i = j + 1
+    return "\n".join(out)

@@ -1144,7 +1144,7 @@ FEATURES: list[Feature] = [
             T("policy_errors.py", "a quote in a condition that goes on to the next line"),
         ),
         (T("conditions_test.py", "def condition("), T("genpolicy.py", "READS = [")),
-        hand=("conditions-sql", "conditions-null", "conditions-this", "conditions-rights"),
+        hand=("conditions-sql", "conditions-names", "conditions-null", "conditions-this", "conditions-rights"),
         grammar=(
             "Words for conditions, custom roles where they give, this in conditions",
             "Conditions whose SQL hides braces and quotes: 'x', E'x', \"names\", $$x$$, comments",

@@ -78,6 +78,13 @@ COMPILE = [
         "AZ113",
     ),
     (
+        "a table whose name starts with authz__",
+        "type hold = alt.authz__holds\n  owner : user = owner_id\n  can see = owner\n",
+        "alt.authz__holds: names that start with authz__ are rowstile's own",
+        10,
+        "AZ113",
+    ),
+    (
         "a quote in a condition that goes on to the next line",
         "  can see = owner and {up <> 'one\n    two'}\n",
         "a quote in {...} goes on to the next line: write it on one line, a line break in a string as E'\\n'",
