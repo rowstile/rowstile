@@ -12,6 +12,8 @@ writes, and the run reports for how long.
                                               # 16 GB for Docker (8 GB of shared buffers)
     KEEP=1 core/bench/scale.sh                # leave the container up (database authz_bench)
     core/bench/regress.sh                     # small run compared with this machine's baseline (CI runs it)
+    core/bench/compare.sh main                # this tree and another commit in turn, two rounds each: is a
+                                              # change faster or slower? (below)
     gh workflow run nightly.yml -f only=scale -f size=large   # a size (dev, large, medium, full) on one of
                                               # GitHub's runners; the result is the run's `scale` file
 
@@ -59,6 +61,17 @@ fails at once. A baseline belongs to the machine that recorded it, so none is co
 records one (`core/bench/baseline.txt`, which git ignores), and `regress.sh --record` records it again after an
 intended change. CI (GitHub's runners) keeps its own in the Actions cache:
 `gh workflow run nightly.yml -f only=bench` records it when there is none.
+
+`compare.sh <commit> [size]` answers whether a change is faster or slower. One machine is up to three times
+another, and a shared one differs from hour to hour, so a result is compared with another only when one machine
+made both, in turn: the script checks the other commit out beside this tree (a git worktree, removed at the end),
+runs that commit's benchmark and this tree's one after the other, twice (`ROUNDS`), and `compare.py` puts the
+results side by side: each round's figure for each measure (a read's p50, not its p95: the question is what the
+code costs), and this tree's mean over the other's. It calls a difference faster or slower when every round of
+one build is beyond every round of the other, and says nothing where they overlap. Nothing is judged; the results
+are in `core/bench/results/compare/`, which git ignores. On a runner:
+`gh workflow run nightly.yml --ref <branch> -f only=scale -f size=dev -f against=main` (the run's `scale-compare`
+files).
 
 ## Results of 2026-11-14 and 15, on GitHub's runners
 

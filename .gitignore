@@ -5,6 +5,7 @@ __pycache__/
 core/bench/results/regress-latest.txt
 core/bench/results/benchmark-latest.txt
 core/bench/results/scale-latest.txt
+core/bench/results/compare/
 core/bench/baseline.txt
 node_modules/
 examples/filemanager/frontend/dist/
