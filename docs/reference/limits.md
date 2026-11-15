@@ -4,9 +4,14 @@
 
 [`core/bench/benchmark_results.txt`](../../core/bench/benchmark_results.txt) (`benchmark.sql`): 200,000 files, 10,000 folders, 2,000 users, nested
 teams, 500 linked folders; JIT off. Measured on 2026-11-09 on one of GitHub's runners (4 CPUs, 128 MB of shared
-buffers: a shared machine) by `core/bench/benchmark.sh`, from `main` at 0.1.0-dev. The scale benchmark's figures
-below were measured on 2026-10-03 by a build from before the rename (`rowfence 0.1.0-dev`), on the laptop the
-project was developed on then; no build since has run the scale benchmark on a machine of its own.
+buffers: a shared machine) by `core/bench/benchmark.sh`, from `main` at 0.1.0-dev.
+
+The scale benchmark's figures below come from two kinds of machine. `main` at 0.1.0-dev ran it on GitHub's runners
+on 2026-11-14 and 15 (4 CPUs and 16 GB, shared by the server and pgbench; `gh workflow run nightly.yml -f
+only=scale`): what this build does, given as a range, since one runner was up to three times slower than
+another half an hour later. The laptop the project was developed on until 2026-10 (16 CPUs, nothing else running) ran it on
+2026-10-03, with a build from before the rename (`rowfence 0.1.0-dev`): the last runs on a machine of its own,
+which is what the scale gate's limits are for.
 
 | median | ms |
 |---|---|
@@ -18,13 +23,17 @@ project was developed on then; no build since has run the scale benchmark on a m
 | move a folder holding 3,441 subfolders (inside the tree) | 490 |
 
 The scale benchmark (`core/bench/scale.sh --large`: a million files, 50,000 folders, writes arriving while 400
-reads a second are served) moves the folder with the most below it, about 19,000 folders, into another root in
-0.56 to 0.62 s; reads through the rules have a p95 of 3.2 ms beside the writes ([`core/bench/README.md`](../../core/bench/README.md)).
+reads a second are served) moves the folder with the most below it, 16,000 to 19,000 folders, into another root in
+0.7 to 1.0 s on a runner, and in 0.56 to 0.62 s on the laptop. Reads through the rules, beside the writes, have a
+p95 of 4.6 to 13.8 ms on a runner and of 3.2 ms on the laptop ([`core/bench/README.md`](../../core/bench/README.md)).
 
 At twenty times that (`scale.sh --full`: 20 million files, a million folders, 40,000 users; 22 and 15 million
-rows of inheritance in a 6 GB database; the same build and laptop, 8 GB of shared buffers) the same workload has reads at
-a p95 of 4.3 to 4.6 ms and tree writes at 28 to 38 ms. The folder with the most below it, 54,000, moves in 2 to
-3.7 s. Applying takes three minutes there (the backfill), and `authz.verify()` two and a half.
+rows of inheritance in a 6 GB database) the laptop, with 8 GB of shared buffers, had reads at
+a p95 of 4.3 to 4.6 ms and tree writes at 28 to 38 ms. The folder with the most below it, 54,000, moved in 2 to
+3.7 s. Applying took three minutes there (the backfill), and `authz.verify()` two and a half. A runner runs that
+size to the end too (2026-11-14: no write failed, `authz.verify()` said true after them, applying took five minutes
+and verify four), but its 16 GB are too few for 8 GB of shared buffers beside a 6.5 GB database: reads there had a
+p95 of 38 ms, which says what the machine lacks.
 
 **JIT is off in signed-in transactions** ([Signed sessions](identity.md)): with JIT on, Postgres spends about
 a third of a second compiling each large read through RLS (on the laptop of 2026-10-03, the list above took 290 ms

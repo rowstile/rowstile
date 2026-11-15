@@ -1,0 +1,77 @@
+# rowstile scale benchmark (2026-11-14, 16.16, rowstile 0.1.0-dev, commit e042e24b)
+# 5000000 files, 250000 folders 20 levels deep, 10000 users, 1000 nested teams; 4 CPUs (AMD EPYC 9V74 80-Core Processor), 16 GB of memory, shared by server and pgbench
+# jit=off, max_connections=300, shared_buffers=4GB, synchronous_commit=on, work_mem=32MB
+
+== Loading and applying (seconds)
+load the app data                       88.97
+apply docs.authz, with backfill         75.46
+load shares, vacuum                     99.88
+
+== Sizes
+database                                 1619 MB
+folder__linked_into_parent__tree         5,418,505 rows, 499 MB
+folder__parent__tree                     3,810,740 rows, 349 MB
+authz.shares                             199,997 rows
+folders per level: 38 56 85 127 190 286 428 642 964 1446 2168 3253 4879 7318 10977 16466 24699 37048 55572 83358
+
+== 1. Reads through RLS, alone (400/s arriving steadily, 16 clients, 20 s)
+390.809047 transactions/s done, 0 failed, 0 clients aborted, 0 timed out
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95
+open_file           1945       0       3.11       5.21      12.52      88.60       5.32
+open_folder         1958       0       3.43       5.63       9.20      81.91       5.75
+can_edit            2009       0       1.88       3.45       7.30      53.74       3.55
+open_file_adm        644       0       1.26       3.27       5.67      54.09       3.37
+open_folder_adm      614       0       1.41       3.45       6.02      46.12       3.63
+can_edit_adm         651       0       1.17      10.05      33.82      48.77      10.11
+all                 7821       0       2.65       5.00      12.52      88.60       5.12
+
+== 2. Tree writes as clients grow (20 s each; create 90%, move 9% (small folders), link 1%)
+clients    writes/s  failed  aborted  timed out     p50 ms     p95 ms  waiting %
+1             171.5       0        0          0       3.33      16.30          0
+10            205.6       0        0          0      29.03     153.52         76
+50            167.8       0        0          0     192.97     897.20         75
+per kind of write, 50 clients:
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms
+create              3077       0     193.29     906.20    1414.34    2490.51
+move                 331       0     191.40     849.08    1338.93    1707.79
+link                  20       0     162.12    1038.91    1196.98    1196.98
+all                 3428       0     192.97     897.20    1411.51    2490.51
+
+== 3. The gate: 20 tree writes/s arriving steadily (20 clients) + 400 reads/s (16 clients), 30 s
+writes: 19.172942/s done, 0 failed, 0 clients aborted, 0 timed out
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95
+create               519       0       5.98      61.95     127.57     202.69      62.03
+move                  47       0      22.03      95.87     105.26     105.26      95.94
+link                   7       0       5.40      28.77      28.77      28.77      28.85
+all                  573       0       6.14      73.08     126.72     202.69      73.19
+reads: 400.231063/s done, 0 failed, 0 clients aborted, 0 timed out
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95
+open_file           3076       0       3.44       6.61      25.57     107.09       6.95
+open_folder         2890       0       3.87       7.05      21.42     106.67       7.30
+can_edit            3036       0       2.05       4.33      13.90      81.65       4.55
+open_file_adm       1027       0       1.36       3.60      12.96      77.74       3.83
+open_folder_adm     1027       0       1.47       3.87      39.59      85.89       4.10
+can_edit_adm        1010       0       1.73      14.96      46.44     188.92      15.02
+all                12066       0       2.91       6.31      28.76     188.92       6.57
+gate: tree writes p95 < 50 ms (end to end):   73.19 ms -> FAIL
+gate: reads p95 < 5 ms (end to end):          6.57 ms -> FAIL
+gate: no failed, aborted or timed-out writes: 0 -> pass
+
+== 4. One big move during steady writes (20/s, 30 s): the folder with most below it, into another root
+the big move: folder 68 with 24734 folders below it, into folder 1: 1.26 s
+writes meanwhile: 19.982640/s done, 0 failed, 0 clients aborted, 0 timed out
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95
+create               547       0       5.91     115.99    1086.52    1373.87     116.08
+move                  39       0      21.29      96.40    1162.06    1162.06      96.52
+link                   7       0       6.11      81.14      81.14      81.14      81.24
+all                  593       0       6.17     107.67    1086.52    1373.87     107.77
+authz.verify() after all the writes: t (47.09 s)
+
+== 5. Listing everything a user can see: authz.list('file', 'view'), all of it and one page of 1,000
+org admin  authz.list('file', 'view')                                           5000000 rows     2.67 s
+org admin  authz.list('file', 'view', NULL, 1000)                                  1000 rows     0.08 s
+org admin  authz.list('file', 'view', '2500000', 1000)                             1000 rows     0.08 s
+member     authz.list('file', 'view')                                            182684 rows     2.31 s
+member     authz.list('file', 'view', NULL, 1000)                                  1000 rows     0.10 s
+member     authz.list('file', 'view', '2500000', 1000)                             1000 rows     0.10 s
+

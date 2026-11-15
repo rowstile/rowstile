@@ -373,10 +373,11 @@ jobs:
   # run nightly.yml -f only=scale -f size=large`. The gate's speed limits are shown, not judged: they are for a
   # machine of its own, and here the server shares 4 CPUs with pgbench. The run still fails when it went wrong (a
   # read or a write failed, was aborted or timed out, verify() didn't say true), and its result is kept either way.
+  # (Its longest run, the full size, took 29 minutes on 2026-11-14; large takes 5, medium 10.)
   scale:
     if: ${{ inputs.only == 'scale' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {persist-credentials: false}

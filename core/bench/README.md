@@ -60,12 +60,62 @@ records one (`core/bench/baseline.txt`, which git ignores), and `regress.sh --re
 intended change. CI (GitHub's runners) keeps its own in the Actions cache:
 `gh workflow run nightly.yml -f only=bench` records it when there is none.
 
-## Results of 2026-10-03, from a build before the rename
+## Results of 2026-11-14 and 15, on GitHub's runners
+
+`main` at 0.1.0-dev (commits e042e24b and b7268bcf), PostgreSQL 16.16, each run started by `gh workflow run
+nightly.yml -f only=scale -f size=...`. A runner has 4 CPUs and 16 GB, shared by the server and pgbench, on a host
+that runs other machines' work too: the gate's speed limits are shown there, not judged.
+
+Each column comes from its files in `results/`: `--large` from `2026-11-14-1000000-files-pg16-runner-1.txt` and
+`-2.txt` and the two of `2026-11-15`; `--medium` from `2026-11-14-5000000-files-pg16-runner.txt` and that of
+`2026-11-15`; `--full` from `2026-11-14-20000000-files-pg16-runner.txt`. A file's first lines name its commit and
+its CPU. Latencies are end to end (the "e2e" column).
+
+| p95 | `--large`, four runs | `--medium`, two runs | `--full`, one run |
+|---|---|---|---|
+| reads alone | 4.0 to 10.0 ms | 3.6, 5.1 ms | 17.1 ms |
+| reads beside the gate's writes | 4.6 to 13.8 ms | 4.2, 6.6 ms | 38.4 ms |
+| tree writes, the gate | 24 to 70 ms | 31, 73 ms | 627 ms |
+| the big move | 0.71 to 0.97 s (16k to 18k below) | 1.07, 1.26 s (25k below) | 4.38 s (54k below) |
+| apply, with the backfill | 8 to 13 s | 57, 75 s | 312 s |
+| `authz.verify()` after the writes | 9 to 13 s | 37, 47 s | 244 s |
+| tree writes a second, 1 client | 155 to 237 | 172, 236 | 83 |
+| tree writes a second, 10 clients | 187 to 294 | 206, 279 | 151 |
+| tree writes a second, 50 clients | 158 to 257 | 168, 229 | 121 |
+| the database | 322 to 330 MB | 1.6 GB | 6.5 GB |
+
+No run had a failed, aborted or timed-out read or write, and `authz.verify()` said true after each.
+
+- **One runner is not another.** Runs of the same size half an hour apart gave reads beside the writes a p95 of
+  4.6 ms on one runner and of 13.8 ms on another: their CPUs differ, and so does what else their hosts run. Compare the rows
+  of one run with each other, or two builds in one job. A figure from one runner against a figure from another
+  says little.
+- **`--full` is too big for a runner.** 8 GB of shared buffers and a 6.5 GB database leave its 16 GB nothing for
+  the system. It ran to the end, which says the size works there; its latencies say the machine is too small. The
+  figures of 2026-10-03, below, are still the ones for that size.
+- **The gate's limits** (tree writes p95 < 50 ms, reads p95 < 5 ms) are for a machine of its own. The fastest
+  runner met them at `--large` and at `--medium`; the others didn't.
+
+Step 6, a folder opened by a reader who holds more (p50, one client; the runs of 2026-11-15, `main` at b7268bcf):
+
+| the reader | `--large`, two runs | `--medium` |
+|---|---|---|
+| is shared 100 folders | 1.39, 1.75 ms | 1.03 ms |
+| is shared 1,000 | 1.54, 1.94 ms | 1.17 ms |
+| is shared 4,000 | 2.22, 2.72 ms | 1.61 ms |
+| has a team given 100 | 1.47, 1.81 ms | 1.07 ms |
+| has a team given 1,000 | 1.70, 2.14 ms | 1.24 ms |
+| has a team given 4,000 | 2.48, 3.11 ms | 1.79 ms |
+
+Within a run, a reader who holds 4,000 folders pays 1.5 to 1.7 times what one who holds 100 pays.
+
+## Results of 2026-10-03, on a machine of its own, from a build before the rename
 
 These figures were measured on 2026-10-03 by the build of that day, before the project took the name rowstile:
 the result files call it `rowfence 0.1.0-dev`. They ran on PostgreSQL 16, on the laptop the project was
-developed on then (16 CPUs, nothing else running), which is out of use. No build since has run these sizes:
-read them as what the design cost at each size on that build, not as the speed of this release.
+developed on then (16 CPUs, nothing else running), which is out of use. They are the last runs on a machine of
+its own: read them as what the design cost at each size on that build, and the runners' figures above as what
+this build does on a shared machine.
 
 Each column comes from its files in `results/`: `--large` from `2026-10-03-1000000-files-pg16-1.txt` and
 `-2.txt`; `--medium` from `2026-10-03-5000000-files-pg16.txt`; `--full` from
