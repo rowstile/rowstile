@@ -124,6 +124,30 @@ Step 6, a folder opened by a reader who holds more (p50, one client; the runs of
 
 Within a run, a reader who holds 4,000 folders pays 1.5 to 1.7 times what one who holds 100 pays.
 
+Since `main` at 082cb42a (2026-11-15), the query that gives where an inherited permission starts for the reader
+works out who is signed in and which groups they are in once. One run of each size on that build
+(`2026-11-15-1000000-files-pg16-runner-3.txt` and `2026-11-15-5000000-files-pg16-runner-2.txt`; p50, ms):
+
+| the reader | `--large` | `--medium` |
+|---|---|---|
+| is shared 100 folders | 1.27 | 1.89 |
+| is shared 1,000 | 1.48 | 2.18 |
+| is shared 4,000 | 2.11 | 3.13 |
+| has a team given 100 | 1.35 | 1.94 |
+| has a team given 1,000 | 1.61 | 2.31 |
+| has a team given 4,000 | 2.56 | 3.44 |
+| is an ordinary member (step 1, reads alone) | 2.91 | 4.26 |
+| is an org's admin (step 1, reads alone) | 1.46 | 2.03 |
+
+Within a run, 4,000 folders held cost 1.7 to 1.9 times what 100 cost, and an ordinary member opens a folder 2.0
+to 2.1 times slower than an admin. A runner is not another: this `--medium` run's was the slowest met so far, so
+its figures are above the earlier table's though the build is faster. The two builds were compared in one job
+(`compare.sh`: in turn on one runner, two rounds each). An ordinary member opened a folder in 2.41 and 2.43 ms
+where the build before took 2.99 and 3.04 with 20,000 folders, and in 4.23 and 4.32 ms where it took 5.64 and
+5.95 with 50,000. A reader who is shared 4,000 folders: 2.10 and 2.13 ms against 2.31 and 2.35, and 3.15 and 3.10
+against 3.43 and 3.40. What each folder held adds didn't change: the part every read pays shrank, so both readers
+are faster and the first is a little further from the second.
+
 ## Results of 2026-11-15, on a server shared with other work
 
 `main` at c0c33d09, PostgreSQL 16.16, `core/bench/scale.sh --large` and `--full` run by hand on a rented server:

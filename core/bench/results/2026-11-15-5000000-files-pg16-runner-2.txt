@@ -1,0 +1,86 @@
+# rowstile scale benchmark (2026-11-15, 16.16, rowstile 0.1.0-dev, commit 082cb42a)
+# 5000000 files, 250000 folders 20 levels deep, 10000 users, 1000 nested teams; 4 CPUs (AMD EPYC 7763 64-Core Processor), 16 GB of memory, shared by server and pgbench
+# jit=off, max_connections=300, shared_buffers=4GB, synchronous_commit=on, work_mem=32MB
+
+== Loading and applying (seconds)
+load the app data                       90.19
+apply docs.authz, with backfill         70.02
+load shares, vacuum                     136.94
+
+== Sizes
+database                                 1627 MB
+folder__linked_into_parent__tree         5,418,505 rows, 499 MB
+folder__parent__tree                     3,810,740 rows, 349 MB
+authz.shares                             205,098 rows
+folders per level: 38 56 85 127 190 286 428 642 964 1446 2168 3253 4879 7318 10977 16466 24699 37048 55572 83358
+
+== 1. Reads through RLS, alone (400/s arriving steadily, 16 clients, 20 s)
+402.481448 transactions/s done, 0 failed, 0 clients aborted, 0 timed out
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95
+open_file           2033       0       3.77       6.60      38.89     123.45       6.76
+open_folder         1990       0       4.26       7.60      46.20     127.42       7.88
+can_edit            2007       0       2.55       4.90      17.28     106.07       5.24
+open_file_adm        685       0       1.81       5.10      26.37      89.43       5.33
+open_folder_adm      647       0       2.03       5.04      35.77      48.55       5.13
+can_edit_adm         695       0       1.64      22.72      56.70      89.98      22.78
+all                 8057       0       3.26       6.76      39.40     127.42       7.04
+
+== 2. Tree writes as clients grow (20 s each; create 90%, move 9% (small folders), link 1%)
+clients    writes/s  failed  aborted  timed out     p50 ms     p95 ms  waiting %
+1             141.9       0        0          0       4.28      18.34          0
+10            187.4       0        0          0      37.30     148.12         76
+50            156.1       0        0          0     216.46     947.41         72
+per kind of write, 50 clients:
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms
+create              2913       0     218.00     948.80    1355.44    2567.80
+move                 278       0     178.61     886.47    1201.56    2163.43
+link                  27       0     228.29    1269.78    1443.49    1443.49
+all                 3218       0     216.46     947.41    1355.44    2567.80
+
+== 3. The gate: 20 tree writes/s arriving steadily (20 clients) + 400 reads/s (16 clients), 30 s
+writes: 20.120759/s done, 0 failed, 0 clients aborted, 0 timed out
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95
+create               538       0       8.07      81.22     186.09     244.66      85.04
+move                  57       0      30.28     144.52     186.85     262.18     145.67
+link                   7       0       8.19      15.17      15.17      15.17      15.24
+all                  602       0       8.37      86.41     186.85     262.18      86.92
+reads: 401.633371/s done, 0 failed, 0 clients aborted, 0 timed out
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95
+open_file           2996       0       4.20      10.58      26.88     153.46      11.11
+open_folder         3085       0       4.98      12.77      23.34     154.60      13.10
+can_edit            3000       0       2.88       8.11      23.08     134.93       8.68
+open_file_adm       1003       0       1.93       7.50      37.00      80.84       8.91
+open_folder_adm      980       0       2.15       6.98      14.93      86.80       7.71
+can_edit_adm        1046       0       2.36      23.51      69.47     244.82      23.59
+all                12110       0       3.74      10.52      30.17     244.82      11.07
+gate: tree writes p95 < 50 ms (end to end):   86.92 ms -> FAIL
+gate: reads p95 < 5 ms (end to end):          11.07 ms -> FAIL
+gate: no failed, aborted or timed-out writes: 0 -> pass
+
+== 4. One big move during steady writes (20/s, 30 s): the folder with most below it, into another root
+the big move: folder 68 with 25266 folders below it, into folder 1: 1.44 s
+writes meanwhile: 18.788646/s done, 0 failed, 0 clients aborted, 0 timed out
+script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95
+create               505       0       6.31      86.72     876.31    1429.46      86.80
+move                  49       0      24.10      79.93     133.68     133.68      80.71
+link                   8       0       6.01      14.13      14.13      14.13      14.19
+all                  562       0       6.51      79.93     787.22    1429.46      80.71
+authz.verify() after all the writes: t (57.40 s)
+
+== 5. Listing everything a user can see: authz.list('file', 'view'), all of it and one page of 1,000
+org admin  authz.list('file', 'view')                                           5000000 rows     2.62 s
+org admin  authz.list('file', 'view', NULL, 1000)                                  1000 rows     0.10 s
+org admin  authz.list('file', 'view', '2500000', 1000)                             1000 rows     0.11 s
+member     authz.list('file', 'view')                                            395623 rows     2.41 s
+member     authz.list('file', 'view', NULL, 1000)                                  1000 rows     0.12 s
+member     authz.list('file', 'view', '2500000', 1000)                             1000 rows     0.12 s
+
+== 6. Opening a folder, by how many folders its reader holds directly (1 client, 20 s each)
+reader                        txns  failed     p50 ms     p95 ms     p99 ms
+shared 100 folders           10468       0       1.89       2.15       2.39
+shared 1000 folders           9095       0       2.18       2.44       2.66
+shared 4000 folders           6325       0       3.13       3.40       3.65
+a team's 100 folders         10179       0       1.94       2.22       2.44
+a team's 1000 folders         8574       0       2.31       2.59       2.76
+a team's 4000 folders         5751       0       3.44       3.73       4.12
+
