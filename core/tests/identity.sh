@@ -102,6 +102,8 @@ expect_code "... nor one with another scope" "42501: a session limited by scopes
 check "... it revokes a key with its own scopes (itself), and the other is as it was" "true|false" \
   "BEGIN; SELECT authz.login_key('$FILES'); SELECT authz.revoke_api_key((SELECT id FROM authz.list_api_keys() WHERE name = 'script'));
    SELECT (SELECT revoked_at IS NOT NULL FROM authz.list_api_keys() WHERE name = 'script') || '|' || (SELECT revoked_at IS NOT NULL FROM authz.list_api_keys() WHERE name = 'laptop'); ROLLBACK;"
+expect_code "... a key that may only read revokes none, itself included: revoking is a write" "42501: this session is read-only (viewing as someone else, or a read-only token)" \
+  -c "BEGIN" -c "SELECT authz.login_key('$READ')" -c "SELECT authz.revoke_api_key((SELECT id FROM authz.list_api_keys() WHERE name = 'laptop'))"
 check "... and a session without scopes revokes any of its user's keys" "t" \
   "BEGIN; SET LOCAL authz.user_id = 1; SELECT authz.revoke_api_key((SELECT id FROM authz.list_api_keys() WHERE name = 'script'));
    SELECT revoked_at IS NOT NULL FROM authz.list_api_keys() WHERE name = 'script'; ROLLBACK;"
@@ -387,6 +389,8 @@ check "... and turns JIT off for the transaction" "off" \
   "BEGIN; SET LOCAL jit = on; SET LOCAL authz.user_id = 5; SELECT authz.view_as('3', 'ticket 42'); SELECT current_setting('jit'); COMMIT;"
 expect_code "... and cannot change anything" "42501: this session is read-only (viewing as someone else, or a read-only token)" -c "BEGIN" -c "SET LOCAL authz.user_id = 5" \
   -c "SELECT authz.view_as('3', 'ticket 42')" -c "SELECT authz.share('folder', 2, 'viewer', 'user', 4)"
+expect_code "... nor revoke a key of the user it views as" "42501: this session is read-only (viewing as someone else, or a read-only token)" -c "BEGIN" -c "SET LOCAL authz.user_id = 5" \
+  -c "SELECT authz.view_as('1', 'ticket 47')" -c "SELECT authz.revoke_api_key((SELECT id FROM authz.list_api_keys() WHERE name = 'laptop'))"
 check "... nor through the rules: viewing as alice, an UPDATE of her own file changes nothing" "0" \
   "BEGIN; SET LOCAL authz.user_id = 5; SELECT authz.view_as('1', 'ticket 47');
    WITH u AS (UPDATE app.files SET body = 'x' WHERE id = 11 RETURNING 1) SELECT count(*) FROM u; ROLLBACK;"

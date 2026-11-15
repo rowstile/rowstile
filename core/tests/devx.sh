@@ -114,7 +114,7 @@ out=$(rows "$T/t.authz" | awk -F'\t' '$3 == "f" {print $4}')
 case "$out" in *"refused: it changed no rows"*) ok "... 'allowed' on one fails, and says it changed no rows";; *) bad "allowed, no rows" "$out";; esac
 printf '%s\n' 'test "x"' '  given a = {SELECT 1 WHERE false}' '  anyone cannot view file 1' > "$T/x.authz"
 out=$(rows "$T/x.authz" | awk -F'\t' '$1 == "x" {print $4}')
-case "$out" in *"returned 0 rows: it must return one"*) ok "a given that returns no row is an error, named";; *) bad "given no row" "$out";; esac
+case "$out" in *"given a = {...} returned 0 rows: it must return one (RETURNING id)"*) ok "a given that returns no row is an error, named";; *) bad "given no row" "$out";; esac
 # what a failing statement says: the rows it saw, or 'allowed' (a read is never refused); and a statement Postgres
 # can't explain (SHOW, SET) is run as it is
 cat > "$T/d.authz" <<'EOF'

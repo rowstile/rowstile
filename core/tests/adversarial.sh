@@ -440,6 +440,8 @@ for cursor in "'12abc'" "''" "'99999999999999999999999'"; do
   expect "a page cursor that isn't an id ($cursor) is the caller's mistake, not a failed query" "22023: the page cursor $cursor is not a file id" \
     -c "SELECT count(*) FROM authz.list('file', 'view', $cursor, 5)"
 done
+expect "... and of a type the policy doesn't have, that is the mistake said, whatever the cursor" "P0001: no permission nosuch.view in the policy" \
+  -c "SELECT count(*) FROM authz.list('nosuch', 'view', '12abc', 5)"
 expect "... and so is a negative page size" "22023: the page size must not be negative (got -1)" -c "SELECT count(*) FROM authz.list('file', 'view', NULL, -1)"
 expect "... while a page of none is no mistake: no row" "0" -c "SELECT count(*) FROM authz.list('file', 'view', NULL, 0)"
 expect "who may see a hidden object" "42501: you cannot see who has access to folder 5" -c "SELECT count(*) FROM authz.who('folder', '5', 'view')"

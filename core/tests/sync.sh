@@ -103,8 +103,13 @@ CREATE FUNCTION public.sync_same() RETURNS boolean LANGUAGE sql AS $$
 SQL
 reads() { PSQL -c "SELECT '$2' = ANY (public.sync_reads('$1', '${3:-file}'))"; }   # user $1 reads object $2 through the index
 
+# every function rowstile made that runs as its owner names what it reads by a search path of its own
+DEFINERS="SELECT NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname IN ('authz', 'authz_gen', 'authz_int') AND p.prosecdef
+    AND NOT EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%'))"
 echo "-- applied"
 same "applied: for every user, the index holds what authz.list gives (files, and folders by their select rule)"
+check "with the index, every function that runs as the owner sets its search_path" "$DEFINERS"
 check "the readers table has the type's key columns, typed as its key, then key" \
   "SELECT array_agg(a.attname || ' ' || format_type(a.atttypid, NULL) ORDER BY a.attnum) = '{\"id bigint\",\"key text\"}'
    FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__readers'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
@@ -314,6 +319,13 @@ check "lint reports a privilege on the index the policy doesn't give" \
 echo "-- apply and reapply"
 PSQL -c "CREATE TABLE public.kept AS SELECT 'file' AS t, id::text AS id, key, xmin::text AS x FROM authz_sync.file__readers
          UNION ALL SELECT 'keys', principal_id, key, xmin::text FROM authz_sync.keys"
+apply "$SYNCED"
+# (applying says how many shares the index can't give, those with a caveat: a plain share is none of them)
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('file', '13', 'viewer', 'user', '6')"
+apply "$SYNCED"
+case "$out" in *"shares with a caveat give nothing"*) bad "a warning of shares with a caveat, where none has one" "$out";;
+  *) ok "applying where a share is made, and none has a caveat, warns of none the index can't give";; esac
+PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '13' AND subject_id = '6'"
 apply "$SYNCED"
 check "applying again takes back the privilege on the index the policy doesn't give" \
   "SELECT NOT has_table_privilege('$ROLE', 'authz_sync.keys', 'INSERT')"
@@ -928,6 +940,10 @@ change "a custom role giving view on doc 2, given to crew 1's active members" \
    SELECT 'doc', '2', 'role:' || id, 'crew', '1', 'active' FROM r"
 was=$(freads 2 doc 2)
 change "a banned member of crew 1 let back" "UPDATE f.crew_members SET banned = false WHERE crew_id = 1 AND user_id = 2"
+# a link row whose where is NULL holds nothing, in the index as in the policy: a ban nobody says is no ban
+FPSQL -c "ALTER TABLE f.crew_members ALTER banned DROP NOT NULL" >/dev/null
+change "a member of crew 1 whose ban is no longer said (NULL)" "UPDATE f.crew_members SET banned = NULL WHERE crew_id = 1 AND user_id = 3"
+[ "$(freads 3 doc 1)" = t ] && ok "... they read doc 1 through the index again" || bad "a link's where that is NULL, in the index"
 [ "$was$(freads 2 doc 2)" = ft ] && ok "... and they read doc 2, through the role" || bad "let back" "$was$(freads 2 doc 2)"
 change "doc 3 shared with box 1, whose owner reads it through shortcut.view" \
   "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('doc', '3', 'shortcut', 'box', '1')"
@@ -1258,6 +1274,7 @@ check "the mirror has the table's columns but the masked body, then readers" \
   "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,readers}'
    FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
 mirrored "applied: the mirror holds every file, each with its readers, as a JSON array of keys"
+check "... and the functions that keep it, which run as the owner, set their search_path" "$DEFINERS"
 check "... and the folders, synced without mirrored, have no mirror" "SELECT to_regclass('authz_sync.folder__mirror') IS NULL"
 PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('file', '13', 'viewer', 'user', '6')"
 check "a share made: the file's mirror row names frank's key" "SELECT readers LIKE '%\"user:6\"%' FROM authz_sync.file__mirror WHERE id = 13"
