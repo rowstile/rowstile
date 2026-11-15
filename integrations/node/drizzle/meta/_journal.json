@@ -260,6 +260,13 @@
       "when": 1794783528943,
       "tag": "0036_authz_own_names_apart",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794786631455,
+      "tag": "0037_authz_a_column_wins",
+      "breakpoints": true
     }
   ]
 }
