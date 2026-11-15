@@ -330,7 +330,7 @@ function authz_gen."hd.users:column role, active:why"(p_row "hd"."users") | 2b29
 function authz_gen."hd.users:insert:items"(p_row "hd"."users", authz__role name) | b7289450853d shape=2771cd16
 function authz_gen."hd.users:insert:refuse"(p_row "hd"."users") | df9b0fe83dde shape=6e01a2d1
 function authz_gen."hd.users:insert:why"(p_row "hd"."users") | eba4f3bff3b5 shape=c27a8a2c
-function authz_gen."hd.users:rules:explain"(p_command text, p_id text, p_row jsonb) | 4675e346caf5 shape=6f7a2794
+function authz_gen."hd.users:rules:explain"(p_command text, p_id text, p_row jsonb) | b50a61ba3e38 shape=6f7a2794
 function authz_gen."hd.users:update:items"(p_row "hd"."users", authz__role name) | 534da87d777f shape=9c9c45e2
 function authz_gen."hd.users:update:refuse"(p_row "hd"."users") | 09420b2adb9b shape=bbe8daa8
 function authz_gen."hd.users:update:why"(p_row "hd"."users", p_stored boolean) | b281655025ab shape=b34bc81a
@@ -344,14 +344,14 @@ function authz_int."comment__col_audit_del"() | 0e130ff2f1d9 shape=b1a916b8
 function authz_int."comment__col_audit_ins"() | 61df66992923 shape=c823503a
 function authz_int."comment__col_audit_row"() | 3bbe05c80005 shape=f5610ddb
 function authz_int."comment__col_audit_trunc"() | 577a4c378c53 shape=0c48e7ad
-function authz_int."comment__col_audit_upd"() | 71105e5acbe4 shape=4e5b2e33
+function authz_int."comment__col_audit_upd"() | 9097b79cd54f shape=4e5b2e33
 function authz_int."comment__view__who"(p_id uuid) | 4e0d037f011a shape=1e7a536d
 function authz_int."comment__view__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | f89c47d623e6 shape=0e2ebd89
 function authz_int."customer_org__col_audit_del"() | ef217105ef74 shape=b0860a36
 function authz_int."customer_org__col_audit_ins"() | 957db87c0402 shape=c7d66156
 function authz_int."customer_org__col_audit_row"() | 0090ddc4de46 shape=abd35fb2
 function authz_int."customer_org__col_audit_trunc"() | 3809501ff21d shape=c170b001
-function authz_int."customer_org__col_audit_upd"() | 0da5ebcfe39d shape=9902cfd3
+function authz_int."customer_org__col_audit_upd"() | fc74411b9c83 shape=9902cfd3
 function authz_int."customer_org__manage__who"(p_id uuid) | 06e4d6e7e936 shape=2d0e171b
 function authz_int."customer_org__manage__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | a9e6deffd13f shape=235d08ca
 function authz_int."customer_org__member__who"(p_id uuid) | 9d5e1e676925 shape=3c7a37c1
@@ -374,7 +374,7 @@ function authz_int."hd.teams:column id, workspace_id"() | 6f41e52afe82 shape=04f
 function authz_int."hd.teams:column id, workspace_id:holds"(p_row jsonb, authz__role name) | 7f41797a8dbe shape=76ba7825
 function authz_int."hd.teams:column parent_id after"() | a7ecaf16b42a shape=3cbc4aa8
 function authz_int."hd.teams:column parent_id after:holds"(p_row jsonb, authz__role name) | 61c19a9a3c1e shape=7e57b128
-function authz_int."hd.teams:column parent_id after:moved"() | 2ccae7b7515a shape=363ff9fe
+function authz_int."hd.teams:column parent_id after:moved"() | ae1331d3e3e8 shape=363ff9fe
 function authz_int."hd.teams:seen"(p_id uuid) | 489dc7457804 shape=050f9641
 function authz_int."hd.tickets:column created_at"() | 59146524eb6b shape=e5b1ce01
 function authz_int."hd.tickets:column created_at:holds"(p_row jsonb, authz__role name) | a32c76c4d590 shape=9105cd16
@@ -382,7 +382,7 @@ function authz_int."hd.tickets:column id, workspace_id, requester_id"() | 42e99f
 function authz_int."hd.tickets:column id, workspace_id, requester_id:holds"(p_row jsonb, authz__role name) | 20aaf57dca9b shape=98284fc4
 function authz_int."hd.tickets:column status after"() | 800d6f8d1601 shape=a71d58db
 function authz_int."hd.tickets:column status after:holds"(p_row jsonb, authz__role name) | 9a38673b3049 shape=fa977e3e
-function authz_int."hd.tickets:column status after:moved"() | ce3b3fa982d7 shape=625f55f5
+function authz_int."hd.tickets:column status after:moved"() | 1d5010fded37 shape=625f55f5
 function authz_int."hd.tickets:column status"() | 1262c6fb5bca shape=194b218a
 function authz_int."hd.tickets:column status:holds"(p_row jsonb, authz__role name) | 34dc790633b4 shape=caad52c5
 function authz_int."hd.tickets:column team_id, assignee_id"() | 6143bbd48f3f shape=8ac5f491
@@ -408,7 +408,7 @@ function authz_int."integration__col_audit_del"() | f83050b83212 shape=38c432b2
 function authz_int."integration__col_audit_ins"() | a1e3f06dc631 shape=9956f188
 function authz_int."integration__col_audit_row"() | 129102b2fb88 shape=798b3f2b
 function authz_int."integration__col_audit_trunc"() | 0ab575052a1a shape=1fd2164c
-function authz_int."integration__col_audit_upd"() | 27ed352d430d shape=f801b8ad
+function authz_int."integration__col_audit_upd"() | 96f074cbccb5 shape=f801b8ad
 function authz_int."integration__keys_gone"() | b3dbd3d82434 shape=5e63d5f0
 function authz_int."integration__keys_gone_all"() | c8f5d501a46f shape=960f840e
 function authz_int."integration__keys_gone_id"() | 70602e31200f shape=ef2c5158
@@ -506,7 +506,7 @@ function authz_int."ticket__col_audit_del"() | e8968ba8f6a3 shape=22874a3a
 function authz_int."ticket__col_audit_ins"() | c6ce474f99f3 shape=9ca354c4
 function authz_int."ticket__col_audit_row"() | 36ca5affe68d shape=f27df45d
 function authz_int."ticket__col_audit_trunc"() | c2e6200a171e shape=6809ee0d
-function authz_int."ticket__col_audit_upd"() | 340089664079 shape=38d46fc0
+function authz_int."ticket__col_audit_upd"() | 1882ba4a918e shape=38d46fc0
 function authz_int."ticket__forget"() | 3d214e378d96 shape=1dbeb6f9
 function authz_int."ticket__forget_all"() | 1bca9173f331 shape=937e5e71
 function authz_int."ticket__forget_id"() | c8bb02671513 shape=2a3eb262
@@ -528,7 +528,7 @@ function authz_int."user__col_audit_del"() | 550865ecbaed shape=fc64ec43
 function authz_int."user__col_audit_ins"() | 51b037fe507a shape=dba70c6d
 function authz_int."user__col_audit_row"() | 8e7d140afa3c shape=da434128
 function authz_int."user__col_audit_trunc"() | da6fd969089c shape=f87e3f72
-function authz_int."user__col_audit_upd"() | f77b56aca502 shape=9e749ca9
+function authz_int."user__col_audit_upd"() | 9b508122b1c3 shape=9e749ca9
 function authz_int."user__forget"() | 3dca5926f2d5 shape=4753fdb6
 function authz_int."user__forget_all"() | fb64375cbc74 shape=1ea7139a
 function authz_int."user__forget_id"() | ff845dd1857b shape=d0d8b00d
@@ -552,7 +552,7 @@ function authz_int."workspace__agent__why"(p_id uuid, p_depth int, p_seen text[]
 function authz_int."workspace__col_audit_del"() | 0b35567e401f shape=01377bc5
 function authz_int."workspace__col_audit_ins"() | 03787e6a687f shape=198a04de
 function authz_int."workspace__col_audit_trunc"() | c69a9e8b78b8 shape=2f742328
-function authz_int."workspace__col_audit_upd"() | e323aa42b1c5 shape=c6a1a6d3
+function authz_int."workspace__col_audit_upd"() | 01187cf63496 shape=c6a1a6d3
 function authz_int."workspace__connected__who"(p_id uuid) | 1206d70400ef shape=a935c5ba
 function authz_int."workspace__connected__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | f0cc81a4e6f1 shape=25feb23b
 function authz_int."workspace__manage__who"(p_id uuid) | b187a3dc08f9 shape=d411f03a
@@ -804,22 +804,22 @@ trigger "authz_ticket_forget_id" ON "hd"."tickets" | 4fbc7225574d
 trigger "authz_ticket_forget_moved" ON "hd"."tickets" | 3149ffdb9967
 trigger "authz_ticket_forget_trunc" ON "hd"."tickets" | 969a83c53fd5
 trigger "authz_ticket_forget_trunc_first" ON "hd"."tickets" | aca790a71c11
-trigger "authz_update created_at" ON "hd"."tickets" | b62c9bd341e3
-trigger "authz_update customer_org_id" ON "hd"."users" | 79daa0cf88b7
-trigger "authz_update email" ON "hd"."users" | 5dba97d548ad
-trigger "authz_update id" ON "hd"."workspaces" | f357a0858904
-trigger "authz_update id, workspace_id" ON "hd"."customer_orgs" | af2aad01273f
-trigger "authz_update id, workspace_id" ON "hd"."integrations" | a1d637d41675
-trigger "authz_update id, workspace_id" ON "hd"."teams" | 3adb60cea6d5
-trigger "authz_update id, workspace_id, kind" ON "hd"."users" | 2700d45e0423
-trigger "authz_update id, workspace_id, requester_id" ON "hd"."tickets" | e992ce95d909
-trigger "authz_update name" ON "hd"."users" | 7277492fd3e9
-trigger "authz_update notes" ON "hd"."users" | 686e5f8b3d04
-trigger "authz_update role, active" ON "hd"."users" | bcc85126ea17
-trigger "authz_update status" ON "hd"."tickets" | 8f6f3cce9032
-trigger "authz_update team_id, assignee_id" ON "hd"."tickets" | fc16d9d1498f
-trigger "authz_update_after parent_id" ON "hd"."teams" | 3c6410d6622d
-trigger "authz_update_after status" ON "hd"."tickets" | 7df0688193f0
+trigger "authz_update created_at" ON "hd"."tickets" | 6279a9109c7f
+trigger "authz_update customer_org_id" ON "hd"."users" | fcf577ff353e
+trigger "authz_update email" ON "hd"."users" | 00e38a136c15
+trigger "authz_update id" ON "hd"."workspaces" | ab60730fd302
+trigger "authz_update id, workspace_id" ON "hd"."customer_orgs" | b47b77cfc3c3
+trigger "authz_update id, workspace_id" ON "hd"."integrations" | 23ec49a53fc1
+trigger "authz_update id, workspace_id" ON "hd"."teams" | 28d0b78fcffd
+trigger "authz_update id, workspace_id, kind" ON "hd"."users" | d3569d8333cc
+trigger "authz_update id, workspace_id, requester_id" ON "hd"."tickets" | dc1f15a6f4ce
+trigger "authz_update name" ON "hd"."users" | 612f3e280b47
+trigger "authz_update notes" ON "hd"."users" | eef81d782fc1
+trigger "authz_update role, active" ON "hd"."users" | a21287db5125
+trigger "authz_update status" ON "hd"."tickets" | d2c6d38d8216
+trigger "authz_update team_id, assignee_id" ON "hd"."tickets" | dda6d1f28afa
+trigger "authz_update_after parent_id" ON "hd"."teams" | 2bd9de462ac3
+trigger "authz_update_after status" ON "hd"."tickets" | 3b2c98e8e58c
 trigger "authz_update_after_moved parent_id" ON "hd"."teams" | d46648b63a61
 trigger "authz_update_after_moved status" ON "hd"."tickets" | 3abaaf855cee
 trigger "authz_user_col_audit_del" ON "hd"."users" | 9ae67208d86e

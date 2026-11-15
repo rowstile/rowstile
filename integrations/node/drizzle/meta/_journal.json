@@ -239,6 +239,13 @@
       "when": 1794775473568,
       "tag": "0033_authz_sql_parameters_by_position",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794778775556,
+      "tag": "0034_authz_rows_handed_on_whole",
+      "breakpoints": true
     }
   ]
 }
