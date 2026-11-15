@@ -13,7 +13,7 @@ ATTACKER=authz_attacker
 T=$(mktemp -d)
 # whatever way the suite ends: its databases, its role, its files
 cleanup() {
-  for d in "$DB" "${DB}_catalog" "${DB}_composite" "${DB}_alt" "${DB}_views" "${DB}_teams" "${DB}_grants"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+  for d in "$DB" "${DB}_catalog" "${DB}_composite" "${DB}_alt" "${DB}_names" "${DB}_views" "${DB}_teams" "${DB}_grants"; do dropdb --force --if-exists "$d" 2>/dev/null; done
   psql -X -q -d postgres -c "DROP ROLE IF EXISTS $ATTACKER" >/dev/null 2>&1
   rm -rf "$T"
 }
@@ -179,6 +179,54 @@ got=$(alt_as_1 -c "SELECT authz.share('doc', '1', 'reader', 'user', '3')")
 agrees "alt" "42501: you cannot grant doc.reader on doc 1: you do not hold view" "$got" &&
   echo "ok    ... nor share reader: it feeds view before the deny, which she no longer holds" ||
   { echo "FAIL  a banned owner sharing reader: $got"; fails=$((fails + 1)); }
+dropdb "$C"
+
+echo "-- a link table with a column named as rowstile names a parameter (p_id): a write rule asks about its own row"
+# A table's columns have the names the app gave them. The check of a write through a link table is a function written
+# in SQL, where a bare name is a column of a table in scope before it is a parameter: its parameter is `$1`, or the
+# link table's column p_id would be read in its place and every link row compared with itself
+C="${DB}_names"
+dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
+cat > $T/adversarial_names.authz <<'POLICY'
+app role app_user
+type user = an.users
+type doc = an.docs
+  owner  : user = owner_id
+  parent : doc  = an.doc_links(child -> parent)
+  can edit = owner or parent.edit
+  can view = edit or {true}
+rules an.docs
+  select : view
+  insert : edit
+  update : edit
+  delete : edit
+POLICY
+python3 compile_policy.py $T/adversarial_names.authz > $T/adversarial_names.sql &&
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" \
+  -c "CREATE SCHEMA an" -c "CREATE TABLE an.users (id bigint PRIMARY KEY)" \
+  -c "CREATE TABLE an.docs (id bigint PRIMARY KEY, owner_id bigint, title text)" \
+  -c "CREATE TABLE an.doc_links (child bigint NOT NULL, parent bigint NOT NULL, p_id bigint)" \
+  -c "GRANT USAGE ON SCHEMA an TO app_user" -c "GRANT SELECT, INSERT, UPDATE, DELETE ON an.docs TO app_user" \
+  -c "GRANT SELECT ON an.users, an.doc_links TO app_user" \
+  -f $T/adversarial_names.sql -c "INSERT INTO an.users VALUES (1)" \
+  -c "INSERT INTO an.docs VALUES (1, 1, 'a'), (2, NULL, 'b'), (3, NULL, 'c')" \
+  -c "INSERT INTO an.doc_links VALUES (2, 1, 2)" >/dev/null || exit 1
+# user 1 owns doc 1, and doc 2 is linked under it: the link's row holds 2 in its column p_id, as in its child. Doc 3
+# is nobody's and under nothing; she sees all three (view is everyone's)
+names_as_1() { error_of "$(psql -X -q -At -1 -U "$ATTACKER" -d "$C" -v VERBOSITY=verbose -c "$(sign 1)" "$@" 2>&1)"; }
+check_names() {   # $1 label, $2 expected, rest: psql arguments
+  local label=$1 want=$2; shift 2
+  local got; got=$(names_as_1 "$@")
+  agrees "$label" "$want" "$got" && echo "ok    $label" || { echo "FAIL  $label: expected '$want', got '$got'"; fails=$((fails + 1)); }
+}
+check_names "she changes the doc linked under hers" "2" -c "UPDATE an.docs SET title = 'x' WHERE id = 2 RETURNING id"
+check_names "... and not a doc that is nobody's, though a link row's p_id equals its child" "0" \
+  -c "WITH w AS (UPDATE an.docs SET title = 'x' WHERE id = 3 RETURNING id) SELECT count(*) FROM w"
+check_names "... nor deletes it" "0" -c "WITH w AS (DELETE FROM an.docs WHERE id = 3 RETURNING id) SELECT count(*) FROM w"
+check_names "... nor inserts a doc that is nobody's" "42501: permission denied: user 1 may not insert this row into an.docs" \
+  -c "INSERT INTO an.docs VALUES (4, NULL, 'd')"
+check_names "authz.can says the same of the three" "true,true,false" \
+  -c "SELECT authz.can('doc', '1', 'edit') || ',' || authz.can('doc', '2', 'edit') || ',' || authz.can('doc', '3', 'edit')"
 dropdb "$C"
 
 echo "-- what the rules read, the app role can't: a deny, a permission made of a condition, links, shares, a tree"

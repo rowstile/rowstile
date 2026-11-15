@@ -102,10 +102,10 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder_project__parent__tree', '492d5d67e0b7d0cb2b0196ee437734ee', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('folder_project__parent__tree', '92e018aa44336e65fb978555cc002ddf', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__parent__tree'), ('folder_project__parent__tree2', '988329306e17dde44651ef616e23490f', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__parent__tree'), ('folder_project__parent__tree2', '4e0410d8f8085bf2b12a7d72e806854a', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__parent__tree2')) n(name, hash, oids, rel)
@@ -873,11 +873,11 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder_project__parent__tree', '492d5d67e0b7d0cb2b0196ee437734ee', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder_project__parent__tree', '92e018aa44336e65fb978555cc002ddf', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder_project__parent__tree2', '988329306e17dde44651ef616e23490f', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder_project__parent__tree2', '4e0410d8f8085bf2b12a7d72e806854a', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1615,7 +1615,7 @@ CREATE FUNCTION authz_int."folder_project__parent__tree_compute"(p_types text[],
 RETURNS TABLE (o_dtype text, o_did text, o_atype text, o_aid text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   WITH RECURSIVE up(_dt, _d, _at, _a) AS (
-    SELECT n.t, n.i, n.t, n.i FROM unnest(p_types, p_ids) AS n(t, i)
+    SELECT n.t, n.i, n.t, n.i FROM unnest($1, $2) AS n(t, i)
     WHERE CASE n.t WHEN 'folder' THEN EXISTS (SELECT 1 FROM "mt"."folders" x WHERE x."id" = (CASE WHEN n.t = 'folder' THEN n.i END)::bigint) WHEN 'project' THEN EXISTS (SELECT 1 FROM "mt"."projects" x WHERE x."id" = (CASE WHEN n.t = 'project' THEN n.i END)::bigint) ELSE false END
     UNION
     SELECT up._dt, up._d, e.pt, e.p
@@ -1847,7 +1847,7 @@ CREATE FUNCTION authz_int."folder_project__parent__tree2_compute"(p_types text[]
 RETURNS TABLE (o_dtype text, o_did text, o_atype text, o_aid text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   WITH RECURSIVE up(_dt, _d, _at, _a) AS (
-    SELECT n.t, n.i, n.t, n.i FROM unnest(p_types, p_ids) AS n(t, i)
+    SELECT n.t, n.i, n.t, n.i FROM unnest($1, $2) AS n(t, i)
     WHERE CASE n.t WHEN 'folder' THEN EXISTS (SELECT 1 FROM "mt"."folders" x WHERE x."id" = (CASE WHEN n.t = 'folder' THEN n.i END)::bigint) WHEN 'project' THEN EXISTS (SELECT 1 FROM "mt"."projects" x WHERE x."id" = (CASE WHEN n.t = 'project' THEN n.i END)::bigint) ELSE false END
     UNION
     SELECT up._dt, up._d, e.pt, e.p
@@ -3793,7 +3793,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
     OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "docs"
 $f$;
 
 CREATE FUNCTION authz_gen."mt.docs:update:why"(p_row "mt"."docs", p_stored boolean) RETURNS SETOF text
@@ -5187,230 +5187,230 @@ SET LOCAL check_function_bodies = off;
 
 CREATE FUNCTION authz_int."org__member__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT s."user_id" FROM "mt"."org_members" s WHERE s."org_id" = p_id
+  SELECT s."user_id" FROM "mt"."org_members" s WHERE s."org_id" = $1
 $f$;
 
 CREATE FUNCTION authz_int."org__admin__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT s."user_id" FROM "mt"."org_members" s WHERE s."org_id" = p_id AND coalesce((role = 'admin'), false)
+  SELECT s."user_id" FROM "mt"."org_members" s WHERE s."org_id" = $1 AND coalesce((role = 'admin'), false)
 $f$;
 
 CREATE FUNCTION authz_int."team__member__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  WITH RECURSIVE gs(id) AS (SELECT p_id UNION SELECT e.subj FROM (SELECT g.object_id::bigint AS obj, g.subject_id::bigint AS subj FROM authz.shares g WHERE g.object_type = 'team' AND g.relation = 'member' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) e JOIN gs ON e.obj = gs.id)
+  WITH RECURSIVE gs(id) AS (SELECT $1 UNION SELECT e.subj FROM (SELECT g.object_id::bigint AS obj, g.subject_id::bigint AS subj FROM authz.shares g WHERE g.object_type = 'team' AND g.relation = 'member' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) e JOIN gs ON e.obj = gs.id)
   SELECT x FROM gs, LATERAL (SELECT s."user_id" FROM "mt"."team_members" s WHERE s."team_id" = gs.id) w(x)
 $f$;
 
 CREATE FUNCTION authz_int."project__lead__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT r."lead_id" FROM "mt"."projects" r WHERE r."id" = p_id AND r."lead_id" IS NOT NULL
+  SELECT r."lead_id" FROM "mt"."projects" r WHERE r."id" = $1 AND r."lead_id" IS NOT NULL
 $f$;
 
 CREATE FUNCTION authz_int."project__viewer__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = (p_id)::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = ($1)::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'project' AND g.object_id = (p_id)::text AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'project' AND g.object_id = ($1)::text AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member')
   UNION ALL
-  (SELECT u."id" FROM "mt"."users" u WHERE EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = (p_id)::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_id = '*'))
+  (SELECT u."id" FROM "mt"."users" u WHERE EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = ($1)::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_id = '*'))
   UNION ALL
-  (SELECT u."id" FROM "mt"."users" u WHERE EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = (p_id)::text AND g.relation = 'viewer' AND g.subject_type = 'anyone' AND g.subject_id = '*'))
+  (SELECT u."id" FROM "mt"."users" u WHERE EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = ($1)::text AND g.relation = 'viewer' AND g.subject_type = 'anyone' AND g.subject_id = '*'))
 $f$;
 
 CREATE FUNCTION authz_int."project__roles:view__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'project' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'project' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'team' AND g.subject_relation = 'member')
 $f$;
 
 CREATE FUNCTION authz_int."folder__owner__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT r."owner_id" FROM "mt"."folders" r WHERE r."id" = p_id AND r."owner_id" IS NOT NULL
+  SELECT r."owner_id" FROM "mt"."folders" r WHERE r."id" = $1 AND r."owner_id" IS NOT NULL
 $f$;
 
 CREATE FUNCTION authz_int."folder__editor__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = 'editor' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = 'editor' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member')
 $f$;
 
 CREATE FUNCTION authz_int."folder__viewer__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member')
   UNION ALL
-  (SELECT u."id" FROM "mt"."users" u WHERE EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_id = '*'))
+  (SELECT u."id" FROM "mt"."users" u WHERE EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_id = '*'))
 $f$;
 
 CREATE FUNCTION authz_int."folder__roles:edit__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = $1)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = $1)) AND g.subject_type = 'team' AND g.subject_relation = 'member')
 $f$;
 
 CREATE FUNCTION authz_int."folder__roles:view__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = $1)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = $1)) AND g.subject_type = 'team' AND g.subject_relation = 'member')
 $f$;
 
 CREATE FUNCTION authz_int."folder__roles:archive__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = $1)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."team__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'folder' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = $1)) AND g.subject_type = 'team' AND g.subject_relation = 'member')
 $f$;
 
 CREATE FUNCTION authz_int."doc__author__who"(p_id uuid) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT r."author_id" FROM "mt"."docs" r WHERE r."id" = p_id AND r."author_id" IS NOT NULL
+  SELECT r."author_id" FROM "mt"."docs" r WHERE r."id" = $1 AND r."author_id" IS NOT NULL
 $f$;
 
 CREATE FUNCTION authz_int."doc__roles:edit__who"(p_id uuid) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."doc_orgs" w WHERE w."doc_id" = p_id AND coalesce((active), false))) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*'
+  SELECT g.subject_id::uuid FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."doc_orgs" w WHERE w."doc_id" = $1 AND coalesce((active), false))) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*'
 $f$;
 
 CREATE FUNCTION authz_int."org__manage_roles__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."org__admin__who"(p_id) x
+  SELECT x FROM authz_int."org__admin__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."org__view__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."org__member__who"(p_id) x)
+  (SELECT x FROM authz_int."org__member__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."org__admin__who"(p_id) x)
+  (SELECT x FROM authz_int."org__admin__who"($1) x)
 $f$;
 
 CREATE FUNCTION authz_int."team__manage__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."team__member__who"(p_id) x
+  SELECT x FROM authz_int."team__member__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."team__manage_roles__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."team__member__who"(p_id) x
+  SELECT x FROM authz_int."team__member__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."project__edit__who_base"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."project__lead__who"(p_id) x)
+  (SELECT x FROM authz_int."project__lead__who"($1) x)
   UNION ALL
-  (SELECT x FROM (SELECT r."org_id" AS id FROM "mt"."projects" r WHERE r."id" = p_id AND r."org_id" IS NOT NULL) tg, LATERAL authz_int."org__admin__who"(tg.id) x)
+  (SELECT x FROM (SELECT r."org_id" AS id FROM "mt"."projects" r WHERE r."id" = $1 AND r."org_id" IS NOT NULL) tg, LATERAL authz_int."org__admin__who"(tg.id) x)
 $f$;
 
 CREATE FUNCTION authz_int."project__edit__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."folder_project__parent__tree" c, LATERAL authz_int."folder__edit__who_base"((CASE WHEN c.atype = 'folder' THEN c.aid END)::bigint) x WHERE c.dtype = 'project' AND c.did = p_id::text
+  SELECT x FROM authz_int."folder_project__parent__tree" c, LATERAL authz_int."folder__edit__who_base"((CASE WHEN c.atype = 'folder' THEN c.aid END)::bigint) x WHERE c.dtype = 'project' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."folder_project__parent__tree" c, LATERAL authz_int."project__edit__who_base"((CASE WHEN c.atype = 'project' THEN c.aid END)::bigint) x WHERE c.dtype = 'project' AND c.did = p_id::text
+  SELECT x FROM authz_int."folder_project__parent__tree" c, LATERAL authz_int."project__edit__who_base"((CASE WHEN c.atype = 'project' THEN c.aid END)::bigint) x WHERE c.dtype = 'project' AND c.did = $1::text
 $f$;
 
 CREATE FUNCTION authz_int."project__view__who_base"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."project__edit__who"(p_id) x)
+  (SELECT x FROM authz_int."project__edit__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."project__viewer__who"(p_id) x)
+  (SELECT x FROM authz_int."project__viewer__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."project__roles:view__who"(p_id) x)
+  (SELECT x FROM authz_int."project__roles:view__who"($1) x)
 $f$;
 
 CREATE FUNCTION authz_int."project__view__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."folder_project__parent__tree2" c, LATERAL authz_int."folder__view__who_base"((CASE WHEN c.atype = 'folder' THEN c.aid END)::bigint) x WHERE c.dtype = 'project' AND c.did = p_id::text
+  SELECT x FROM authz_int."folder_project__parent__tree2" c, LATERAL authz_int."folder__view__who_base"((CASE WHEN c.atype = 'folder' THEN c.aid END)::bigint) x WHERE c.dtype = 'project' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."folder_project__parent__tree2" c, LATERAL authz_int."project__view__who_base"((CASE WHEN c.atype = 'project' THEN c.aid END)::bigint) x WHERE c.dtype = 'project' AND c.did = p_id::text
+  SELECT x FROM authz_int."folder_project__parent__tree2" c, LATERAL authz_int."project__view__who_base"((CASE WHEN c.atype = 'project' THEN c.aid END)::bigint) x WHERE c.dtype = 'project' AND c.did = $1::text
 $f$;
 
 CREATE FUNCTION authz_int."project__peek__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."project__lead__who"(p_id) x
+  SELECT x FROM authz_int."project__lead__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."folder__edit__who_base"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."folder__owner__who"(p_id) x)
+  (SELECT x FROM authz_int."folder__owner__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."folder__editor__who"(p_id) x)
+  (SELECT x FROM authz_int."folder__editor__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."folder__roles:edit__who"(p_id) x)
+  (SELECT x FROM authz_int."folder__roles:edit__who"($1) x)
 $f$;
 
 CREATE FUNCTION authz_int."folder__edit__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."folder_project__parent__tree" c, LATERAL authz_int."folder__edit__who_base"((CASE WHEN c.atype = 'folder' THEN c.aid END)::bigint) x WHERE c.dtype = 'folder' AND c.did = p_id::text
+  SELECT x FROM authz_int."folder_project__parent__tree" c, LATERAL authz_int."folder__edit__who_base"((CASE WHEN c.atype = 'folder' THEN c.aid END)::bigint) x WHERE c.dtype = 'folder' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."folder_project__parent__tree" c, LATERAL authz_int."project__edit__who_base"((CASE WHEN c.atype = 'project' THEN c.aid END)::bigint) x WHERE c.dtype = 'folder' AND c.did = p_id::text
+  SELECT x FROM authz_int."folder_project__parent__tree" c, LATERAL authz_int."project__edit__who_base"((CASE WHEN c.atype = 'project' THEN c.aid END)::bigint) x WHERE c.dtype = 'folder' AND c.did = $1::text
 $f$;
 
 CREATE FUNCTION authz_int."folder__view__who_base"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."folder__edit__who"(p_id) x)
+  (SELECT x FROM authz_int."folder__edit__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."folder__viewer__who"(p_id) x)
+  (SELECT x FROM authz_int."folder__viewer__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."folder__roles:view__who"(p_id) x)
+  (SELECT x FROM authz_int."folder__roles:view__who"($1) x)
 $f$;
 
 CREATE FUNCTION authz_int."folder__view__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."folder_project__parent__tree2" c, LATERAL authz_int."folder__view__who_base"((CASE WHEN c.atype = 'folder' THEN c.aid END)::bigint) x WHERE c.dtype = 'folder' AND c.did = p_id::text
+  SELECT x FROM authz_int."folder_project__parent__tree2" c, LATERAL authz_int."folder__view__who_base"((CASE WHEN c.atype = 'folder' THEN c.aid END)::bigint) x WHERE c.dtype = 'folder' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."folder_project__parent__tree2" c, LATERAL authz_int."project__view__who_base"((CASE WHEN c.atype = 'project' THEN c.aid END)::bigint) x WHERE c.dtype = 'folder' AND c.did = p_id::text
+  SELECT x FROM authz_int."folder_project__parent__tree2" c, LATERAL authz_int."project__view__who_base"((CASE WHEN c.atype = 'project' THEN c.aid END)::bigint) x WHERE c.dtype = 'folder' AND c.did = $1::text
 $f$;
 
 CREATE FUNCTION authz_int."folder__share__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."folder__edit__who"(p_id) x
+  SELECT x FROM authz_int."folder__edit__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."folder__peek__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."folder__view__who"(p_id) x
+  SELECT x FROM authz_int."folder__view__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."folder__archive__who"(p_id bigint) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."folder__owner__who"(p_id) x)
+  (SELECT x FROM authz_int."folder__owner__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."folder__roles:archive__who"(p_id) x)
+  (SELECT x FROM authz_int."folder__roles:archive__who"($1) x)
 $f$;
 
 CREATE FUNCTION authz_int."doc__edit__who"(p_id uuid) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."doc__author__who"(p_id) x)
+  (SELECT x FROM authz_int."doc__author__who"($1) x)
   UNION ALL
-  ((SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = p_id AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."folder__edit__who"(tg.id) x)
+  ((SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = $1 AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."folder__edit__who"(tg.id) x)
   UNION ALL
-  (SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = p_id AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."project__edit__who"(tg.id) x))
+  (SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = $1 AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."project__edit__who"(tg.id) x))
   UNION ALL
-  (SELECT x FROM authz_int."doc__roles:edit__who"(p_id) x)
+  (SELECT x FROM authz_int."doc__roles:edit__who"($1) x)
 $f$;
 
 CREATE FUNCTION authz_int."doc__view__who"(p_id uuid) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."doc__edit__who"(p_id) x)
+  (SELECT x FROM authz_int."doc__edit__who"($1) x)
   UNION ALL
-  ((SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = p_id AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."folder__view__who"(tg.id) x)
+  ((SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = $1 AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."folder__view__who"(tg.id) x)
   UNION ALL
-  (SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = p_id AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."project__view__who"(tg.id) x))
+  (SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = $1 AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."project__view__who"(tg.id) x))
 $f$;
 
 CREATE FUNCTION authz_int."doc__glance__who"(p_id uuid) RETURNS SETOF uuid
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  ((SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = p_id AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."folder__peek__who"(tg.id) x)
+  ((SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = $1 AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."folder__peek__who"(tg.id) x)
   UNION ALL
-  (SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = p_id AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."project__peek__who"(tg.id) x))
+  (SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = $1 AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."project__peek__who"(tg.id) x))
   UNION ALL
-  ((SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = p_id AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."folder__edit__who"(tg.id) x)
+  ((SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = $1 AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."folder__edit__who"(tg.id) x)
   UNION ALL
-  (SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = p_id AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."project__edit__who"(tg.id) x))
+  (SELECT x FROM (SELECT (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint AS id FROM "mt"."docs" r WHERE r."id" = $1 AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IS NOT NULL) tg, LATERAL authz_int."project__edit__who"(tg.id) x))
 $f$;
 
 CREATE FUNCTION authz_int."org__member__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])

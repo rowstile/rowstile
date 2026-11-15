@@ -389,7 +389,7 @@ CREATE INDEX {q(stem + "_ancestor_idx")} ON authz_int.{q(stem)} (ancestor);"""
             return f"""CREATE FUNCTION {g("_compute")}(p_ids {pkt}[]) RETURNS TABLE (o_descendant {pkt}, o_ancestor {pkt})
 LANGUAGE sql STABLE {DEFINER} AS $f$
   WITH RECURSIVE up(_d, _a) AS (
-    SELECT {key("x")}, {key("x")} FROM {tbl} x WHERE {self.key_any(t, "x", "p_ids")}
+    SELECT {key("x")}, {key("x")} FROM {tbl} x WHERE {self.key_any(t, "x", "$1")}
     UNION
     SELECT up._d, e._parent
     FROM up
@@ -910,7 +910,7 @@ CREATE FUNCTION {f("_compute")}(p_types text[], p_ids text[])
 RETURNS TABLE (o_dtype text, o_did text, o_atype text, o_aid text)
 LANGUAGE sql STABLE {DEFINER} AS $f$
   WITH RECURSIVE up(_dt, _d, _at, _a) AS (
-    SELECT n.t, n.i, n.t, n.i FROM unnest(p_types, p_ids) AS n(t, i)
+    SELECT n.t, n.i, n.t, n.i FROM unnest($1, $2) AS n(t, i)
     WHERE CASE n.t {exists_case} ELSE false END
     UNION
     SELECT up._dt, up._d, e.pt, e.p

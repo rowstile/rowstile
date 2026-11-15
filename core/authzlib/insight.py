@@ -200,14 +200,14 @@ class InsightMixin(Core):
                         fn,
                         f"CREATE FUNCTION {fn}(p_id {t.pktype}) RETURNS SETOF {u.pktype}\n"
                         f"LANGUAGE sql STABLE STRICT {DEFINER_FROM_CURRENT} ROWS 50 AS $f$\n"
-                        f"  {self.rel_who_sql(t, r, 'p_id')}\n$f$;",
+                        f"  {self.rel_who_sql(t, r, '$1')}\n$f$;",
                     )
                 )
         for t in self.types.values():
             for p in t.perms.values():
                 key = self.recursive.get((t.name, p.name))
                 if key is None:
-                    sql = self.who_items(t, p.expr, "p_id")
+                    sql = self.who_items(t, p.expr, "$1")
                     body = self.all_users() if sql is None else sql
                     out.append(
                         (
@@ -218,7 +218,7 @@ class InsightMixin(Core):
                     )
                     continue
                 items = self.base_items(t, p)
-                parts = [self.who_items(t, i, "p_id") for i in items]
+                parts = [self.who_items(t, i, "$1") for i in items]
                 base = (
                     self.all_users()
                     if any(s is None for s in parts)
@@ -238,14 +238,14 @@ class InsightMixin(Core):
                     tree = self.trees[(t.name, self.scc_edges(key))]
                     body = (
                         f"SELECT x FROM authz_int.{q(tree)} c, LATERAL {self.who_base_fn(t, p.name)}(c.ancestor) x "
-                        f"WHERE c.descendant = p_id"
+                        f"WHERE c.descendant = $1"
                     )
                 else:
                     tree = self.trees[key]
                     body = "\n  UNION ALL\n  ".join(
                         f"SELECT x FROM authz_int.{q(tree)} c, LATERAL {self.who_base_fn(self.T(mt), mp)}"
                         f"((CASE WHEN c.atype = {lit(mt)} THEN c.aid END)::{self.T(mt).pktype}) x "
-                        f"WHERE c.dtype = {lit(t.name)} AND c.did = p_id::text"
+                        f"WHERE c.dtype = {lit(t.name)} AND c.did = $1::text"
                         for mt, mp in members
                     )
                 out.append(

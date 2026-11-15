@@ -203,6 +203,12 @@ For one suite, start a container and run it inside:
 - SECURITY DEFINER functions: `SET search_path = pg_catalog, pg_temp` with schema-qualified names, or
   `SET search_path FROM CURRENT` when they evaluate the policy's own SQL snippets (the path the search_path part
   sets: the schemas that exist, refused if others may create in one, AZ612).
+- A table's columns may have any name, one of a generated function's own too (`p_id`). A function written in SQL
+  that reads a table or a row of the app's writes its parameters by position (`$1`, `sqlutil.ROLE_ARG`): there
+  Postgres takes a bare name for a column of a table in scope before a parameter, without a word, and the query
+  compares the table with itself. `OwnNames` in `tests/unit_test.py` finds any that doesn't, from the compiled SQL
+  of the fixed and the hand-answered policies (`tests/kept_names.py` reads each function's names);
+  `tests/adversarial.sh` holds a write rule on a link table with a column `p_id`.
 - Mutating API functions call `authz_int.check_writable()` first (scopes / view-as are read-only).
 - Anything a later function calls must exist before it in `compile()` output order, or be plpgsql (bodies
   resolve at run time); SQL-language functions referencing later objects sit between

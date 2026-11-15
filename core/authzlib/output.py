@@ -397,7 +397,7 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
 -- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
 CREATE FUNCTION {holds}(p_row jsonb, {ROLE_PARAM} name) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT coalesce({as_caller(cond)}, false) FROM pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, p_row) AS {alias}
+  SELECT coalesce({as_caller(cond)}, false) FROM pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, $1) AS {alias}
 $f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION {fn}() RETURNS trigger

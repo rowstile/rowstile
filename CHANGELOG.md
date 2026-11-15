@@ -37,6 +37,17 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- A write rule that inherits through a link table asks about the row being written, whatever the link table's
+  columns are called (`update : edit` with `can edit = owner or parent.edit` and `parent : doc =
+  app.doc_links(child -> parent)`). The rule's check is a function written in SQL that named its parameter `p_id`,
+  and in such a function Postgres takes a bare name for a column of a table in scope before it takes it for a
+  parameter. So on a link table with a column named `p_id` the check compared every link row with itself: the rule
+  could let a write through on a row the user holds nothing on, or refuse one the policy allows. Reads, `authz.can`
+  and `authz.explain` were not affected, nor a link table without a column of that name. The functions written in
+  SQL that read a table of the app's now write their parameters by position (`$1`), which no column can be: this
+  check, the candidates `authz.who` starts from, the functions that work out an inheritance's rows and the sync
+  index's keys (where a column named `p_id`, `p_ids` or `p_types` was read in the parameter's place too), and a
+  rule's `current_user` (a column named `authz__role` took its place).
 - `authz.set_role_permissions` lets the caller add a permission they hold on an object the role is given on, even
   where they may not select its row, as `authz.share` lets them give the role there. It asked `authz.can`, which
   answers only for rows the caller may select, and refused: "you cannot give role reviewer on a folder you cannot
@@ -107,6 +118,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Upgrading
 
+- Apply the policy with this release (`rowstile apply`, or the migrations `rowstile migrate` writes) for the fix
+  to the write rules that inherit through a link table. The functions that work out an inheritance's rows changed
+  with it, so each inheritance is worked out again: `rowstile migrate` writes two migrations, one that builds the
+  new tables beside the ones in use and one that swaps them in. Until then, a link table a policy names should have
+  no column called `p_id`.
 - A policy with a type keyed by a `numeric`, a float or a `bytea` column no longer compiles (AZ206): key the type
   by a column of integers, text or uuid.
 - `authz.who_among` in a transaction where nobody signed in now answers AZ701, as any other question does: sign

@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', '190f88f2e336af7c4ef69ece39f31ed4', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', '6f7bade2903c8d12a52b2b42e5330ef6', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'domain_email_org_setting__domain_email_org_settings__tree')) n(name, hash, oids, rel)
@@ -747,7 +747,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('domain_email_org_setting__domain_email_org_settings__tree', '190f88f2e336af7c4ef69ece39f31ed4', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('domain_email_org_setting__domain_email_org_settings__tree', '6f7bade2903c8d12a52b2b42e5330ef6', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1441,7 +1441,7 @@ CREATE FUNCTION authz_int."domain_email_org_setting__domain_email_org_settings__
 RETURNS TABLE (o_dtype text, o_did text, o_atype text, o_aid text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   WITH RECURSIVE up(_dt, _d, _at, _a) AS (
-    SELECT n.t, n.i, n.t, n.i FROM unnest(p_types, p_ids) AS n(t, i)
+    SELECT n.t, n.i, n.t, n.i FROM unnest($1, $2) AS n(t, i)
     WHERE CASE n.t WHEN 'domain' THEN EXISTS (SELECT 1 FROM "lp"."domains" x WHERE x."id" = (CASE WHEN n.t = 'domain' THEN n.i END)::bigint) WHEN 'email' THEN EXISTS (SELECT 1 FROM "lp"."emails" x WHERE x."id" = (CASE WHEN n.t = 'email' THEN n.i END)::bigint) WHEN 'org' THEN EXISTS (SELECT 1 FROM "lp"."orgs" x WHERE x."id" = (CASE WHEN n.t = 'org' THEN n.i END)::bigint) WHEN 'setting' THEN EXISTS (SELECT 1 FROM "lp"."settings" x WHERE x."id" = (CASE WHEN n.t = 'setting' THEN n.i END)::bigint) ELSE false END
     UNION
     SELECT up._dt, up._d, e.pt, e.p
@@ -2514,7 +2514,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     coalesce((coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "orgs"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "orgs"
 $f$;
 
 CREATE FUNCTION authz_gen."lp.orgs:update:why"(p_row "lp"."orgs", p_stored boolean) RETURNS SETOF text
@@ -2607,7 +2607,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     coalesce((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "settings"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "settings"
 $f$;
 
 CREATE FUNCTION authz_gen."lp.settings:update:why"(p_row "lp"."settings", p_stored boolean) RETURNS SETOF text
@@ -2727,7 +2727,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     coalesce(true, false),
     coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "domains"
 $f$;
 
 CREATE FUNCTION authz_gen."lp.domains:update:why"(p_row "lp"."domains", p_stored boolean) RETURNS SETOF text
@@ -2803,7 +2803,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     coalesce(true, false),
     coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "domains"
 $f$;
 
 CREATE FUNCTION authz_gen."lp.domains:column org_id after:why"(p_row "lp"."domains") RETURNS SETOF text
@@ -2829,7 +2829,7 @@ END $f$;
 -- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
 CREATE FUNCTION authz_int."lp.domains:column org_id after:holds"(p_row jsonb, authz__role name) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false) FROM pg_catalog.jsonb_populate_record(NULL::"lp"."domains", p_row) AS "domains"
+  SELECT coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false) FROM pg_catalog.jsonb_populate_record(NULL::"lp"."domains", $1) AS "domains"
 $f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."lp.domains:column org_id after"() RETURNS trigger
@@ -3702,49 +3702,49 @@ SET LOCAL check_function_bodies = off;
 
 CREATE FUNCTION authz_int."org__owner__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT r."owner_id" FROM "lp"."orgs" r WHERE r."id" = p_id AND r."owner_id" IS NOT NULL
+  SELECT r."owner_id" FROM "lp"."orgs" r WHERE r."id" = $1 AND r."owner_id" IS NOT NULL
 $f$;
 
 CREATE FUNCTION authz_int."setting__admin__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'setting' AND g.object_id = (p_id)::text AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*'
+  SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'setting' AND g.object_id = ($1)::text AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*'
 $f$;
 
 CREATE FUNCTION authz_int."org__edit__who_base"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."org__owner__who"(p_id) x
+  SELECT x FROM authz_int."org__owner__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."org__edit__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."domain__edit__who_base"((CASE WHEN c.atype = 'domain' THEN c.aid END)::bigint) x WHERE c.dtype = 'org' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."domain__edit__who_base"((CASE WHEN c.atype = 'domain' THEN c.aid END)::bigint) x WHERE c.dtype = 'org' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."email__edit__who_base"((CASE WHEN c.atype = 'email' THEN c.aid END)::bigint) x WHERE c.dtype = 'org' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."email__edit__who_base"((CASE WHEN c.atype = 'email' THEN c.aid END)::bigint) x WHERE c.dtype = 'org' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."org__edit__who_base"((CASE WHEN c.atype = 'org' THEN c.aid END)::bigint) x WHERE c.dtype = 'org' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."org__edit__who_base"((CASE WHEN c.atype = 'org' THEN c.aid END)::bigint) x WHERE c.dtype = 'org' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."setting__edit__who_base"((CASE WHEN c.atype = 'setting' THEN c.aid END)::bigint) x WHERE c.dtype = 'org' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."setting__edit__who_base"((CASE WHEN c.atype = 'setting' THEN c.aid END)::bigint) x WHERE c.dtype = 'org' AND c.did = $1::text
 $f$;
 
 CREATE FUNCTION authz_int."org__view__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."org__edit__who"(p_id) x
+  SELECT x FROM authz_int."org__edit__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."setting__edit__who_base"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."setting__admin__who"(p_id) x
+  SELECT x FROM authz_int."setting__admin__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."setting__edit__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."domain__edit__who_base"((CASE WHEN c.atype = 'domain' THEN c.aid END)::bigint) x WHERE c.dtype = 'setting' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."domain__edit__who_base"((CASE WHEN c.atype = 'domain' THEN c.aid END)::bigint) x WHERE c.dtype = 'setting' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."email__edit__who_base"((CASE WHEN c.atype = 'email' THEN c.aid END)::bigint) x WHERE c.dtype = 'setting' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."email__edit__who_base"((CASE WHEN c.atype = 'email' THEN c.aid END)::bigint) x WHERE c.dtype = 'setting' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."org__edit__who_base"((CASE WHEN c.atype = 'org' THEN c.aid END)::bigint) x WHERE c.dtype = 'setting' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."org__edit__who_base"((CASE WHEN c.atype = 'org' THEN c.aid END)::bigint) x WHERE c.dtype = 'setting' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."setting__edit__who_base"((CASE WHEN c.atype = 'setting' THEN c.aid END)::bigint) x WHERE c.dtype = 'setting' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."setting__edit__who_base"((CASE WHEN c.atype = 'setting' THEN c.aid END)::bigint) x WHERE c.dtype = 'setting' AND c.did = $1::text
 $f$;
 
 CREATE FUNCTION authz_int."email__edit__who_base"(p_id bigint) RETURNS SETOF bigint
@@ -3754,13 +3754,13 @@ $f$;
 
 CREATE FUNCTION authz_int."email__edit__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."domain__edit__who_base"((CASE WHEN c.atype = 'domain' THEN c.aid END)::bigint) x WHERE c.dtype = 'email' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."domain__edit__who_base"((CASE WHEN c.atype = 'domain' THEN c.aid END)::bigint) x WHERE c.dtype = 'email' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."email__edit__who_base"((CASE WHEN c.atype = 'email' THEN c.aid END)::bigint) x WHERE c.dtype = 'email' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."email__edit__who_base"((CASE WHEN c.atype = 'email' THEN c.aid END)::bigint) x WHERE c.dtype = 'email' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."org__edit__who_base"((CASE WHEN c.atype = 'org' THEN c.aid END)::bigint) x WHERE c.dtype = 'email' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."org__edit__who_base"((CASE WHEN c.atype = 'org' THEN c.aid END)::bigint) x WHERE c.dtype = 'email' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."setting__edit__who_base"((CASE WHEN c.atype = 'setting' THEN c.aid END)::bigint) x WHERE c.dtype = 'email' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."setting__edit__who_base"((CASE WHEN c.atype = 'setting' THEN c.aid END)::bigint) x WHERE c.dtype = 'email' AND c.did = $1::text
 $f$;
 
 CREATE FUNCTION authz_int."domain__edit__who_base"(p_id bigint) RETURNS SETOF bigint
@@ -3770,13 +3770,13 @@ $f$;
 
 CREATE FUNCTION authz_int."domain__edit__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."domain__edit__who_base"((CASE WHEN c.atype = 'domain' THEN c.aid END)::bigint) x WHERE c.dtype = 'domain' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."domain__edit__who_base"((CASE WHEN c.atype = 'domain' THEN c.aid END)::bigint) x WHERE c.dtype = 'domain' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."email__edit__who_base"((CASE WHEN c.atype = 'email' THEN c.aid END)::bigint) x WHERE c.dtype = 'domain' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."email__edit__who_base"((CASE WHEN c.atype = 'email' THEN c.aid END)::bigint) x WHERE c.dtype = 'domain' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."org__edit__who_base"((CASE WHEN c.atype = 'org' THEN c.aid END)::bigint) x WHERE c.dtype = 'domain' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."org__edit__who_base"((CASE WHEN c.atype = 'org' THEN c.aid END)::bigint) x WHERE c.dtype = 'domain' AND c.did = $1::text
   UNION ALL
-  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."setting__edit__who_base"((CASE WHEN c.atype = 'setting' THEN c.aid END)::bigint) x WHERE c.dtype = 'domain' AND c.did = p_id::text
+  SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."setting__edit__who_base"((CASE WHEN c.atype = 'setting' THEN c.aid END)::bigint) x WHERE c.dtype = 'domain' AND c.did = $1::text
 $f$;
 
 CREATE FUNCTION authz_int."org__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])

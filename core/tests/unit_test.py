@@ -66,6 +66,7 @@ import client_types  # noqa: E402
 import decisions  # noqa: E402
 import features  # noqa: E402
 import genpolicy  # noqa: E402
+import kept_names  # noqa: E402
 
 sys.path.insert(0, os.path.join(ROOT, "mutants"))
 import mutants  # noqa: E402
@@ -753,7 +754,7 @@ class Compiling(unittest.TestCase):
         )
         sql = Compiler(parse_policy(text)).compile("the policy")
         body = sql.split('CREATE FUNCTION authz_int."doc__see__who"(p_id bigint)', 1)[1].split("$f$")[1]
-        self.assertEqual(body.strip(), 'SELECT x FROM authz_int."doc__owner__who"(p_id) x')
+        self.assertEqual(body.strip(), 'SELECT x FROM authz_int."doc__owner__who"($1) x')
 
     def test_only_what_is_called_is_made_for_who_and_explain(self) -> None:
         """A relation gets its who and explain functions only when a permission's names it: one followed only by an
@@ -1067,6 +1068,67 @@ class PointChecks(unittest.TestCase):
         self.assertIn(
             'IN (SELECT id FROM authz_int."doc__owner")\n    AND NOT coalesce((locked), false);', direct.group(0)
         )
+
+
+class OwnNames(unittest.TestCase):
+    """A table's columns may have any name, a generated function's parameter's too (`p_id`). In a function written
+    in SQL, Postgres takes a bare name for a column of a table in scope before it takes it for a parameter, and says
+    nothing: the query then compares the table's rows with themselves. So where such a function reads a table or a
+    row of the app's, it writes its parameters by position (`$1`), which no column can be."""
+
+    # a table of the app's ("app"."docs"), or a column of a row of one ("docs"."owner_id"): not rowstile's own
+    APP = re.compile(r'"(?!authz(?:_int|_gen|_sync)?")[^"]+"[.]"[^"]+"')
+
+    def test_the_functions_of_compiled_sql_are_read_with_the_names_they_keep(self) -> None:
+        sql = (
+            "CREATE TABLE authz_int.t (id bigint);\n"
+            "CREATE FUNCTION authz_int.\"a__links\"(p_id bigint, IN p_types text[] DEFAULT '{a,b}', bigint) "
+            "RETURNS boolean\nLANGUAGE sql STABLE AS $f$\n"
+            '  SELECT EXISTS (SELECT 1 FROM "app"."links" s WHERE s."child" = p_id AND s.kind = \'p_types\' '
+            "AND f(p_types => $2)) -- p_id\n$f$;\n"
+            "CREATE OR REPLACE FUNCTION authz.move(p_id text, OUT o_n integer)\nLANGUAGE plpgsql AS $f$\n"
+            "DECLARE v_t record; n integer := 0; ids bigint[];\nBEGIN\n"
+            "  FOR r IN SELECT 1 LOOP n := n + 1; END LOOP;\n  FOREACH k IN ARRAY ids LOOP NULL; END LOOP;\n"
+            "END $f$;\n"
+            "CREATE FUNCTION authz_int.t_ins() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN new; END $f$;\n"
+        )
+        links, move, trigger = kept_names.functions(sql)
+        self.assertEqual(
+            (links.name, links.plpgsql, links.parameters), ('authz_int."a__links"', False, ("p_id", "p_types"))
+        )
+        self.assertEqual(links.names, {"p_id", "p_types"})
+        # p_id is written bare; p_types only in a string, and as an argument's name in a call
+        self.assertEqual([p for p in links.parameters if links.bare(p)], ["p_id"])
+        self.assertEqual((move.name, move.plpgsql, move.parameters), ("authz.move", True, ("p_id", "o_n")))
+        self.assertEqual(move.names, {"p_id", "o_n", "v_t", "n", "ids", "r", "k", "found"})
+        self.assertTrue(trigger.plpgsql)
+        self.assertEqual(trigger.names, {"found", *kept_names.EVERY_TRIGGER})
+        self.assertEqual(sorted(kept_names.kept(sql)["p_id"]), ["authz.move", 'authz_int."a__links"'])
+
+    def test_a_function_written_in_sql_writes_no_parameter_by_name_where_a_column_could_be_meant(self) -> None:
+        texts = {name: compiled(name) for name in POLICIES}
+        texts["docs with sync"] = compiled_sync()
+        texts["docs with sync by folder"] = compiled_sync(SYNC_KEYED_LINES)
+        # the hand-answered policies hold the forms the fixed ones lack (caveats, masks, roles, `shared if`)
+        for path in sorted(glob.glob(os.path.join(ROOT, "tests", "hand", "*.authz"))):
+            rel = os.path.relpath(path, ROOT)
+            texts[rel] = Compiler(parse_policy(read(rel), rel)).compile(rel)
+        self.assertGreater(len(texts), 50)
+        names: set[str] = set()
+        for name, sql in texts.items():
+            for f in kept_names.functions(sql):
+                if f.plpgsql or not f.parameters or not self.APP.search(f.statement):
+                    continue
+                names.add(f.name)
+                self.assertEqual([p for p in f.parameters if f.bare(p)], [], f"{name}: {f.name}")
+        # the kinds of function this is about are all met: a write rule's check through link tables, who may hold a
+        # relation or a permission, a tree's rows, a rule on a row and on a column, a condition that reads more than
+        # its row, the sync index's keys
+        kinds = {re.sub(r'^.*(?:__|:)(\w+)"$', r"\1", n) for n in names}
+        for kind in ("links", "who", "who_base", "tree_compute", "tree2_compute", "items", "holds"):
+            self.assertIn(kind, kinds)
+        self.assertTrue(any(kind.startswith("check_") for kind in kinds), sorted(kinds))
+        self.assertTrue(any(n.startswith('authz_int."sync:') for n in names), sorted(names)[:20])
 
 
 class Refusals(unittest.TestCase):

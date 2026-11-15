@@ -229,15 +229,19 @@ def whole_row(alias: str, table: str) -> str:
 # A function that checks a rule as its owner (the rule's names resolved on the path the policy was applied with,
 # authz_int among them) is handed the role of who called it: a condition's current_user, current_role and user say
 # that role there, as they do in the policy, and not the owner (session_user and system_user are the same for both)
-ROLE_PARAM = "authz__role"  # (a condition writes no name that starts authz__, AZ113: RESERVED)
+ROLE_PARAM = "authz__role"  # the parameter's name, for who reads the function
+# ... and how the body writes it: by position, after the row. The row is in scope where a condition is, and in a
+# function written in SQL a name is a column of it before it is a parameter: a table may have a column of any name
+ROLE_ARG = "$2"
 ROLE_WORDS = re.compile(
     rf"{NOT_AFTER_NAME}(?<![.\"])(?:current_user|current_role|user){NOT_BEFORE_NAME}(?!\s*\.)", re.IGNORECASE
 )
 
 
 def as_caller(sql: str) -> str:
-    """SQL with the words that name the current role naming ROLE_PARAM instead, in its code (not in quotes)."""
-    return "".join(ROLE_WORDS.sub(ROLE_PARAM, text) if code else text for code, text in sql_code(sql))
+    """SQL with the words that name the current role naming the function's second parameter instead (ROLE_ARG), in
+    its code (not in quotes)."""
+    return "".join(ROLE_WORDS.sub(ROLE_ARG, text) if code else text for code, text in sql_code(sql))
 
 
 def lit(s: object) -> str:
