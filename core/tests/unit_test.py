@@ -1015,9 +1015,9 @@ class ColumnRules(unittest.TestCase):
             "  update folder_id after : folder.edit\n  update name : uploader\n",
         )
         self.assertNotEqual(ruled, read(POLICIES["composite"]))
-        # (these two run as the owner whoever calls: their callers are definer functions; and authz.verify is for
-        # administrators alone, the app role may not call it)
-        owners = {"authz_int.session_ok", "authz_int.shares_canon", "authz.verify"}
+        # (these three run as the owner whoever calls: their callers are definer functions (authz.login_jwt, for the
+        # RSA check); and authz.verify is for administrators alone, the app role may not call it)
+        owners = {"authz_int.session_ok", "authz_int.shares_canon", "authz_int.rsa_ok", "authz.verify"}
         compiler = Compiler(parse_policy(ruled))
         self.assertFalse([s for s in compiler.api_signatures() if s.startswith("authz.verify(")])
         for sql in [compiler.compile("x"), *(compiled(name) for name in POLICIES)]:

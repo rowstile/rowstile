@@ -248,6 +248,55 @@ check "... and valid from the very moment of its nbf" "2" \
   "RESET ROLE; BEGIN; $(at_now "'exp', now_s + 300, 'nbf', now_s"); SET LOCAL ROLE app_user;
    SELECT authz.login_jwt(current_setting('test.token')); COMMIT;"
 
+echo "-- RSA signatures (PKCS#1 v1.5, SHA-256), checked in SQL"
+# keys and signatures made by openssl when the suite runs; a key's modulus and a signature go to SQL as hex
+hex() { python3 -c 'import sys; print(open(sys.argv[1], "rb").read().hex())' "$1"; }
+modulus() { openssl rsa -in "$T/rsa$1.pem" -noout -modulus 2>/dev/null | cut -d= -f2; }
+rsa_n() { echo "authz_int.b2n(decode('$(modulus "$1")', 'hex'))"; }
+rsa_ok() { echo "RESET ROLE; SELECT authz_int.rsa_ok($1, $2, ${4:-65537}, $3)"; }   # $1 signature, $2 modulus, $3 message: SQL
+printf 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIyIn0' > "$T/msg"
+MSG="convert_to('$(cat "$T/msg")', 'UTF8')"
+check "bytes read as a number, whatever their count" "t|t|t" \
+  "RESET ROLE; SELECT concat_ws('|', authz_int.b2n('\\x0100') = 256, authz_int.b2n('\\x00') = 0,
+     authz_int.b2n(decode(repeat('ff', 15), 'hex')) = 1329227995784915872903807060280344575)"
+rsa_key() { openssl genrsa -out "$T/rsa$1.pem" "$1" 2>/dev/null; }
+rsa_key 2048; rsa_key 3072; rsa_key 4096
+# (the first key's modulus must leave room above it, for the signature plus its modulus further down)
+while case "$(modulus 2048)" in F*) true;; *) false;; esac; do rsa_key 2048; done
+for bits in 2048 3072 4096; do
+  openssl dgst -sha256 -sign "$T/rsa$bits.pem" -out "$T/sig$bits" "$T/msg"
+  check "a signature of a $bits-bit key is accepted" "t" "$(rsa_ok "decode('$(hex "$T/sig$bits")', 'hex')" "$(rsa_n $bits)" "$MSG")"
+done
+SIG="decode('$(hex "$T/sig2048")', 'hex')"; N=$(rsa_n 2048)
+check "... not for another message" "f" "$(rsa_ok "$SIG" "$N" "convert_to('$(cat "$T/msg")x', 'UTF8')")"
+check "... nor with one bit of it changed" "f" "$(rsa_ok "set_byte($SIG, 100, get_byte($SIG, 100) # 1)" "$N" "$MSG")"
+check "... nor under another key" "f" "$(rsa_ok "$SIG" "$(rsa_n 3072)" "$MSG")"
+check "... nor with a zero byte before it: a signature is as long as its modulus" "f" "$(rsa_ok "'\\x00'::bytea || $SIG" "$N" "$MSG")"
+# s + n is the same number as s under the modulus n: a check that only computes would take it for s. Messages are
+# signed until the sum still fits the modulus's length (the first key leaves that room: one message in sixteen fits)
+OVER=$(python3 - "$T" "$(modulus 2048)" <<'PY'
+import pathlib, subprocess, sys
+folder, n = pathlib.Path(sys.argv[1]), int(sys.argv[2], 16)
+for i in range(2000):
+    (folder / "over").write_text(f"message {i}")
+    sig = subprocess.run(["openssl", "dgst", "-sha256", "-sign", folder / "rsa2048.pem", folder / "over"], check=True, capture_output=True).stdout
+    over = int.from_bytes(sig, "big") + n
+    if over < 256 ** len(sig):
+        print(f"message {i}", sig.hex(), over.to_bytes(len(sig), "big").hex())
+        break
+PY
+)
+read -r _ over_i over_sig over_sum <<< "$OVER"
+check "a signature plus its modulus is refused: a signature is below its modulus" "t|f" \
+  "RESET ROLE; SELECT concat_ws('|', authz_int.rsa_ok(decode('$over_sig', 'hex'), $N, 65537, convert_to('message $over_i', 'UTF8')),
+     authz_int.rsa_ok(decode('$over_sum', 'hex'), $N, 65537, convert_to('message $over_i', 'UTF8')))"
+openssl genrsa -out "$T/rsa1024.pem" 1024 2>/dev/null; openssl dgst -sha256 -sign "$T/rsa1024.pem" -out "$T/sig1024" "$T/msg"
+check "a key under 2048 bits signs nothing here" "f" "$(rsa_ok "decode('$(hex "$T/sig1024")', 'hex')" "$(rsa_n 1024)" "$MSG")"
+# with the exponent 1 a signature is its own encoding, which anyone can write: only 65537 is computed
+EM="decode('0001' || repeat('ff', 202) || '003031300d060960864801650304020105000420', 'hex') || sha256($MSG)"
+check "an exponent other than 65537 is refused" "f|f" \
+  "RESET ROLE; SELECT concat_ws('|', authz_int.rsa_ok($EM, $N, 1, $MSG), authz_int.rsa_ok($SIG, $N, 3, $MSG))"
+
 echo "-- view as (support)"
 check "erin (Acme admin) views as carol: carol's files, read-only" "3|3|5|false" \
   "BEGIN; SET LOCAL authz.user_id = 5; SELECT authz.view_as('3', 'ticket 42'); SELECT (SELECT count(*) FROM app.files) || '|' || authz.uid() || '|' || current_setting('authz.acting_user') || '|' || authz.can('file', 11, 'edit'); COMMIT;"
