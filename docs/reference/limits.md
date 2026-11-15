@@ -33,7 +33,11 @@ a p95 of 4.3 to 4.6 ms and tree writes at 28 to 38 ms. The folder with the most 
 3.7 s. Applying took three minutes there (the backfill), and `authz.verify()` two and a half. A runner runs that
 size to the end too (2026-11-14: no write failed, `authz.verify()` said true after them, applying took five minutes
 and verify four), but its 16 GB are too few for 8 GB of shared buffers beside a 6.5 GB database: reads there had a
-p95 of 38 ms, which says what the machine lacks.
+p95 of 38 ms, which says what the machine lacks. A server shared with other work (12 CPUs, 47 GB) ran it to the end
+as well on 2026-11-15, with this build: no write failed, and `authz.verify()` said true after them. That server is
+two to three and a half times slower than a runner at the smaller size with the same build, so its figures at this
+size are its own: reads alone at a p95 of 17 ms, 44 to 74 tree writes a second, the folder with the most below it
+moved in 9.4 s. The laptop's figures are still the last from a machine of its own.
 
 **JIT is off in signed-in transactions** ([Signed sessions](identity.md)): with JIT on, Postgres spends about
 a third of a second compiling each large read through RLS (on the laptop of 2026-10-03, the list above took 290 ms
@@ -59,10 +63,22 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   deeper or wider nesting, and couldn't honour expiring shares. <!-- unchecked: why rowstile is built this way, not what it does -->
 - **A read costs what its reader holds.** A rule looks the object's ancestors up among the folders where the
   reader's permission starts (the ones they own, are shared, or reach through a team), and that set is worked
-  out for each query: about a millisecond per thousand. With a million folders and everything in memory,
-  opening a folder took 4.5 to 5 ms on the server for a member who held 4,000 folders directly, against the
-  1.3 ms above for one who holds a hundred. Access through one membership of something big costs nothing of
-  the kind: an org's admin, who reaches every folder, reads faster than any member in the benchmark.
+  out for each query. On GitHub's runners (2026-11-15, with 50,000 and with 250,000 folders) a reader who holds
+  4,000 folders opened a folder in 1.6 to 3.1 ms where one who holds 100 took 1.0 to 1.8 ms on the same machine:
+  1.5 to 1.7 times, or 0.15 to 0.3 ms for each thousand folders held, at both sizes
+  ([`core/bench/README.md`](../../core/bench/README.md), step 6). How a reader comes to hold them counts for
+  more than how many. An ordinary member of the benchmark, whose folders come through nested teams, ownership and
+  shares at once, opened a folder 2.3 to 2.5 times slower than an org's admin in the same runs: access through one
+  membership of something big costs nothing of the kind, and the admin, who reaches every folder, reads faster
+  than any member.
+  This is the design's cost, and it stays. The other way, testing the object's ancestors one by one against each
+  place a permission can start, was built and measured on 2026-11-15: opening a folder took 1.1 to 3.6 times
+  longer, for every reader. A rule is checked for each row, the 20 files of a folder share their ancestors, and
+  Postgres carries no answer from one row to the next; and one object alone, checked that way, is about 190
+  lookups, which cost what building 4,000 starting places costs. The set built once for a query is what serves a
+  read of many rows. <!-- unchecked: how Postgres plans, and times measured by hand on 2026-11-15 -->
+  The earlier figure here (4.5 to 5 ms against 1.3 ms, "about a millisecond per thousand") was one ordinary
+  member of the run of 2026-10-03: it measured how that member's folders reach them, not their count.
 - **Reads through the rules run on one CPU.** rowstile's functions aren't marked parallel safe: a session's
   signature is bound to its backend, which a parallel worker isn't. So Postgres never splits a read through
   the rules between workers: counting 200,000 files took 28 ms through them, 5.5 ms as the owner with two
