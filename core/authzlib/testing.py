@@ -269,7 +269,7 @@ LANGUAGE plpgsql AS {tag}{body}{tag};
             return (
                 head
                 + reset
-                + f"""    EXECUTE 'WITH authz_q AS (' || {stmt} || {SQL_NL} || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+                + f"""    EXECUTE 'WITH authz_q AS (' || {stmt} || {SQL_NL} || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given {st.var} = {{...}} returned % rows: it must return one (RETURNING id)', v_n;

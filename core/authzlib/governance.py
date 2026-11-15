@@ -585,7 +585,7 @@ END $f$;"""
         named = [x for x in watched if x not in {c.lower() for c in known} | {c.lower() for c, _ in t.key}]
         if named:
             part = lambda a: (
-                f"(SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb({a})) e "
+                f"(SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb({a}.*)) e "
                 f"WHERE lower(e.key) = ANY (ARRAY[{', '.join(lit(x) for x in named)}]))"
             )
             differs.append(f"{part('n')} IS DISTINCT FROM {part('o')}")

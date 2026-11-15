@@ -3866,7 +3866,7 @@ BEGIN
         SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
         UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
         UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
-        WHERE n."owner_id" IS DISTINCT FROM o."owner_id" OR n."parent_id" IS DISTINCT FROM o."parent_id" OR n."parent_type" IS DISTINCT FROM o."parent_type" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['and', 'archived', 'cx', 'e', 'exists', 'folder_id', 'from', 'frozen', 'is', 'not', 'null', 'select', 'this', 'where', 'z"s'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['and', 'archived', 'cx', 'e', 'exists', 'folder_id', 'from', 'frozen', 'is', 'not', 'null', 'select', 'this', 'where', 'z"s']))), 'update');
+        WHERE n."owner_id" IS DISTINCT FROM o."owner_id" OR n."parent_id" IS DISTINCT FROM o."parent_id" OR n."parent_type" IS DISTINCT FROM o."parent_type" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['and', 'archived', 'cx', 'e', 'exists', 'folder_id', 'from', 'frozen', 'is', 'not', 'null', 'select', 'this', 'where', 'z"s'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['and', 'archived', 'cx', 'e', 'exists', 'folder_id', 'from', 'frozen', 'is', 'not', 'null', 'select', 'this', 'where', 'z"s']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -4206,7 +4206,7 @@ BEGIN
         SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
         UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
         UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
-        WHERE n."region_id" IS DISTINCT FROM o."region_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['c', 'closed', 'cx', 'exists', 'from', 'not', 'select', 'site_id', 'this', 'where'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['c', 'closed', 'cx', 'exists', 'from', 'not', 'select', 'site_id', 'this', 'where']))), 'update');
+        WHERE n."region_id" IS DISTINCT FROM o."region_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['c', 'closed', 'cx', 'exists', 'from', 'not', 'select', 'site_id', 'this', 'where'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['c', 'closed', 'cx', 'exists', 'from', 'not', 'select', 'site_id', 'this', 'where']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -4312,7 +4312,7 @@ BEGIN
         SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
         UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
         UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
-        WHERE n."author_id" IS DISTINCT FROM o."author_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null']))), 'update');
+        WHERE n."author_id" IS DISTINCT FROM o."author_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)

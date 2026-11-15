@@ -48,6 +48,14 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   check, the candidates `authz.who` starts from, the functions that work out an inheritance's rows and the sync
   index's keys (where a column named `p_id`, `p_ids` or `p_types` was read in the parameter's place too), and a
   rule's `current_user` (a column named `authz__role` took its place).
+- A governed table may have a column called `n`, `o`, `x`, `f`, `new` or `old`. Where rowstile hands a row on
+  whole, it named the row by its alias alone (`to_jsonb(n)`), and Postgres takes a bare name for a column of a
+  table in scope before it takes it for a row. On a table with a column `n` or `o` whose type has a condition
+  that names a column, every `UPDATE` failed (`column reference "n" is ambiguous`). With a column `new` or `old`,
+  a policy with a rule on a column did not apply. With a column `x`, `authz.explain_rule` on a table with a masked
+  column explained a row of NULLs, or failed; with a column `f` or `n`, a mirror of the sync index was not filled
+  with the table's rows. A row handed on whole is now written `n.*`, which is the row whatever the columns are
+  called.
 - `authz.set_role_permissions` lets the caller add a permission they hold on an object the role is given on, even
   where they may not select its row, as `authz.share` lets them give the role there. It asked `authz.can`, which
   answers only for rows the caller may select, and refused: "you cannot give role reviewer on a folder you cannot

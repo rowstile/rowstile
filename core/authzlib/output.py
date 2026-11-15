@@ -371,7 +371,7 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
             f"CREATE TRIGGER {q(trigger)} BEFORE UPDATE ON {qt(rule.table)} FOR EACH ROW\n"
             f"  WHEN (({when})\n"
             f"    AND pg_catalog.row_security_active({tbl})\n"
-            f"    AND NOT {holds}(pg_catalog.to_jsonb({row}), current_user))\n"
+            f"    AND NOT {holds}(pg_catalog.to_jsonb({row}.*), current_user))\n"
             f"  EXECUTE FUNCTION {fn}()"
         )
         # A rule on the row after the change, on a table with a generated column: only once the row is written does
@@ -469,7 +469,7 @@ BEGIN
   v_one := (SELECT count(*) FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE {key_n} = {key_o})) = 1
        AND (SELECT count(*) FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key_o} = {key_n})) = 1;
   FOR v_row IN
-    SELECT (pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb(n))).* FROM new_rows n
+    SELECT (pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb(n.*))).* FROM new_rows n
     WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key_o} = {key_n} AND {same})
       AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key_o} = {key_n})
                AND EXISTS (SELECT 1 FROM old_rows o WHERE {same}

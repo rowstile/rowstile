@@ -3544,7 +3544,7 @@ BEGIN
         SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
         UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
         UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
-        WHERE n."owner_id" IS DISTINCT FROM o."owner_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this']))), 'update');
+        WHERE n."owner_id" IS DISTINCT FROM o."owner_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -3650,7 +3650,7 @@ BEGIN
         SELECT ROW(n."org_id"::bigint, n."slug"::text)::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."slug"::text)::text = ROW(n."org_id"::bigint, n."slug"::text)::text)
         UNION SELECT ROW(o."org_id"::bigint, o."slug"::text)::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."slug"::text)::text = ROW(o."org_id"::bigint, o."slug"::text)::text)
         UNION SELECT ROW(n."org_id"::bigint, n."slug"::text)::text FROM new_rows n JOIN old_rows o ON ROW(n."org_id"::bigint, n."slug"::text)::text = ROW(o."org_id"::bigint, o."slug"::text)::text
-        WHERE n."lead_id" IS DISTINCT FROM o."lead_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['disbanded', 'not'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['disbanded', 'not']))), 'update');
+        WHERE n."lead_id" IS DISTINCT FROM o."lead_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['disbanded', 'not'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['disbanded', 'not']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -3895,7 +3895,7 @@ BEGIN
         SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)
         UNION SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)
         UNION SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n JOIN old_rows o ON ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text
-        WHERE n."org_id" IS DISTINCT FROM o."org_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."parent_id" IS DISTINCT FROM o."parent_id" OR n."parent_type" IS DISTINCT FROM o."parent_type" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null']))), 'update');
+        WHERE n."org_id" IS DISTINCT FROM o."org_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."parent_id" IS DISTINCT FROM o."parent_id" OR n."parent_type" IS DISTINCT FROM o."parent_type" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -4045,7 +4045,7 @@ BEGIN
         SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)
         UNION SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)
         UNION SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n JOIN old_rows o ON ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text
-        WHERE n."folder_id" IS DISTINCT FROM o."folder_id" OR n."org_id" IS DISTINCT FROM o."org_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."uploaded_by" IS DISTINCT FROM o."uploaded_by" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['authz', 'uid'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['authz', 'uid']))), 'update');
+        WHERE n."folder_id" IS DISTINCT FROM o."folder_id" OR n."org_id" IS DISTINCT FROM o."org_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."uploaded_by" IS DISTINCT FROM o."uploaded_by" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['authz', 'uid'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['authz', 'uid']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -4938,13 +4938,13 @@ DO $tr$ BEGIN
     EXECUTE 'CREATE TRIGGER "authz_update_after folder_id" AFTER UPDATE ON "cx"."files" FOR EACH ROW
   WHEN ((OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
     AND pg_catalog.row_security_active(''"cx"."files"''::pg_catalog.regclass)
-    AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
+    AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.to_jsonb(NEW.*), current_user))
   EXECUTE FUNCTION authz_int."cx.files:column folder_id after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after folder_id" BEFORE UPDATE ON "cx"."files" FOR EACH ROW
   WHEN ((OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
     AND pg_catalog.row_security_active(''"cx"."files"''::pg_catalog.regclass)
-    AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
+    AND NOT authz_int."cx.files:column folder_id after:holds"(pg_catalog.to_jsonb(NEW.*), current_user))
   EXECUTE FUNCTION authz_int."cx.files:column folder_id after"()';
   END IF;
 END $tr$;
@@ -4971,7 +4971,7 @@ BEGIN
   v_one := (SELECT count(*) FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)) = 1
        AND (SELECT count(*) FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)) = 1;
   FOR v_row IN
-    SELECT (pg_catalog.jsonb_populate_record(NULL::"cx"."files", pg_catalog.to_jsonb(n))).* FROM new_rows n
+    SELECT (pg_catalog.jsonb_populate_record(NULL::"cx"."files", pg_catalog.to_jsonb(n.*))).* FROM new_rows n
     WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text AND o."folder_id" IS NOT DISTINCT FROM n."folder_id")
       AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)
                AND EXISTS (SELECT 1 FROM old_rows o WHERE o."folder_id" IS NOT DISTINCT FROM n."folder_id"
@@ -5089,14 +5089,14 @@ DO $tr$ BEGIN
   WHEN ((OLD."parent_type" IS DISTINCT FROM NEW."parent_type"
      OR OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
     AND pg_catalog.row_security_active(''"cx"."folders"''::pg_catalog.regclass)
-    AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
+    AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.to_jsonb(NEW.*), current_user))
   EXECUTE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after parent_type, parent_id" BEFORE UPDATE ON "cx"."folders" FOR EACH ROW
   WHEN ((OLD."parent_type" IS DISTINCT FROM NEW."parent_type"
      OR OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
     AND pg_catalog.row_security_active(''"cx"."folders"''::pg_catalog.regclass)
-    AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
+    AND NOT authz_int."cx.folders:column parent_type, parent_id after:holds"(pg_catalog.to_jsonb(NEW.*), current_user))
   EXECUTE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"()';
   END IF;
 END $tr$;
@@ -5123,7 +5123,7 @@ BEGIN
   v_one := (SELECT count(*) FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)) = 1
        AND (SELECT count(*) FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)) = 1;
   FOR v_row IN
-    SELECT (pg_catalog.jsonb_populate_record(NULL::"cx"."folders", pg_catalog.to_jsonb(n))).* FROM new_rows n
+    SELECT (pg_catalog.jsonb_populate_record(NULL::"cx"."folders", pg_catalog.to_jsonb(n.*))).* FROM new_rows n
     WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text AND o."parent_type" IS NOT DISTINCT FROM n."parent_type" AND o."parent_id" IS NOT DISTINCT FROM n."parent_id")
       AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)
                AND EXISTS (SELECT 1 FROM old_rows o WHERE o."parent_type" IS NOT DISTINCT FROM n."parent_type" AND o."parent_id" IS NOT DISTINCT FROM n."parent_id"

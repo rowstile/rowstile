@@ -11,6 +11,9 @@ for the column in a function written in SQL, without a word, and calls it ambigu
 function must write its own name so that no column can be meant (`$1` for a parameter). `OwnNames` in
 unit_test.py reads the functions here.
 A name too many does no harm (a column more to try); one too few would hide a clash.
+
+A row has the same trouble. `to_jsonb(n)` with `FROM new_rows n` is the row only while the table has no column
+called n: `rows_by_alias` finds, in a statement's code, each row of the app's named by its alias alone.
 """
 
 import os
@@ -50,8 +53,15 @@ class Function(NamedTuple):
 
 
 def code_of(text: str) -> str:
-    """A text's code: without its strings and comments, so a `;` or a name inside one isn't read."""
-    return "".join(piece if is_code else " '' " for is_code, piece in sql_code(text))
+    """A text's code: without its comments, and each string an empty one, so a `;` or a name inside one isn't read.
+    A name in quotes stays: a table of the app's is written so."""
+    out: list[str] = []
+    for is_code, piece in sql_code(text):
+        if is_code or piece.startswith('"'):
+            out.append(piece)
+        else:
+            out.append(" " if piece.startswith(("--", "/*")) else " '' ")
+    return "".join(out)
 
 
 def top_level(text: str) -> list[str]:
@@ -105,6 +115,91 @@ def functions(sql: str) -> list[Function]:
                 names.update(n.lower() for n in DECLARED.findall(block.group(1)))
             names.update(n.lower() for n in re.findall(rf"\bFOR(?:EACH)?\s+({NAME})\s+(?:IN|SLICE)\b", body, re.I))
         out.append(Function(head.group(1), plpgsql, tuple(named), frozenset(names), statement, body))
+    return out
+
+
+# --- a row named by its alias alone ---------------------------------------------------------------------------
+# `to_jsonb(n)` with `FROM new_rows n` is the row n, unless the table has a column called n: Postgres takes a bare
+# name for a column of a table in scope before it takes it for a row, and says nothing. `to_jsonb(n.*)` is the row
+# whatever the columns are called.
+
+# a table of the app's ("app"."docs": not one of rowstile's schemas), or the rows a statement changed in one
+ROW_SOURCE = r'"(?!authz(?:_int|_gen|_sync)?")(?:[^"]|"")+"[.]"(?:[^"]|"")+"|\b(?:new|old|changed|role|new_role)_rows\b'
+ALIAS = rf'"(?:[^"]|"")+"|{NAME}'
+GIVEN = re.compile(rf"\b(?:FROM|JOIN|UPDATE|INTO|USING)\s+(?:ONLY\s+)?({ROW_SOURCE})(?:\s+(?:AS\s+)?({ALIAS}))?", re.I)
+# what may follow a table that is given no alias
+NO_ALIAS = {
+    *("where", "on", "join", "cross", "left", "right", "inner", "full", "natural", "group", "order", "limit"),
+    *("union", "except", "intersect", "set", "using", "returning", "window", "having", "offset", "fetch", "for"),
+    *("loop", "values", "select", "then", "else", "end", "and", "or", "default", "with", "do"),
+}
+MADE_ON = re.compile(rf"^\s*CREATE\s+(POLICY|TRIGGER)\b.*?\bON\s+({ROW_SOURCE})", re.I | re.S)
+
+
+def own_name(table: str) -> str:
+    """The alias a table has where none is given: its name, without its schema."""
+    return table[table.index('"."') + 2 :] if '"."' in table else table
+
+
+DO = re.compile(r"\s*DO\s+(\$\w*\$)(.*?)\1", re.S | re.I)
+EXECUTED = re.compile(r"\bEXECUTE\s+'((?:[^']|'')*)'", re.I)
+
+
+def read_apart(statement: str) -> list[str]:
+    """The code of a statement of compiled SQL, in the pieces whose names are read apart: the statement itself, or,
+    of a function or a DO block, each statement of its body, and each one the body runs from a string (a trigger
+    made by EXECUTE '...')."""
+    body = BODY.search(statement) if HEAD.match(statement) else DO.match(statement)
+    if body is None:
+        return [code_of(statement)]
+    run = [code_of(m.group(1).replace("''", "'")) for m in EXECUTED.finditer(body.group(2))]
+    return [*code_of(body.group(2)).split(";"), *run]
+
+
+WORD = re.compile(rf'"(?:[^"]|"")*"|{NAME}|::|\S')
+# the words an expression may follow: a name after one of them is read, not given to a table before it
+BEFORE_A_VALUE = {
+    *("select", "where", "and", "or", "not", "on", "by", "then", "else", "when", "in", "returning", "distinct"),
+    *("all", "any", "some", "case", "is", "like", "ilike", "between", "having", "return", "if", "elsif", "while"),
+    *("perform", "using", "limit", "offset", "values"),
+}
+
+
+def rows_by_alias(code: str) -> list[tuple[str, str]]:
+    """Where a piece of code (one statement: code_of's) writes the alias of a row of the app's by itself, so that the
+    row is meant and a column of that name would be taken: (the alias, the code around it). Not before a dot (`n.id`,
+    `n.*`) or a parenthesis, and not where an alias is given (after a table, a query or AS). A policy's and a
+    trigger's table is called by its name, and the rows of a trigger's WHEN are NEW and OLD."""
+    aliases: set[str] = set()
+    made = MADE_ON.match(code)
+    if made:
+        aliases.add(own_name(made.group(2)))
+        if made.group(1).upper() == "TRIGGER":
+            aliases.update(("new", "old"))
+            when = re.search(r"\bWHEN\b(.*)\bEXECUTE\b", code, re.I | re.S)
+            code = when.group(1) if when else ""  # (REFERENCING OLD TABLE AS ... names no row)
+    for m in GIVEN.finditer(code):
+        alias = m.group(2)
+        aliases.add(own_name(m.group(1)) if alias is None or alias.lower() in NO_ALIAS else alias)
+    # "docs" is docs too, written without its quotes; a name without quotes in any case
+    forms = {a if a.startswith('"') else a.lower(): a for a in aliases}
+    forms.update({a[1:-1]: a for a in aliases if re.fullmatch(r'"[a-z_][a-z0-9_]*"', a)})
+    words = [(m.group(0), m.start()) for m in WORD.finditer(code)]
+    out: list[tuple[str, str]] = []
+    for i, (word, at) in enumerate(words):
+        alias = forms.get(word if word.startswith('"') else word.lower())
+        if alias is None:
+            continue
+        before = words[i - 1][0].lower() if i else ""
+        after = words[i + 1][0] if i + 1 < len(words) else ""
+        if after in (".", "(") or after.lower() == "as" or before in (".", "::", ")", "as"):
+            continue  # (before AS: a query's name, `WITH f AS (...)`)
+        if before == "from":  # `IS DISTINCT FROM n` reads n; `FROM n` otherwise names a table
+            if i < 2 or words[i - 2][0].lower() != "distinct":
+                continue
+        elif (before[:1] == '"' or re.fullmatch(NAME, before)) and before not in BEFORE_A_VALUE:
+            continue  # given: `FROM app.marks o`, `"app"."docs" r`
+        out.append((alias, " ".join(code[max(0, at - 60) : at + 40].split())))
     return out
 
 
