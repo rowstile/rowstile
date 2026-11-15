@@ -218,6 +218,13 @@
       "when": 1794569195718,
       "tag": "0030_authz_role_permissions_unseen_rows",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794717193045,
+      "tag": "0031_authz_rs256_sign_in",
+      "breakpoints": true
     }
   ]
 }

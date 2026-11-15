@@ -65,7 +65,7 @@ function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
 function authz.list_shares(p_type text, p_id bigint) | ac72a4d55b8e shape=63c58ea1
 function authz.list_shares(p_type text, p_id text) | 3eb4ea871fe0 shape=36731fe1
-function authz.login_jwt(p_token text) | c4401be73009 shape=57d5745b
+function authz.login_jwt(p_token text) | 42f63a2e6b95 shape=57d5745b
 function authz.login_key(p_token text) | f2e2bdc27f6e shape=f3077520
 function authz.pending_requests() | fb26fccd4e34 shape=872485a8
 function authz.perms(p_type text, p_id bigint) | 0326a9267ef0 shape=15912e3e
@@ -82,6 +82,7 @@ function authz.revoke_link(p_type text, p_id text, p_link text) | 9f1e3334d1ec s
 function authz.roles_of(p_owner_type text, p_owner_id bigint) | 118e4ddbfcfa shape=77be0f38
 function authz.roles_of(p_owner_type text, p_owner_id text) | 3f395238b63f shape=e439cd41
 function authz.session_limited() | 5a874cdc8846 shape=5f278327
+function authz.set_jwks(p_jwks jsonb) | 1f9152fc7bf7 shape=68b653b7
 function authz.set_role_permissions(p_role bigint, p_permissions text[]) | f38be6496224 shape=3cffc528
 function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 432b631cd9d6 shape=38174c64
 function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 493c2d0fe148 shape=9eda2a73
@@ -208,6 +209,7 @@ function authz_int.announce(p_type text, p_ids text[], p_cause text, p_notify bo
 function authz_int.asker_sees(p_asker text[], p_type text, p_id text, p_inspect boolean) | a19f9cdef700 shape=a667e597
 function authz_int.audit(p_action text, p_object_type text, p_object_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_detail jsonb) | dd7473f6f4fb shape=4b9c4b05
 function authz_int.audit_is_append_only() | 8c5ce299a394 shape=6d19848d
+function authz_int.b2n(p bytea) | 941858b9d363 shape=d30914ed
 function authz_int.b64url(p text) | 5692fc0b5c1e shape=17f0c842
 function authz_int.caller_is_admin() | 33a690b7bfd1 shape=268ddaf7
 function authz_int.caller_role() | f21245c06777 shape=96997846
@@ -240,6 +242,7 @@ function authz_int.role_gone() | beab44fb9bb2 shape=970d6f43
 function authz_int.role_owned(p_type text, p_id text, p_owner_type text, p_owner_id text) | 50a4cd17c18e shape=4a4c60e9
 function authz_int.role_owner_type(p_object_type text) | 979dfa0e93ee shape=1632cfb5
 function authz_int.role_relations(p_type text, p_perm text) | a76149d22783 shape=db85f6c2
+function authz_int.rsa_ok(p_sig bytea, p_n numeric, p_e int, p_msg bytea) | 847029f0dcec shape=cb4ce272
 function authz_int.scope_cmd(p_table text, p_cmd text) | a61f0ffb2281 shape=935f1a39
 function authz_int.scope_perm(p_type text, p_perm text) | b54d98533b98 shape=6c64efba
 function authz_int.scopes_active() | 2ad7d14d2bec shape=a01d60f5
@@ -251,6 +254,7 @@ function authz_int.share_why(p_type text, p_id text, p_perms text[]) | 1c3f979cf
 function authz_int.shares_canon() | 3181e0c19201 shape=ebabc566
 function authz_int.sign() | 26fda3872285 shape=de0f1c18
 function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b078e77 shape=13054e65
+function authz_int.token_note(p_token text, p_n numeric) | bf3b1de8e7ea shape=f63a2312
 function authz_int.truncate_once(p_relid oid, p_key text, p_before boolean) | b8b9cd8950d0 shape=2dde8aeb
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
 function authz_int.visible(p_type text, p_id text) | 381ec41df1f4 shape=e14964bd
@@ -271,7 +275,7 @@ rls "app"."notes" | dae2e4217f39
 rls "app"."projects" | 22205dcb8319
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
-step base | bf512c1cc69c
+step base | ffced9a15fdd
 step cascades | ca936565009d
 step grant_api | 2b064abbaf15
 step grant_functions | 584dfd75df4e
