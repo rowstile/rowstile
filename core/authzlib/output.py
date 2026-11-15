@@ -15,6 +15,7 @@ from .refusals import RefusalMixin
 from .sqlutil import (
     CHILD_TRIGGERS,
     CHILD_TRIGGERS_FN,
+    COLUMN_WINS,
     DROP_OLD_POLICIES,
     GIVE_BACK_MASKED,
     LOST_RULES,
@@ -24,6 +25,7 @@ from .sqlutil import (
     VIEW_MARKS,
     as_caller,
     below_too,
+    column_wins,
     ident,
     lit,
     on_row,
@@ -70,7 +72,8 @@ def read_now(rows: list[str]) -> str:
         return ""
     return (
         "\n-- what it reads, read now (Postgres reads a PL/pgSQL function's queries when they first run)\n"
-        "DO $read$ BEGIN" + "".join(f"\n  PERFORM 1 FROM {x} LIMIT 0;" for x in rows) + "\nEND $read$;"
+        # (a bare name in a condition is a column there too, whatever PL/pgSQL calls its own: found)
+        f"DO $read$\n{COLUMN_WINS}\nBEGIN" + "".join(f"\n  PERFORM 1 FROM {x} LIMIT 0;" for x in rows) + "\nEND $read$;"
     )
 
 
@@ -536,7 +539,9 @@ BEGIN
     RAISE EXCEPTION 'authz.uid() returns another type than this policy''s user ids ({u.pktype}); drop it first (DROP FUNCTION authz.uid() CASCADE drops what uses it) [AZ606]';
   END IF;
 END $u$;
-CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body} $uid$;{read}"""
+CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$
+{body}
+$uid$;{read}"""
 
     # --- the API app code calls ----------------------------------------------
     def can_sql(self, t: Type, perm: str) -> str:
@@ -792,10 +797,12 @@ END $f$;
             catalog.append(
                 "INSERT INTO authz_int.caveats VALUES " + ", ".join(f"({lit(c)})" for c in self.pol.caveats) + ";"
             )
-        share_if = f"""-- 'shared if {{...}}' conditions (they run as the policy's owner, like permissions)
+        share_if = f"""-- 'shared if {{...}}' conditions (they run as the policy's owner, like permissions). A bare name in one is
+-- a column of what the condition reads, never a parameter of this function
 CREATE FUNCTION authz_int.share_if(p_key text, p_object_id text, p_subject_type text, p_subject_id text,
   p_subject_relation text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+{COLUMN_WINS}
 BEGIN
   CASE p_key
 {chr(10).join(ifs) if ifs else "    WHEN NULL THEN NULL;"}
@@ -1953,7 +1960,8 @@ END $w$;"""
             ("always", "analyze", self.analyze_sql()),
             ("full", "commit", "COMMIT;" if transaction else ""),
         ]
-        self.parts = [(mode, name, sql.strip()) for mode, name, sql in parts if sql and sql.strip()]
+        # (a PL/pgSQL function that reads the app's columns says a column wins there: sqlutil.column_wins)
+        self.parts = [(mode, name, column_wins(sql.strip())) for mode, name, sql in parts if sql and sql.strip()]
         # the whole script replaces the functions the reset kept (migrations replace the ones that changed)
         return (
             re.sub(
@@ -2084,7 +2092,7 @@ END $keep$;"""
                 f"-- the signed-in {t.name}, if one is signed in (an id its table doesn't have"
                 + (", or one failing the type's where," if t.where else "")
                 + " counts as nobody)\n"
-                f"CREATE FUNCTION authz_int.{q(t.name + '__me')}() RETURNS {t.pktype} {attrs} AS $me$ {body} $me$;"
+                f"CREATE FUNCTION authz_int.{q(t.name + '__me')}() RETURNS {t.pktype} {attrs} AS $me$\n{body}\n$me$;"
                 + read_now([where_rows(t.table, t.where, "w")] if t.where else [])
             )
             cases.append(f"    WHEN {lit(t.name)} THEN principal_id := authz_int.{q(t.name + '__me')}()::text;")

@@ -130,6 +130,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   Being SQL, a condition names a column as SQL does: one with capital letters, as Prisma makes them, takes
   double quotes there (`{"parentId" is null}`), while a relation's source is the bare name
   (`parent : folder = parentId`).
+  A column may have any name, one that PL/pgSQL or rowstile calls something of its own by too (`found`, `new`,
+  `p_id`): in a condition it is the column. <!-- answer: conditions-names -->
 - **Conditions name their row `this`**: a bare column is the row's, unless a table the condition reads has
   one by that name, as most have an `id`. In a subquery, write `this.`:
   `{exists (select 1 from app.memberships m where m.project_id = this.id)}` (with `id` alone, that would be
@@ -137,7 +139,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   the type's row in its `where`, the link table's row in a link table's `where`, and the share being made in
   `shared if`. A caveat has no row. <!-- answer: conditions-this -->
   `this.` names the row whatever a subquery of the condition calls its tables, even by the name rowstile gives the row where it is checked. <!-- checked: tests/hand/conditions-this-alias.authz "this. names the row, whatever the condition's subquery calls its table" -->
-  Names that start with `authz__` are rowstile's own: a condition that writes one is refused (AZ113). <!-- checked: tests/policy_errors.py "a name that starts with authz__ in a condition" -->
+  Names that start with `authz__` are rowstile's own: a condition that writes one is refused (AZ113), and so is a
+  table called so. <!-- checked: tests/policy_errors.py "a name that starts with authz__ in a condition"; tests/policy_errors.py "a table whose name starts with authz__" -->
   A string, a quoted name or a dollar quote in a condition ends on the line it starts on (AZ114): a line break in a
   string is `E'\n'`. In a named test's statements, a quote may go on over several lines, and holds them as written.
 - **Conditions read with the policy's rights**, wherever they are checked (a rule, a permission, a caveat,

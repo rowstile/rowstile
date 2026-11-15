@@ -1,0 +1,59 @@
+-- answer: conditions-names
+-- A condition names a column bare whatever the column is called. found is a variable PL/pgSQL has in every
+-- function, new and old are a trigger's rows, p_id is what rowstile calls an id it is handed: each is the row's
+-- column here, in every place a condition goes (a type's where, a link table's, a permission, what limits an
+-- inheritance, shared if, a rule on a row, on a column, on the row after). Find 1 is user 1's, 2 and 3 are in it
+-- (3 is new), 4 isn't found. User 2 has 5 to 8: 6's p_id is below zero, 7 is new. User 3 helps on 5; their rows
+-- for 6 (not found) and 1 (old) give nothing.
+app role app_user
+
+type user = app.users
+type find = app.finds where {found}
+  owner  : user = owner_id
+  helper : user = app.find_helpers(find_id -> user_id) where {found and not old}
+  parent : find = up
+  viewer : user shared if {exists (select 1 from app.finds where id = this.object_id and found and p_id is not null)}
+  can share = owner
+  can view  = owner or helper or viewer or (parent.view and {not new})
+  can edit  = owner and {p_id is null or p_id > 0}
+
+rules app.finds
+  select          : view
+  insert          : owner and {found}
+  update          : edit
+  update p_id     : share and {not new}
+  update up after : edit and {found}
+  delete          : edit and {not new}
+
+test "found, new, old and p_id are the row's columns wherever a condition names them"
+  given {INSERT INTO app.users (id) VALUES (1), (2), (3)}
+  given {INSERT INTO app.finds (id, owner_id, up, found, new, p_id) VALUES (1, 1, NULL, true, false, NULL), (2, NULL, 1, true, false, NULL), (3, NULL, 1, true, true, NULL), (4, 1, NULL, false, false, NULL), (5, 2, NULL, true, false, 7), (6, 2, NULL, true, false, -1), (7, 2, NULL, true, true, NULL), (8, 2, NULL, true, false, NULL)}
+  given {INSERT INTO app.find_helpers (find_id, user_id, found, old) VALUES (5, 3, true, false), (6, 3, false, false), (1, 3, true, true)}
+  user 1 can view find 1
+  user 1 can view find 2
+  user 1 cannot view find 3
+  user 1 cannot view find 4
+  user 2 can edit find 5
+  user 2 cannot edit find 6
+  user 2 can view find 6
+  user 3 can view find 5
+  user 3 cannot view find 6
+  user 3 cannot view find 1
+  as user 1 sees 2 {SELECT FROM app.finds}
+  as user 3 sees 1 {SELECT FROM app.finds}
+  as user 1 sees 1 {SELECT WHERE ARRAY(SELECT x FROM authz.list('find', 'view') x ORDER BY x) = '{1,2}'}
+  as user 1 sees 1 {SELECT WHERE authz.can('find', 2, 'view') AND NOT authz.can('find', 3, 'view')}
+  as user 1 sees 1 {SELECT FROM authz.explain('find', 2, 'view') e WHERE e LIKE 'yes  user % holds view on find 2'}
+  as user 2 sees 1 {SELECT WHERE ARRAY(SELECT w FROM authz.who('find', 5, 'view') w ORDER BY w) = '{2,3}'}
+  as user 1 allowed {INSERT INTO app.finds (id, owner_id) VALUES (10, 1)}
+  as user 1 refused {INSERT INTO app.finds (id, owner_id, found) VALUES (11, 1, false)}
+  as user 2 allowed {UPDATE app.finds SET new = false WHERE id = 5}
+  as user 2 refused {UPDATE app.finds SET new = false WHERE id = 6}
+  as user 2 allowed {UPDATE app.finds SET p_id = 8 WHERE id = 5}
+  as user 2 refused {UPDATE app.finds SET p_id = 1 WHERE id = 7}
+  as user 2 allowed {UPDATE app.finds SET up = 6 WHERE id = 5}
+  as user 2 refused {DELETE FROM app.finds WHERE id = 7}
+  as user 2 allowed {DELETE FROM app.finds WHERE id = 8}
+  as user 2 allowed {SELECT authz.share('find', 5, 'viewer', 'user', 1)}
+  as user 1 refused {SELECT authz.share('find', 1, 'viewer', 'user', 2)}
+  user 1 can view find 5

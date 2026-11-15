@@ -548,7 +548,10 @@ BEGIN
   END IF;
 END $u$;
 
-CREATE OR REPLACE FUNCTION authz.uid() RETURNS bigint LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $uid$ BEGIN RETURN (SELECT u."id" FROM "alt"."users" u WHERE u."id" = (CASE WHEN authz_int.session_ok() AND coalesce(pg_catalog.current_setting('authz.principal_type', true), '') IN ('', 'user') AND pg_catalog.pg_input_is_valid(pg_catalog.current_setting('authz.user_id', true), 'bigint') THEN pg_catalog.current_setting('authz.user_id', true)::bigint END)); END $uid$;
+CREATE OR REPLACE FUNCTION authz.uid() RETURNS bigint LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $uid$
+#variable_conflict use_column
+BEGIN RETURN (SELECT u."id" FROM "alt"."users" u WHERE u."id" = (CASE WHEN authz_int.session_ok() AND coalesce(pg_catalog.current_setting('authz.principal_type', true), '') IN ('', 'user') AND pg_catalog.pg_input_is_valid(pg_catalog.current_setting('authz.user_id', true), 'bigint') THEN pg_catalog.current_setting('authz.user_id', true)::bigint END)); END
+$uid$;
 
 CREATE SCHEMA authz_gen;
 CREATE SCHEMA authz_int;
@@ -1008,6 +1011,7 @@ END $f$;
 -- announced with the cause 'dependent'.
 CREATE FUNCTION authz_int.dependents(p_type text, p_ids text[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE
   v_all boolean := '*' = ANY (p_ids);
@@ -1305,6 +1309,7 @@ CREATE TRIGGER authz_role_perm_audit_upd AFTER UPDATE ON authz.role_permissions
 -- the roles it was in and is in)
 CREATE FUNCTION authz_int.on_role_permissions() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
   IF TG_OP = 'UPDATE' THEN
     PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'role')
@@ -1364,10 +1369,12 @@ UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'it
 
 DO $r$ BEGIN PERFORM set_config('authz_ctx.reason', '', true); END $r$;
 
--- 'shared if {...}' conditions (they run as the policy's owner, like permissions)
+-- 'shared if {...}' conditions (they run as the policy's owner, like permissions). A bare name in one is
+-- a column of what the condition reads, never a parameter of this function
 CREATE FUNCTION authz_int.share_if(p_key text, p_object_id text, p_subject_type text, p_subject_id text,
   p_subject_relation text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   CASE p_key
     WHEN NULL THEN NULL;
@@ -1402,6 +1409,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f
 -- deleting a role removes its assignments
 CREATE FUNCTION authz_int.role_gone() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
   DELETE FROM authz.shares WHERE relation IN (SELECT 'role:' || o.id FROM old_rows o);
   RETURN NULL;
@@ -1510,6 +1518,7 @@ CREATE TABLE authz_int."doc__parent__tree_reads" (rel regclass PRIMARY KEY);
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION authz_int."doc__parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE affected bigint[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
@@ -1532,6 +1541,7 @@ END $f$;
 -- recompute everything (backfill, TRUNCATE), 10000 rows at a time
 CREATE FUNCTION authz_int."doc__parent__tree_rebuild"() RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE batch bigint[];
 BEGIN
   UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
@@ -1551,6 +1561,7 @@ BEGIN PERFORM authz_int."doc__parent__tree_rebuild"(); RETURN NULL; END $f$;
 -- that is gone
 CREATE FUNCTION authz_int."doc__parent__tree_verify"() RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE batch bigint[];
 BEGIN
   FOR batch IN SELECT array_agg(k.k) FROM (SELECT "doc_no" AS k, row_number() OVER () AS n FROM "alt"."docs") k GROUP BY (k.n - 1) / 10000 LOOP
@@ -1620,6 +1631,7 @@ CREATE VIEW authz_int."doc__parent__tree_parents" AS
   SELECT r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL;
 CREATE FUNCTION authz_int."doc__parent__tree_check_loops"(p_ids bigint[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE bad text;
 BEGIN
   WITH RECURSIVE up(start, id) AS (
@@ -1636,6 +1648,7 @@ END $f$;
 -- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."doc__parent__tree_on_rows"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE ids bigint[]; shift boolean := false; wrote boolean;
 BEGIN
@@ -1680,6 +1693,7 @@ COMMENT ON TRIGGER "authz_doc__parent__tree_trunc" ON "alt"."docs" IS 'rowstile:
 -- links stored in alt.doc_links
 CREATE FUNCTION authz_int."doc__parent__tree_on_links1"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current
   IF TG_OP = 'INSERT' THEN PERFORM authz_int."doc__parent__tree_refresh"(ARRAY(SELECT n."child" FROM new_rows n), false);
@@ -1775,6 +1789,7 @@ CREATE TABLE authz_int."doc__parent_shortcut__tree_reads" (rel regclass PRIMARY 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE affected bigint[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
@@ -1798,6 +1813,7 @@ END $f$;
 -- recompute everything (backfill, TRUNCATE), 10000 rows at a time
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_rebuild"() RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE batch bigint[];
 BEGIN
   UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
@@ -1817,6 +1833,7 @@ BEGIN PERFORM authz_int."doc__parent_shortcut__tree_rebuild"(); RETURN NULL; END
 -- that is gone
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_verify"() RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE batch bigint[];
 BEGIN
   FOR batch IN SELECT array_agg(k.k) FROM (SELECT "doc_no" AS k, row_number() OVER () AS n FROM "alt"."docs") k GROUP BY (k.n - 1) / 10000 LOOP
@@ -1886,6 +1903,7 @@ CREATE VIEW authz_int."doc__parent_shortcut__tree_parents" AS
   SELECT r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL;
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_check_loops"(p_ids bigint[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE bad text;
 BEGIN
   WITH RECURSIVE up(start, id) AS (
@@ -1902,6 +1920,7 @@ END $f$;
 -- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_on_rows"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE ids bigint[]; shift boolean := false; wrote boolean;
 BEGIN
@@ -1946,6 +1965,7 @@ COMMENT ON TRIGGER "authz_doc__parent_shortcut__tree_trunc" ON "alt"."docs" IS '
 -- links stored in alt.doc_links
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_on_links1"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current
   IF TG_OP = 'INSERT' THEN PERFORM authz_int."doc__parent_shortcut__tree_refresh"(ARRAY(SELECT n."child" FROM new_rows n), false);
@@ -1967,6 +1987,7 @@ COMMENT ON TRIGGER "authz_doc__parent_shortcut__tree_on_links1_trunc" ON "alt"."
 -- links people make with authz.share(); they can't expire, since the closure is stored
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_on_shares"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current
@@ -2081,6 +2102,7 @@ END $imm$;
 -- one made for a few rows would be ruinous for a big move
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_shift"(p_ids bigint[], p_below bigint[]) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_custom_plan AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE touched bigint[];
 BEGIN
@@ -2135,6 +2157,7 @@ END $f$;
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE affected bigint[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
@@ -2158,6 +2181,7 @@ END $f$;
 -- recompute everything (backfill, TRUNCATE), 10000 rows at a time
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_rebuild"() RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE batch bigint[];
 BEGIN
   UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
@@ -2175,6 +2199,7 @@ BEGIN PERFORM authz_int."doc__parent_shortcut__tree2_rebuild"(); RETURN NULL; EN
 -- that is gone
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_verify"() RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE batch bigint[];
 BEGIN
   FOR batch IN SELECT array_agg(k.k) FROM (SELECT "doc_no" AS k, row_number() OVER () AS n FROM "alt"."docs") k GROUP BY (k.n - 1) / 10000 LOOP
@@ -2199,6 +2224,7 @@ CREATE VIEW authz_int."doc__parent_shortcut__tree2_parents" AS
   SELECT r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL;
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_check_loops"(p_ids bigint[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE bad text;
 BEGIN
   WITH RECURSIVE up(start, id) AS (
@@ -2215,6 +2241,7 @@ END $f$;
 -- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_on_rows"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE ids bigint[]; shift boolean := false;
 BEGIN
@@ -2253,6 +2280,7 @@ COMMENT ON TRIGGER "authz_doc__parent_shortcut__tree2_trunc" ON "alt"."docs" IS 
 -- links stored in alt.doc_links
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_on_links1"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current
   IF TG_OP = 'INSERT' THEN PERFORM authz_int."doc__parent_shortcut__tree2_refresh"(ARRAY(SELECT n."child" FROM new_rows n), true);
@@ -2274,6 +2302,7 @@ COMMENT ON TRIGGER "authz_doc__parent_shortcut__tree2_on_links1_trunc" ON "alt".
 -- links people make with authz.share(); they can't expire, since the closure is stored
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_on_shares"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current
@@ -2327,6 +2356,7 @@ DROP SCHEMA authz_keep CASCADE;
 -- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION authz_int."user__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE v_gone text[];
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
@@ -2414,6 +2444,7 @@ END $tr$;
 -- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION authz_int."grp__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE v_gone text[];
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
@@ -2501,6 +2532,7 @@ END $tr$;
 -- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION authz_int."doc__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE v_gone text[];
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
@@ -2587,6 +2619,7 @@ END $tr$;
 -- relationships kept in alt.doc_links
 CREATE FUNCTION authz_int."rel_audit_1_ins"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2607,6 +2640,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2636,6 +2670,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_del"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2686,6 +2721,7 @@ END $tr$;
 -- relationships kept in alt.doc_projects
 CREATE FUNCTION authz_int."rel_audit_2_ins"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2706,6 +2742,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2735,6 +2772,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_del"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2785,6 +2823,7 @@ END $tr$;
 -- relationships kept in alt.group_members
 CREATE FUNCTION authz_int."rel_audit_3_ins"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2805,6 +2844,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2834,6 +2874,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_del"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2884,6 +2925,7 @@ END $tr$;
 -- relationships kept in alt.project_groups
 CREATE FUNCTION authz_int."rel_audit_4_ins"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2904,6 +2946,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2933,6 +2976,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_del"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
     INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_type,
                              subject_id, subject_relation, reason)
@@ -2983,6 +3027,7 @@ END $tr$;
 -- relationships kept in columns of alt.users: audited when they change; the feed hears of every row
 CREATE FUNCTION authz_int."user__col_audit_ins"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     PERFORM authz_int.changed('user', ARRAY(SELECT n."id"::text FROM new_rows n), 'insert');
   RETURN NULL;
@@ -2997,6 +3042,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."user__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
     -- column no rule reads changes no access, and isn't announced)
@@ -3027,6 +3073,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."user__col_audit_del"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     PERFORM authz_int.changed('user', ARRAY(SELECT o."id"::text FROM old_rows o), 'delete');
   RETURN NULL;
@@ -3089,6 +3136,7 @@ END $tr$;
 -- relationships kept in columns of alt.groups: audited when they change; the feed hears of every row
 CREATE FUNCTION authz_int."grp__col_audit_ins"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     PERFORM authz_int.changed('grp', ARRAY(SELECT n."gid"::text FROM new_rows n), 'insert');
   RETURN NULL;
@@ -3103,6 +3151,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."grp__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
     -- column no rule reads changes no access, and isn't announced)
@@ -3133,6 +3182,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."grp__col_audit_del"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     PERFORM authz_int.changed('grp', ARRAY(SELECT o."gid"::text FROM old_rows o), 'delete');
   RETURN NULL;
@@ -3195,6 +3245,7 @@ END $tr$;
 -- relationships kept in columns of alt.projects: audited when they change; the feed hears of every row
 CREATE FUNCTION authz_int."proj__col_audit_ins"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     PERFORM authz_int.changed('proj', ARRAY(SELECT n."id"::text FROM new_rows n), 'insert');
   RETURN NULL;
@@ -3209,6 +3260,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."proj__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
     -- column no rule reads changes no access, and isn't announced)
@@ -3239,6 +3291,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."proj__col_audit_del"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     PERFORM authz_int.changed('proj', ARRAY(SELECT o."id"::text FROM old_rows o), 'delete');
   RETURN NULL;
@@ -3301,6 +3354,7 @@ END $tr$;
 -- relationships kept in columns of alt.docs: audited when they change; the feed hears of every row
 CREATE FUNCTION authz_int."doc__col_audit_ins"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     PERFORM authz_int.changed('doc', ARRAY(SELECT n."doc_no"::text FROM new_rows n), 'insert');
   RETURN NULL;
@@ -3315,6 +3369,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."doc__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
     -- column no rule reads changes no access, and isn't announced)
@@ -3366,6 +3421,7 @@ DO $tr$ BEGIN
 END $tr$;
 CREATE FUNCTION authz_int."doc__col_audit_del"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 BEGIN
     PERFORM authz_int.changed('doc', ARRAY(SELECT o."doc_no"::text FROM old_rows o), 'delete');
   RETURN NULL;
@@ -3569,6 +3625,7 @@ CREATE VIEW authz_int."doc__view__base" AS
 -- doc.view__base for one object (checks of single rows and authz.can)
 CREATE FUNCTION authz_int."doc__view__base__has"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN EXISTS (SELECT 1 FROM authz_int."doc__parent_shortcut__tree" c
     WHERE c.descendant = $1
@@ -3597,7 +3654,6 @@ CREATE VIEW authz_int."doc__banned" AS
 -- doc.hidden: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."doc__hidden__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
-#variable_conflict use_column
 BEGIN
   RETURN QUERY
   WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
@@ -3656,6 +3712,7 @@ CREATE VIEW authz_int."doc__edit" AS
 -- doc.edit for one object (checks of single rows and authz.can)
 CREATE FUNCTION authz_int."doc__edit__has"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN EXISTS (SELECT 1 FROM authz_int."doc__parent__tree" c
     WHERE c.descendant = $1
@@ -3774,6 +3831,7 @@ ALTER TABLE "alt"."docs" ENABLE ROW LEVEL SECURITY;
 -- alt.docs: no row has the id, or the user may select it (what the rules' explanations answer for)
 CREATE FUNCTION authz_int."alt.docs:seen"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN NOT EXISTS (SELECT 1 FROM "alt"."docs" o WHERE o."doc_no" = $1)
       OR EXISTS (SELECT 1 FROM "alt"."docs" "docs" WHERE "docs"."doc_no" = $1
@@ -3904,7 +3962,6 @@ $f$;
 
 CREATE FUNCTION authz_gen."alt.docs:update:why"(p_row "alt"."docs", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
-#variable_conflict use_column
 DECLARE v boolean[] := authz_gen."alt.docs:update:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs update'), '?') || ')';
@@ -3947,7 +4004,6 @@ $f$;
 
 CREATE FUNCTION authz_gen."alt.docs:delete:why"(p_row "alt"."docs") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
-#variable_conflict use_column
 DECLARE v boolean[] := authz_gen."alt.docs:delete:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'delete : share and not blocked  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs delete'), '?') || ')';
@@ -3963,6 +4019,7 @@ END $f$;
 
 CREATE FUNCTION authz_gen."alt.docs:rules:explain"(p_command text, p_id text, p_row jsonb) RETURNS text[]
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE r_old "alt"."docs"; r_new "alt"."docs";
 BEGIN
   IF p_command = 'insert' THEN
@@ -4078,7 +4135,6 @@ $f$;
 
 CREATE FUNCTION authz_gen."alt.docs:column owner_id:why"(p_row "alt"."docs") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
-#variable_conflict use_column
 DECLARE v boolean[] := authz_gen."alt.docs:column owner_id:items"(p_row, current_user); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update owner_id : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs update owner_id'), '?') || ')';
@@ -4231,6 +4287,7 @@ END $tr$;
 -- whatever changed). A trigger before the update has asked it of every row already
 CREATE FUNCTION authz_int."alt.docs:column up after:moved"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE v_lines text; v_row "alt"."docs"; v_one boolean; v_virtual text;
 BEGIN
@@ -4378,6 +4435,7 @@ END $ac$;
 -- object ask (sharing, roles, keys, view_as, break_glass, requests), where authz.can's answer is for rows they may see
 CREATE FUNCTION authz_int.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE v_bigint bigint;
 BEGIN
@@ -4483,6 +4541,7 @@ END $f$;
 -- reads as a missing one; plans are cached per session)
 CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE v_allowed boolean; v_bigint bigint;
 BEGIN
@@ -4671,6 +4730,7 @@ END $f$;
 CREATE OR REPLACE FUNCTION authz.list(p_type text, p_perm text, p_after text DEFAULT NULL, p_limit int DEFAULT NULL)
 RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   -- a page cursor or size from a request: the caller's mistake, said plainly (the queries below would cast it)
   IF p_limit < 0 THEN
@@ -5221,6 +5281,7 @@ END $f$;
 -- (rowstile diff, the review's access, rowstile snapshot) list, run as the owner. authz.list where it is the same
 CREATE FUNCTION authz_int.list(p_type text, p_perm text) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN; END IF;
   CASE p_type || '.' || p_perm
@@ -5880,6 +5941,7 @@ $f$;
 
 CREATE FUNCTION authz_int."user__self__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -5906,6 +5968,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."grp__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -5918,6 +5981,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."grp__member__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -5957,6 +6021,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."proj__lead__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -5969,6 +6034,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."proj__team__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -6005,6 +6071,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."doc__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -6112,6 +6179,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."doc__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."doc__edit");
 BEGIN
@@ -6174,6 +6242,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."doc__hidden__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."doc__hidden");
 BEGIN
@@ -6231,6 +6300,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."doc__publish__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."doc__publish");
 BEGIN
@@ -6255,6 +6325,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."doc__mine__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."doc__mine");
 BEGIN
@@ -6268,6 +6339,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."doc__view__base__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."doc__view__base");
 BEGIN
@@ -6372,6 +6444,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."doc__view__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."doc__view");
 BEGIN
@@ -6394,6 +6467,7 @@ END $f$;
 -- May the signed-in user see this object (select it)? A hidden object reads as a missing one
 CREATE FUNCTION authz_int.visible(p_type text, p_id text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   IF NOT coalesce(pg_catalog.pg_input_is_valid(p_id, (SELECT keytype FROM authz_int.types WHERE name = p_type)), false) THEN
     RETURN false;
@@ -6465,6 +6539,7 @@ END $f$;
 -- Candidates come from the data (a superset); each is checked as that user (the permission itself, authz_int.can).
 CREATE OR REPLACE FUNCTION authz.who(p_type text, p_id text, p_perm text) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_c text;
         v_pt text := coalesce(current_setting('authz.principal_type', true), '');
@@ -6670,6 +6745,7 @@ CREATE OR REPLACE FUNCTION authz.list_shares(p_type text, p_id bigint) RETURNS T
 -- 'service:3') and as nobody; returns the violations
 CREATE OR REPLACE FUNCTION authz.check_invariants() RETURNS TABLE (invariant text, user_id text, object_ids text[])
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_pt text := coalesce(current_setting('authz.principal_type', true), '');
         v_scopes text := coalesce(current_setting('authz.scopes', true), ''); v_p text; v_u text; v_ids text[];
 BEGIN
@@ -7182,6 +7258,7 @@ END $f$;
 -- the API keys of user rows that are gone, or whose id changed, are deleted (authz_int.keys_gone)
 CREATE FUNCTION authz_int."user__keys_gone"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
     IF NOT EXISTS (SELECT 1 FROM "alt"."users") THEN   -- the table is empty, and so are those under it

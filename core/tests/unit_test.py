@@ -1221,19 +1221,25 @@ class OwnNames(unittest.TestCase):
                 if labelled:
                     self.assertIn("<<authz__>>", f.body, f"{name}: {f.name}")
                     self.assertLessEqual(labelled, f.names, f"{name}: {f.name}")
-                head = search(kept_names.HEAD.pattern, f.statement, re.I)
-                listed = kept_names.parameters(f.statement, head.end() - 1)
-                arity = len(kept_names.top_level(kept_names.code_of(listed))) if listed.strip() else 0
+                arity = 0  # (a DO block has no parameter)
+                if f.name != "DO":
+                    head = search(kept_names.HEAD.pattern, f.statement, re.I)
+                    listed = kept_names.parameters(f.statement, head.end() - 1)
+                    arity = len(kept_names.top_level(kept_names.code_of(listed))) if listed.strip() else 0
                 positions = [int(n) for n in re.findall(r"(?<![\w$\"])[$](\d+)", f.body)]
                 self.assertLessEqual(max(positions, default=0), arity, f"{name}: {f.name}")
                 if not f.plpgsql:
                     continue
-                for piece in kept_names.pieces(f.body):
-                    if not kept_names.columns_in_scope(piece):
-                        continue
+                if any(kept_names.columns_in_scope(piece) for piece in kept_names.pieces(f.body)):
                     met.add(re.sub(r"\d+", "N", re.sub(r'^.*(?:__|:)(\w+)"$', r"\1", f.name)))
-                    mine = sorted(n for n in f.names if kept_names.bare(piece, n))
-                    self.assertEqual(mine, [], f"{name}: {f.name}: {' '.join(piece.split())[:300]}")
+                # (one policy's conditions name columns called as the functions call their own: those are columns)
+                theirs = {"found", "new", "old", "p_id"} if name.endswith("conditions-names.authz") else set()
+                bare = [
+                    (sorted(set(names) - theirs), " ".join(piece.split())[:300])
+                    for piece, names in kept_names.own_names_bare(f)
+                    if set(names) - theirs
+                ]
+                self.assertEqual(bare, [], f"{name}: {f.name}")
         # the kinds of function this is about are all met: the checks and lists of the API, the explanations, a
         # tree's triggers and its moves, a rule asked again of moved rows, what reads a changed object
         for kind in ("authz.can", "authz.list", "authz.who", "authz.sync_members", "authz_int.visible"):
@@ -1241,6 +1247,100 @@ class OwnNames(unittest.TestCase):
         for kind in ("has", "why", "seen", "explain", "moved", "forget", "tree_shift", "tree_refresh", "tree_on_rows"):
             self.assertIn(kind, met)
         self.assertIn("authz_int.dependents", met)
+
+    # a column named as PL/pgSQL names a variable of its own, in every place a condition goes
+    FOUND = """app role app_user
+type user = app.users where {found}
+type team = app.teams
+  member : user = app.team_members(team_id -> user_id) where {found}
+type doc = app.docs where {found}
+  owner  : user = owner_id
+  finder : user = app.doc_finders(doc_id -> user_id) where {found}
+  team   : team#member = app.doc_teams(doc_id -> team_id) where {found}
+  parent : doc = up
+  viewer : user, team#member shared if {found}
+  can share = owner
+  can view = owner or finder or viewer or team or (parent.view and {found})
+  can edit = owner or ({found} and parent.edit)
+rules app.docs
+  select : view
+  insert : {found} and owner
+  update : edit and {found}
+  update owner_id : {found} and share
+  update up after : {found} and edit
+  delete : edit
+"""
+
+    def test_a_plpgsql_function_that_reads_the_apps_columns_says_a_column_wins(self) -> None:
+        """A bare name in a policy's condition is a column of the row it is about, whatever the function that holds
+        the condition calls its own (`found`, `p_id`): the function says `#variable_conflict use_column`. Its own
+        names are written apart wherever a column could be meant (the test above), so the line changes what a
+        condition's names mean and nothing else. One rule: every PL/pgSQL function with a piece that reads the app's
+        columns says it (sqlutil.column_wins, where the parts are put together), and `share_if`, whose conditions
+        read a share's row."""
+        said = re.compile(r"(?:AS|DO) (\$\w*\$)\n#variable_conflict use_column\n")
+        texts = self.texts()
+        texts["found"] = Compiler(parse_policy(self.FOUND)).compile("x")
+        reads = blocks = 0
+        for name, sql in texts.items():
+            for f in kept_names.functions(sql):
+                says = said.search(f.statement) is not None
+                self.assertEqual(f.statement.count("#variable_conflict"), int(says), f"{name}: {f.name}")
+                if not f.plpgsql:
+                    self.assertFalse(says, f"{name}: {f.name}")
+                    continue
+                columns = any(kept_names.columns_in_scope(piece) for piece in kept_names.pieces(f.body))
+                reads += columns
+                blocks += columns and f.name == "DO"
+                # ... and the two that hold conditions whatever they read: `shared if`'s, and the block that reads
+                # each condition when the policy is applied (a DO block is PL/pgSQL too)
+                always = f.name == "authz_int.share_if" or f.statement.startswith("DO $read$")
+                self.assertEqual(says, columns or always, f"{name}: {f.name}: {f.statement[:60]}")
+        self.assertGreater(reads, 2000)
+        self.assertGreater(blocks, 5)
+
+        # every function that holds a condition is one of them: the probe's conditions all name the column found,
+        # and the compiler writes PL/pgSQL's own FOUND in capitals. (Not where the condition is in a statement
+        # PL/pgSQL hands on as it is: the index that tries whether a condition is immutable. No variable is read there)
+        def holds_it(f: kept_names.Function) -> bool:
+            asks = [p for p in kept_names.pieces(f.body) if re.search(r'(?<![\w."])found(?![\w"(])', p)]
+            return f.plpgsql and any(not p.lstrip().upper().startswith("CREATE ") for p in asks)
+
+        holds = [f for f in kept_names.functions(texts["found"]) if holds_it(f)]
+        self.assertGreaterEqual(len(holds), 30)
+        for kind in ("share_if", "__has", "__why", "rel_audit", "tree_on_rows", ":seen", "authz.uid", "authz.can"):
+            self.assertTrue(any(kind in f.name for f in holds), kind)
+        for f in holds:
+            self.assertRegex(f.statement, said, f.name)
+            # ... and none writes another name of its own bare beside it (found, there, is the condition's column)
+            mine = {n for _, names in kept_names.own_names_bare(f) for n in names} - {"found"}
+            self.assertEqual(mine, set(), f.name)
+
+    def test_the_line_goes_at_the_head_of_a_plpgsql_body_that_reads_the_apps_columns(self) -> None:
+        from authzlib.sqlutil import column_wins
+
+        reads = (
+            "-- reads a table of the app's\nCREATE FUNCTION authz_int.f(p_id bigint,\n  p_n int) RETURNS boolean\n"
+            "LANGUAGE plpgsql STABLE AS $f$\n<<authz__>>\nDECLARE v_n int;\nBEGIN\n"
+            '  RETURN EXISTS (SELECT 1 FROM "app"."t" x WHERE x.id = $1);\nEND $f$;'
+        )
+        others = (
+            # written in SQL; PL/pgSQL that reads rowstile's own tables alone, or names a table's type alone
+            'CREATE FUNCTION authz_int.g(bigint) RETURNS bigint LANGUAGE sql AS $$ SELECT id FROM "app"."t" $$;\n'
+            "CREATE FUNCTION authz_int.h() RETURNS void\nLANGUAGE plpgsql AS $f$\nBEGIN\n"
+            '  DELETE FROM authz.shares;\n  PERFORM pg_catalog.to_jsonb(NULL::"app"."t");\nEND $f$;\n'
+            # one that says it already
+            "CREATE FUNCTION authz_int.i() RETURNS void\nLANGUAGE plpgsql AS $f$\n#variable_conflict use_column\n"
+            'BEGIN\n  PERFORM 1 FROM "app"."t";\nEND $f$;'
+        )
+        with_line = reads.replace("AS $f$\n<<authz__>>", "AS $f$\n#variable_conflict use_column\n<<authz__>>")
+        self.assertNotEqual(with_line, reads)
+        self.assertEqual(column_wins(reads + "\n" + others), with_line + "\n" + others)
+        self.assertEqual(column_wins(with_line), with_line)
+        # a statement's rows and a row laid out are the app's columns too
+        for body in ("PERFORM 1 FROM new_rows n;", "RETURN QUERY SELECT x.id FROM (SELECT ($1).*) x;"):
+            sql = f"CREATE FUNCTION authz_int.t() RETURNS trigger\nLANGUAGE plpgsql AS $f$\nBEGIN\n  {body}\nEND $f$;"
+            self.assertIn("AS $f$\n#variable_conflict use_column\nBEGIN", column_wins(sql), body)
 
     def test_every_word_the_sql_writes_by_itself_is_read(self) -> None:
         """What tests/hand_answers.sh --kept-names gives the tables a column of, beside the names the functions keep:

@@ -3,17 +3,17 @@
 -- + type file: can comment = folder.view
 
 -- a migration is one transaction: outside one, nothing below changes anything
-SELECT pg_catalog.set_config('authz_ctx.migration', '94b9ad66b6da3333', true);
+SELECT pg_catalog.set_config('authz_ctx.migration', '431dba559f31efc1', true);
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '94b9ad66b6da3333' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '431dba559f31efc1' THEN
     PERFORM pg_catalog.set_config('authz_migration.read_only', pg_catalog.current_setting('default_transaction_read_only'), false);
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '94b9ad66b6da3333' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '431dba559f31efc1' THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
       USING HINT = 'nothing was changed, and this session is read-only until the migration''s last statement; run the file with your migration tool, or with psql -1 -f';
   END IF;
@@ -29,13 +29,13 @@ BEGIN
   IF to_regclass('authz.policy_versions') IS NOT NULL THEN
     EXECUTE 'SELECT lock FROM authz.policy_versions ORDER BY id DESC LIMIT 1' INTO v_lock;
   END IF;
-  IF v_lock = '94b9ad66b6da3333' THEN
+  IF v_lock = '431dba559f31efc1' THEN
     RAISE EXCEPTION 'rowstile: this database already holds what this migration brings (it ran here before, or rowstile dev or push took the database there): don''t run it, tell your migration tool it is applied [AZ607]'
       USING HINT = 'Prisma: prisma migrate resolve --applied <the migration''s folder>. Alembic: alembic stamp head. '
                    'Others, and why: rowstile help AZ607';
-  ELSIF v_lock IS DISTINCT FROM 'a5f0ef826b15e32d' THEN
+  ELSIF v_lock IS DISTINCT FROM 'd20cead76e96b7e7' THEN
     RAISE EXCEPTION 'rowstile: this migration changes the policy the migration before it left (%), but the database has % [AZ607]',
-      'a5f0ef826b15e32d', coalesce(v_lock, 'none')
+      'd20cead76e96b7e7', coalesce(v_lock, 'none')
       USING HINT = 'apply the migrations in order; a database changed with rowstile push or apply since needs the '
                    'migrations from the start (or rowstile apply of the policy the previous migration left) '
                    '(rowstile help AZ607)';
@@ -172,6 +172,7 @@ END $ac$;
 -- object ask (sharing, roles, keys, view_as, break_glass, requests), where authz.can's answer is for rows they may see
 CREATE OR REPLACE FUNCTION authz_int.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE v_bigint bigint;
 BEGIN
@@ -241,6 +242,7 @@ END $f$;
 -- reads as a missing one; plans are cached per session)
 CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE v_allowed boolean; v_bigint bigint;
 BEGIN
@@ -335,6 +337,7 @@ END $f$;
 CREATE OR REPLACE FUNCTION authz.list(p_type text, p_perm text, p_after text DEFAULT NULL, p_limit int DEFAULT NULL)
 RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   -- a page cursor or size from a request: the caller's mistake, said plainly (the queries below would cast it)
   IF p_limit < 0 THEN
@@ -600,6 +603,7 @@ END $f$;
 -- (rowstile diff, the review's access, rowstile snapshot) list, run as the owner. authz.list where it is the same
 CREATE OR REPLACE FUNCTION authz_int.list(p_type text, p_perm text) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 BEGIN
   IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN; END IF;
   CASE p_type || '.' || p_perm
@@ -638,6 +642,7 @@ $f$;
 
 CREATE FUNCTION authz_int."file__comment__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+#variable_conflict use_column
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."file__comment");
 BEGIN
@@ -666,6 +671,7 @@ END $f$;
 -- Candidates come from the data (a superset); each is checked as that user (the permission itself, authz_int.can).
 CREATE OR REPLACE FUNCTION authz.who(p_type text, p_id text, p_perm text) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+#variable_conflict use_column
 <<authz__>>
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_c text;
         v_pt text := coalesce(current_setting('authz.principal_type', true), '');
@@ -1143,7 +1149,7 @@ test
   user 5 can view file 16      -- erin: Joint project is linked into Company
   user 5 cannot edit file 16   -- links pass on view rights only
 $authz_policy$,
-  $authz_files${}$authz_files$::jsonb, 'BUILD', '94b9ad66b6da3333');
+  $authz_files${}$authz_files$::jsonb, 'BUILD', '431dba559f31efc1');
 
 -- the session made read-only above (its statements committed one by one) is as it was again
 DO $authz_tx$
