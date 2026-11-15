@@ -10,7 +10,9 @@
 # nightly.yml -f only=bench`. And several soaks at once, each on a runner and with a seed of its own: `gh workflow
 # run nightly.yml -f only=soak -f soaks=7` (and `-f part=policies`: one part of each). And every small policy at
 # once, fourteen jobs, seven side by side (each night's soak checks a fourteenth): `-f only=small`. And, by hand
-# alone, the figures the limits page quotes: `-f only=speed`, and `-f only=scale -f size=large`.
+# alone, the figures the limits page quotes: `-f only=speed`, and `-f only=scale -f size=large`; and two builds
+# in turn on one runner, to see what a change costs or gains: `--ref <branch> -f only=scale -f size=dev -f
+# against=main`.
 name: nightly
 on:
   schedule:
@@ -23,6 +25,9 @@ on:
       size:
         description: "With scale: the benchmark's size (dev, large, medium or full)"
         default: "large"
+      against:
+        description: "With scale: another commit (a branch, a tag) to run in turn with this one on the one runner, two rounds each; empty: this one alone"
+        default: ""
       soaks:
         description: "How many soaks to run at once (1 to 9), each with its own seed, on 16, 17 and 18 in turn"
         default: "1"
@@ -374,20 +379,35 @@ jobs:
   # machine of its own, and here the server shares 4 CPUs with pgbench. The run still fails when it went wrong (a
   # read or a write failed, was aborted or timed out, verify() didn't say true), and its result is kept either way.
   # (Its longest run, the full size, took 29 minutes on 2026-11-14; large takes 5, medium 10.)
+  # With `-f against=<commit>`, that commit and this one run in turn on the one runner, two rounds each
+  # (core/bench/compare.sh): one runner is up to three times another, so two builds are compared only so. The
+  # table and each round's result are the run's `scale-compare` artifact.
   scale:
     if: ${{ inputs.only == 'scale' }}
     runs-on: ubuntu-latest
     timeout-minutes: 100
     steps:
+      # (the other commit is checked out from this clone: all of the history, when one is asked for)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-        with: {persist-credentials: false}
-      - run: bash core/bench/scale.sh "--$SIZE"
+        with: {fetch-depth: "${{ inputs.against && '0' || '1' }}", persist-credentials: false}
+      - if: ${{ !inputs.against }}
+        run: bash core/bench/scale.sh "--$SIZE"
         env:
           SIZE: "${{ inputs.size }}"
           SPEED_GATES: "0"
           OUT: core/bench/results/scale-latest.txt
-      - if: always()
+      - if: ${{ inputs.against }}
+        run: bash core/bench/compare.sh "$AGAINST" "--$SIZE"
+        env:
+          AGAINST: "${{ inputs.against }}"
+          SIZE: "${{ inputs.size }}"
+      - if: ${{ always() && !inputs.against }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: scale
           path: core/bench/results/scale-latest.txt
+      - if: ${{ always() && inputs.against }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: scale-compare
+          path: core/bench/results/compare/

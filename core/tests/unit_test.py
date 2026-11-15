@@ -18636,6 +18636,168 @@ class Benchmarks(unittest.TestCase):
         self.assertEqual((done.returncode, runs), (1, 2), done.stdout + done.stderr)
         self.assertTrue(done.stdout.endswith("not run again\n"), done.stdout)
 
+    def two_builds(
+        self, d: str, rounds: dict[str, list[tuple[float, float, float]]]
+    ) -> subprocess.CompletedProcess[str]:
+        """compare.py over a folder of results as compare.sh leaves them: for each build, a round's p50 of opening a
+        folder alone (ms), its tree writes a second with one client, and its big move (s)."""
+        for which, figures in rounds.items():
+            for n, (p50, writes, move) in enumerate(figures, 1):
+                result = (
+                    f"# rowstile scale benchmark (2026-11-15, 16.16, rowstile 0.1.0-dev, commit {which}{which})\n"
+                    "== Loading and applying (seconds)\n"
+                    "apply docs.authz, with backfill         17.26\n"
+                    "== Sizes\n"
+                    "folders per level: 8 11 17\n"
+                    "== 1. Reads through RLS, alone (400/s arriving steadily, 16 clients, 20 s)\n"
+                    "script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95\n"
+                    f"open_folder         1908       0 {p50:10.2f}      40.11     108.19     218.03      46.42\n"
+                    "== 2. Tree writes as clients grow (20 s each; create 90%, move 9% (small folders), link 1%)\n"
+                    "clients    writes/s  failed  aborted  timed out     p50 ms     p95 ms  waiting %\n"
+                    f"1          {writes:10.1f}       0        0          0       9.38      24.60          0\n"
+                    "per kind of write, 50 clients:\n"
+                    "create              1337       0     462.50    2014.31    3431.02    4899.39\n"
+                    + self.result(14.0).split("\n", 3)[3].replace("0.20 s", f"{move:.2f} s")
+                    + "== 5. Listing everything a user can see: authz.list('file', 'view'), all of it and one page\n"
+                    "member     authz.list('file', 'view', NULL, 1000)" + " " * 29 + "     1000 rows     0.24 s\n"
+                    "== 6. Opening a folder, by how many folders its reader holds directly (1 client, 20 s each)\n"
+                    "reader                        txns  failed     p50 ms     p95 ms     p99 ms\n"
+                    "a team's 4000 folders         3921       0       5.08       6.02       7.11\n"
+                )
+                with open(os.path.join(d, f"{which}-{n}.txt"), "w", encoding="utf-8") as fh:
+                    fh.write(result)
+        script = os.path.join(self.BENCH, "compare.py")
+        return subprocess.run([sys.executable, script, d], capture_output=True, text=True, timeout=60)
+
+    def test_two_builds_are_read_side_by_side_round_by_round(self) -> None:
+        # one machine is up to three times another: two builds are compared from runs one machine made in turn. A
+        # difference is called only when every round of one build is beyond every round of the other
+        with tempfile.TemporaryDirectory() as d:
+            done = self.two_builds(
+                d, {"base": [(2.10, 84.6, 1.30), (2.30, 80.0, 1.10)], "here": [(1.80, 90.0, 1.20), (1.90, 82.0, 1.40)]}
+            )
+        self.assertEqual((done.returncode, done.stderr), (0, ""), done.stdout)
+        lines = done.stdout.split("\n")
+        self.assertEqual(
+            lines[0],
+            "# the scale benchmark on two builds in turn on one machine: base (commit basebase, 2 rounds) and here "
+            "(commit herehere, 2 rounds)",
+        )
+        rows = {re.split(r"\s{2,}", line)[0]: re.split(r"\s{2,}", line)[1:] for line in lines[2:-2]}
+        self.assertEqual(rows["apply docs.authz, with backfill, s"], ["17.26", "17.26", "17.26", "17.26", "1.00"])
+        # every round here under every round of base: faster; more writes a second in both rounds: faster too
+        self.assertEqual(rows["1. open_folder, p50 ms"], ["2.10", "2.30", "1.80", "1.90", "0.84", "faster"])
+        self.assertEqual(rows["2. 1 clients, writes/s"], ["84.60", "80.00", "90.00", "82.00", "1.04"], "they overlap")
+        self.assertEqual(rows["4. the big move, s"], ["1.30", "1.10", "1.20", "1.40", "1.08"], "they overlap")
+        # the gate's tables are keyed apart, the listings by who and what, step 6 by its reader
+        self.assertEqual(rows["3. the gate's writes, p50 ms"][-1], "1.00")
+        self.assertEqual(rows["3. open_file in the gate, p50 ms"][:2], ["1.00", "1.00"])
+        self.assertEqual(rows["5. member: authz.list('file', 'view', NULL, 1000), s"][0], "0.24")
+        self.assertEqual(rows["6. a team's 4000 folders, p50 ms"][0], "5.08")
+        self.assertEqual(len(rows), 9, "nothing else is a measure: not the sizes, not step 2's table per kind of write")
+        self.assertEqual(
+            lines[-2],
+            "# faster, slower: every round of one build is beyond every round of the other; nothing said: they overlap",
+        )
+        with tempfile.TemporaryDirectory() as d:
+            done = self.two_builds(d, {"base": [(2.0, 80.0, 1.0), (2.1, 84.0, 1.1)], "here": [(2.4, 70.0, 1.0)] * 2})
+        self.assertIn("1.17  slower\n", done.stdout)
+        self.assertIn("0.85  slower\n", done.stdout, "fewer writes a second in every round")
+        # one round each shows no spread: nothing is called
+        with tempfile.TemporaryDirectory() as d:
+            done = self.two_builds(d, {"base": [(2.0, 80.0, 1.0)], "here": [(1.0, 160.0, 0.5)]})
+        self.assertNotRegex(done.stdout, r"(?m)(faster|slower)$")
+        with tempfile.TemporaryDirectory() as d:
+            done = self.two_builds(d, {"base": [(2.0, 80.0, 1.0)]})
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (2, "", f"compare.py: no here-N.txt in {d}\n"))
+
+    def compare_sh(self, d: str, *args: str, here_exits: int = 0) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        """compare.sh in a repository made in d, whose one commit holds a scale.sh that says which tree ran it and
+        writes that tree's result; the tree itself was changed since (who, and how its run ends). What it did, and
+        the runs in their order."""
+        bench = os.path.join(d, "core", "bench")
+        os.makedirs(bench)
+        for name in ("compare.sh", "compare.py"):
+            with (
+                open(os.path.join(self.BENCH, name), encoding="utf-8") as src,
+                open(os.path.join(bench, name), "w", encoding="utf-8") as fh,
+            ):
+                fh.write(src.read())
+        with open(os.path.join(bench, "scale.sh"), "w", encoding="utf-8") as fh:
+            fh.write(
+                'cd "$(dirname "$0")/../.."\n'
+                'echo "$(cat who) $* SPEED_GATES=$SPEED_GATES" >> "$RUNS"\n'
+                'mkdir -p "$(dirname "$OUT")"; echo "# result of $(cat who) (commit $(cat who))" > "$OUT"\n'
+                'echo "scale.sh in $(cat who)"; exit "$(cat code)"\n'
+            )
+        files = {"who": "base", "code": "0", ".gitignore": ".ci/\ncore/bench/results/\n"}
+        for name, text in files.items():
+            with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                fh.write(text + "\n" if name != ".gitignore" else text)
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+        for command in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "base"], ["tag", "v1"]):
+            subprocess.run([*git, *command], cwd=d, check=True, capture_output=True)
+        for name, text in (("who", "here"), ("code", str(here_exits))):
+            with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                fh.write(text + "\n")
+        runs = os.path.join(d, "runs.txt")
+        env = {k: v for k, v in os.environ.items() if k not in ("ROUNDS", "SPEED_GATES", "OUT")}
+        done = subprocess.run(
+            ["bash", os.path.join(bench, "compare.sh"), *args],
+            cwd=d,
+            env=dict(env, RUNS=runs),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if not os.path.exists(runs):
+            return done, []
+        with open(runs, encoding="utf-8") as fh:
+            return done, fh.read().splitlines()
+
+    def test_compare_sh_runs_the_other_commit_and_this_tree_in_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            done, runs = self.compare_sh(d, "v1", "--large")
+            kept = sorted(os.listdir(os.path.join(d, "core", "bench", "results", "compare")))
+            with open(os.path.join(d, "core", "bench", "results", "compare", "base-2.txt"), encoding="utf-8") as fh:
+                base = fh.read()
+            with open(os.path.join(d, "core", "bench", "results", "compare", "compare.txt"), encoding="utf-8") as fh:
+                table = fh.read()
+            trees = subprocess.run(["git", "worktree", "list"], cwd=d, capture_output=True, text=True).stdout
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        # the commit's own tree and benchmark, then this tree as it is (uncommitted changes too), twice; the gate's
+        # speed limits are a machine of its own's, shown and not judged
+        self.assertEqual(runs, ["base --large SPEED_GATES=0", "here --large SPEED_GATES=0"] * 2)
+        self.assertEqual(kept, ["base-1.txt", "base-2.txt", "compare.txt", "here-1.txt", "here-2.txt"])
+        self.assertEqual(base, "# result of base (commit base)\n")
+        self.assertIn("== round 2 of 2: here\nscale.sh in here\n", done.stdout)
+        self.assertIn("base (commit base, 2 rounds) and here (commit here, 2 rounds)\n", table)
+        self.assertTrue(done.stdout.endswith(table), "the table is the last thing said")
+        self.assertEqual(len(trees.strip().split("\n")), 1, "the other commit's tree is removed at the end: " + trees)
+
+    def test_compare_sh_stops_at_a_run_that_went_wrong_and_names_a_commit_it_cannot_find(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            done, runs = self.compare_sh(d, "HEAD", here_exits=3)
+            trees = subprocess.run(["git", "worktree", "list"], cwd=d, capture_output=True, text=True).stdout
+        self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+        self.assertEqual(runs, ["base --dev SPEED_GATES=0", "here --dev SPEED_GATES=0"], "the dev size by default")
+        self.assertTrue(
+            done.stdout.endswith("== the run went wrong (the lines above say why): the comparison stops\n"), done.stdout
+        )
+        self.assertEqual(len(trees.strip().split("\n")), 1, trees)
+        with tempfile.TemporaryDirectory() as d:
+            done, runs = self.compare_sh(d, "nowhere")
+        self.assertEqual((done.returncode, runs, done.stdout), (2, [], ""))
+        self.assertEqual(
+            done.stderr, "compare.sh: no commit nowhere here (a shallow clone has only its own: fetch it first)\n"
+        )
+        # a size scale.sh doesn't take starts nothing, and no commit is no comparison
+        for args in (("HEAD", "--huge"), ()):
+            with tempfile.TemporaryDirectory() as d:
+                done, runs = self.compare_sh(d, *args)
+            self.assertEqual((done.returncode, runs, done.stdout), (2, [], ""), args)
+            self.assertRegex(done.stderr, r"^usage: \S+compare\.sh <commit> \[--dev\|--large\|--medium\|--full\]\n$")
+
 
 class Delivery(unittest.TestCase):
     """What the workflows run, what the packages are built from, and what this folder's README says is tested."""
@@ -19111,16 +19273,31 @@ class Delivery(unittest.TestCase):
         self.assertEqual(sorted(re.findall(r"\b(?:" + "|".join(sizes) + r")\b", size.group(1))), sorted(sizes))
         self.assertIn(size.group(2), sizes)
         # the size reaches the script through the environment, never as text of the command
-        self.assertIn('      - run: bash core/bench/scale.sh "--$SIZE"\n', job)
+        self.assertIn('      - if: ${{ !inputs.against }}\n        run: bash core/bench/scale.sh "--$SIZE"\n', job)
         self.assertIn('          SIZE: "${{ inputs.size }}"\n', job)
         self.assertNotIn("inputs.size", job.replace('SIZE: "${{ inputs.size }}"', ""))
         # a runner's CPUs are shared: the gate's speed limits are shown there, not judged (run.sh)
         self.assertIn('          SPEED_GATES: "0"\n', job)
         out = "core/bench/results/scale-latest.txt"
         self.assertIn(f"          OUT: {out}\n", job)
-        self.assertIn("      - if: always()\n        uses: actions/upload-artifact@", job)
+        self.assertIn("      - if: ${{ always() && !inputs.against }}\n        uses: actions/upload-artifact@", job)
         self.assertIn(f"          path: {out}\n", job)
         self.assertIn(out + "\n", read("../.gitignore"), "a run here leaves nothing to commit by mistake")
+        # two builds in turn on the one runner (compare.sh), when another commit is named: it reaches the script
+        # through the environment too, the clone has the history that commit is in, and every round's result is kept
+        self.assertIn('\n      against:\n        description: "With scale: another commit', nightly)
+        self.assertIn(
+            '      - if: ${{ inputs.against }}\n        run: bash core/bench/compare.sh "$AGAINST" "--$SIZE"\n', job
+        )
+        self.assertIn('          AGAINST: "${{ inputs.against }}"\n', job)
+        self.assertEqual(len(re.findall(r"\$\{\{ inputs\.against \}\}", job)), 2, "as a step's condition, and there")
+        self.assertIn(
+            "        with: {fetch-depth: \"${{ inputs.against && '0' || '1' }}\", persist-credentials: false}\n", job
+        )
+        kept = search(r"\nDIR=(\S+)\n", read("bench/compare.sh")).group(1)
+        self.assertIn("      - if: ${{ always() && inputs.against }}\n        uses: actions/upload-artifact@", job)
+        self.assertIn(f"          path: {kept}/\n", job)
+        self.assertIn(kept + "/\n", read("../.gitignore"))
         # each job that runs when asked for alone is named where the choice is described
         only = search(r'\n      only:\n        description: "([^"]+)"\n', nightly).group(1)
         asked = set(re.findall(r"inputs\.only == '([\w-]+)'", nightly))

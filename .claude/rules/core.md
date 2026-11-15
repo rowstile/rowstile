@@ -90,7 +90,9 @@ What each part of `core/` holds, how its suites run, and the rules the compiler 
     default size (20k folders) is for quick dev runs (`--large`, 50k, was the gate's size on the laptop of 2026-10,
     out of use), 4 GB shared buffers; `regress.sh` is the nightly check (10k folders against this machine's
     `baseline.txt`: a baseline belongs to the machine that recorded it, so git ignores it and CI keeps its own in
-    the Actions cache)
+    the Actions cache); `compare.sh <commit>` runs that commit and this tree in turn on one machine, two rounds
+    each, and `compare.py` puts them side by side: how a change's speed is judged (never from two results of two
+    machines or two days)
   - `Dockerfile` — Postgres for development and tests: the stock image, python3, git (the review reads the base
     branch with it), the root certificates and the command (build context: repo root)
 
