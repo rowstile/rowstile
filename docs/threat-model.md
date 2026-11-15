@@ -59,6 +59,9 @@ do depends on identity:
   copy that holds a provider's keys alone doesn't.
   A key the provider retired is believed until the owner stores the provider's key set again
   ([Identity](reference/identity.md)). <!-- checked: tests/identity.sh "a token signed by a key that left the set" -->
+  A connection checks a token's signature once, and notes it in a setting the app role may set: the note is
+  signed as a session is, for that token, that key and that connection, so the app role can't make one up,
+  bring one from another connection, or use one after the key changed. <!-- checked: tests/sessions.sh "... nor one made up: the token's hash, hashes of what the app role knows"; tests/sessions.sh "a note copied from another connection is not believed"; tests/sessions.sh "a note kept after its kid was given another key is not believed" -->
 
 ## What stops what
 

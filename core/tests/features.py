@@ -361,6 +361,14 @@ FEATURES: list[Feature] = [
             T("cli.sh", "a redirect to another server is not followed"),
             T("cli.sh", "plain http to another machine is refused before anything is fetched"),
             T("unit_test.py", "test_a_server_that_takes_too_long_stores_nothing"),
+            T(
+                "sessions.sh",
+                "the same token signing in again on a connection costs under a quarter of its first sign-in",
+            ),
+            T("sessions.sh", "a note copied from another connection is not believed"),
+            T("sessions.sh", "... nor one made up: the token's hash, hashes of what the app role knows"),
+            T("sessions.sh", "a note kept after its kid was given another key is not believed"),
+            T("sessions.sh", "a token with a note is still held to the issuer asked for, at every sign-in"),
         ),
         (
             T("around.py", "PERFORM authz.set_jwks("),

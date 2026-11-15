@@ -518,6 +518,90 @@ else bad "... and so is the signing" "the owner can't call authz_int.session_sig
 ROLE=$OTHER expect "a role that isn't the app role can't act_as" "42501: permission denied for function act_as" -c "$(ACT "'user', '1'")"
 expect "act_as names only types that sign in" "P0001: folder is not a type that signs in" -c "$(ACT "'folder', '1'")"
 
+echo "-- a token checked once is remembered for its connection"
+# authz.login_jwt checks an RS256 token's signature once on a connection, and leaves a note of it in a setting of
+# the connection (authz.checked_tokens), which the app role may read and set as any setting: so a note is believed
+# only as the database made it, for that token, that key and that connection.
+rs256() {  # tokens for user $2 signed by the key of $1.pem, naming it k1, valid ten minutes: $3 of them (default 1), each its own
+python3 - "$T/$1.pem" "$2" "${3:-1}" <<'PY'
+import base64, json, subprocess, sys, time
+part = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+for i in range(int(sys.argv[3])):
+    head, claims = {"alg": "RS256", "typ": "JWT", "kid": "k1"}, {"sub": sys.argv[2], "exp": int(time.time()) + 600, "jti": i, "iss": "https://id.example"}
+    msg = part(json.dumps(head).encode()) + "." + part(json.dumps(claims).encode())
+    print(msg + "." + part(subprocess.run(["openssl", "dgst", "-sha256", "-sign", sys.argv[1]], input=msg.encode(), check=True, capture_output=True).stdout))
+PY
+}
+jwks() {  # a key set: for each argument FILE:KID, the public half of the key of FILE.pem, named KID
+python3 - "$T" "$@" <<'PY'
+import base64, json, subprocess, sys
+keys = []
+for pem, kid in (spec.split(":") for spec in sys.argv[2:]):
+    out = subprocess.run(["openssl", "rsa", "-in", f"{sys.argv[1]}/{pem}.pem", "-noout", "-modulus"], check=True, capture_output=True, text=True)
+    n = bytes.fromhex(out.stdout.strip().split("=")[1])
+    keys.append({"kty": "RSA", "kid": kid, "n": base64.urlsafe_b64encode(n).rstrip(b"=").decode(), "e": "AQAB"})
+print(json.dumps({"keys": keys}))
+PY
+}
+openssl genrsa -out "$T/first.pem" 3072 2>/dev/null; openssl genrsa -out "$T/second.pem" 2048 2>/dev/null
+PSQL -c "SELECT count(*) FROM authz.set_jwks('$(jwks first:k1)')" >/dev/null
+GOOD=$(rs256 first 2)
+case "$GOOD" in *A) BAD="${GOOD%?}B";; *) BAD="${GOOD%?}A";; esac   # the same token, the last character of its signature another
+NOTES="coalesce(current_setting('authz.checked_tokens', true), '')"
+AS_APP() { psql -X -q -At -U "$APP" -d "$DB" "$@" 2>&1; }   # as the app's login role, each statement a transaction of its own
+refusal() { grep '^ERROR:  ' | head -n 1; }
+got=$(AS_APP -c "SELECT authz.login_jwt('$GOOD')" -c "SELECT length($NOTES)" -c "BEGIN" -c "SELECT authz.login_jwt('$GOOD')" -c "SELECT authz.uid()" -c "COMMIT" -c "SELECT length($NOTES)" | tr '\n' ' ')
+[ "$got" = "2 32 2 2 32 " ] && ok "a token's first sign-in on a connection leaves its note there, and its next one adds none" || bad "a token's note" "$got"
+got=$(AS_APP -c "SELECT authz.login_jwt('$GOOD')" -c "SELECT length($NOTES)" | tr '\n' ' ')
+[ "$got" = "2 32 " ] && ok "... another connection starts with none, and checks the token itself" || bad "another connection's notes" "$got"
+got=$(AS_APP -c "BEGIN" -c "SELECT authz.login_jwt('$GOOD')" -c "ROLLBACK" -c "SELECT length($NOTES)" | tr '\n' ' ')
+[ "$got" = "2 0 " ] && ok "... and a note made in a transaction that is rolled back goes with it, as any setting" || bad "a note after a rollback" "$got"
+# the second sign-in skips the check: twenty of each on one connection, the notes emptied before each first one
+got=$(AS_APP -c "DO \$\$ DECLARE t timestamptz; once interval; BEGIN
+  t := clock_timestamp();
+  FOR i IN 1..20 LOOP PERFORM set_config('authz.checked_tokens', '', false); PERFORM authz.login_jwt('$GOOD'); END LOOP;
+  once := clock_timestamp() - t; t := clock_timestamp();
+  FOR i IN 1..20 LOOP PERFORM authz.login_jwt('$GOOD'); END LOOP;
+  PERFORM set_config('sessions.again', CASE WHEN clock_timestamp() - t < once / 4 THEN 'under a quarter'
+    ELSE (clock_timestamp() - t)::text || ' against ' || once::text END, false);
+END \$\$" -c "SELECT current_setting('sessions.again')")
+[ "$got" = "under a quarter" ] && ok "the same token signing in again on a connection costs under a quarter of its first sign-in" || bad "a second sign-in's cost" "$got"
+# a note stands in for the check: the owner, who may make one, makes it for a token whose signature is wrong, on its
+# own connection, and that token signs in there. So everything below is what keeps the app role from making one.
+N="(SELECT n FROM authz.jwt_keys WHERE kid = 'k1')"
+got=$(PSQL -c "SELECT authz.login_jwt('$BAD')" 2>&1 | refusal)
+[ "$got" = "ERROR:  invalid token" ] && ok "a token whose signature is wrong signs nobody in" || bad "a wrong signature" "$got"
+got=$(PSQL -c "SELECT set_config('authz.checked_tokens', authz_int.token_note('$BAD', $N), false)" -c "SELECT authz.login_jwt('$BAD')" 2>&1 | tail -n 1)
+[ "$got" = 2 ] && ok "... but with the note the database would have made for it on this connection, it does: a note stands in for the check" || bad "a note of the connection" "$got"
+expect "the app role cannot make a note: the function is out of its reach" "42501: permission denied for schema authz_int" -c "SELECT authz_int.token_note('$BAD', 1)"
+COPIED=$(PSQL -c "SELECT authz_int.token_note('$BAD', $N)")
+got=$(AS_APP -c "SELECT set_config('authz.checked_tokens', '$COPIED', false)" -c "SELECT authz.login_jwt('$BAD')" | refusal)
+[ "${#COPIED}" = 32 ] && [ "$got" = "ERROR:  invalid token" ] && ok "a note copied from another connection is not believed" || bad "a copied note" "${#COPIED} $got"
+MADE=$(PSQL -c "SELECT left(encode(sha256(convert_to('$BAD', 'UTF8')), 'hex'), 32) || ' ' || left(md5('$BAD') || md5('k1'), 32) || ' ' || repeat('0', 32)")
+got=$(AS_APP -c "SELECT set_config('authz.checked_tokens', '$MADE', false)" -c "SELECT authz.login_jwt('$BAD')" | refusal)
+[ "$got" = "ERROR:  invalid token" ] && ok "... nor one made up: the token's hash, hashes of what the app role knows" || bad "a made-up note" "$got"
+got=$(AS_APP -c "SELECT authz.login_jwt('$GOOD')" -c "SELECT authz.login_jwt('$BAD')" | refusal)
+[ "$got" = "ERROR:  invalid token" ] && ok "... nor another token's note" || bad "another token's note" "$got"
+# what a note doesn't say is read at every sign-in: the issuer asked for since
+got=$(PSQL -c "SELECT authz.login_jwt('$GOOD')" -c "INSERT INTO authz.settings VALUES ('jwt_issuer', 'https://other.example')" -c "SELECT authz.login_jwt('$GOOD')" 2>&1 | refusal)
+[ "$got" = "ERROR:  token from another issuer" ] && ok "a token with a note is still held to the issuer asked for, at every sign-in" || bad "the issuer, with a note" "$got"
+PSQL -c "DELETE FROM authz.settings WHERE key = 'jwt_issuer'" >/dev/null
+# the keys change while the connection lasts: its notes were for the key before
+got=$(PSQL -c "SELECT authz.login_jwt('$GOOD')" -c "SELECT count(*) FROM authz.set_jwks('$(jwks second:k1)')" -c "SELECT authz.login_jwt('$GOOD')" 2>&1 | refusal)
+[ "$got" = "ERROR:  invalid token" ] && ok "a note kept after its kid was given another key is not believed" || bad "a note after the key changed" "$got"
+SECOND=$(rs256 second 2)
+got=$(PSQL -c "SELECT count(*) FROM authz.set_jwks('$(jwks second:k1 first:k2)')" -c "SELECT authz.login_jwt('$SECOND')" \
+  -c "SELECT count(*) FROM authz.set_jwks('$(jwks first:k2)')" -c "SELECT authz.login_jwt('$SECOND')" 2>&1 | tr '\n' ' ')
+case "$got" in "2 2 2 ERROR:  invalid token "*) ok "... nor one kept after its key left the set";; *) bad "a note after its key left" "$got";; esac
+# a connection keeps the newest 64: a pooled one serves many tokens
+PSQL -c "SELECT count(*) FROM authz.set_jwks('$(jwks second:k1)')" >/dev/null
+rs256 second 2 65 > "$T/tokens"
+got=$( { sed "s/.*/SELECT authz.login_jwt('&');/" "$T/tokens"; echo "SELECT set_config('sessions.notes', $NOTES, false) = $NOTES;"
+         echo "SELECT authz.login_jwt('$(head -n 1 "$T/tokens")');"
+         echo "SELECT cardinality(string_to_array($NOTES, ' ')), $NOTES = current_setting('sessions.notes');"
+       } | psql -X -q -At -U "$APP" -d "$DB" 2>&1 | tail -n 3 | tr '\n' ' ')
+[ "$got" = "t 2 64|f " ] && ok "65 tokens on one connection: the newest 64 notes are kept, and the first token's is made again" || bad "the notes kept" "$got"
+
 # (taking the grant back makes the function's catalog row anew, and with it the statements the run measures: they
 # are kept first; tests/coverage_functions.sh)
 bash tests/coverage_functions.sh "$DB"

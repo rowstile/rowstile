@@ -614,6 +614,22 @@ BEGIN
                            || sha256(p_msg));
 END $f$;
 
+-- The note that a token's signature was checked against a key, on this connection: an HMAC, with the key that
+-- signs sessions (which the app role can't read), of the token, this backend and the key's modulus. authz.login_jwt
+-- keeps the notes of the tokens it checked in a setting of the connection, and doesn't check again a token whose
+-- note is there: an RSA check costs more than the read it guards. A note says no more than the check did (that
+-- this token is signed by this key), so the token's time, issuer, audience and user are read at every sign-in. It
+-- can't be made up without the key, is no note on another connection, and is none once the kid has another key.
+CREATE FUNCTION authz_int.token_note(p_token text, p_n numeric) RETURNS text
+LANGUAGE plpgsql STABLE STRICT {DEF} AS $f$
+DECLARE k authz_int.session_key;
+BEGIN
+  SELECT * INTO k FROM authz_int.session_key;
+  RETURN left(encode(sha256(k.opad || sha256(k.ipad || convert_to(to_jsonb(ARRAY[
+    'a checked token', encode(sha256(convert_to(p_token, 'UTF8')), 'hex'), pg_backend_pid()::text, p_n::text
+  ])::text, 'UTF8'))), 'hex'), 32);
+END $f$;
+
 -- Store the keys your identity provider signs its tokens with (RS256): its key set as it serves it (a JWKS, RFC
 -- 7517), which replaces the stored one. For the tables' owner (an administrator, a job that runs when the keys
 -- rotate): whoever writes a key signs in as anyone.
@@ -702,7 +718,7 @@ CREATE FUNCTION authz.login_jwt(p_token text) RETURNS text
 LANGUAGE plpgsql {DEF} AS $f$
 DECLARE parts text[] := string_to_array(coalesce(p_token, ''), '.'); v_head jsonb; v_claims jsonb; v_secret text;
         v_user text; v_type text; v_scopes text[]; v_now numeric := extract(epoch FROM now()); v_want text;
-        v_key authz.jwt_keys;
+        v_key authz.jwt_keys; v_note text; v_notes text[];
 BEGIN
   SELECT value INTO v_secret FROM authz.settings WHERE key = 'jwt_secret';
   IF v_secret IS NULL AND NOT EXISTS (SELECT 1 FROM authz.jwt_keys) THEN RAISE EXCEPTION 'JWT login is not configured (authz.settings jwt_secret, or keys stored with authz.set_jwks)' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703'; END IF;
@@ -723,9 +739,20 @@ BEGIN
       ELSIF (SELECT count(*) FROM authz.jwt_keys) = 1 THEN
         SELECT j.* INTO v_key FROM authz.jwt_keys j;
       END IF;
-      IF v_key.kid IS NULL OR authz_int.rsa_ok(authz_int.b64url(parts[3]), v_key.n, v_key.e,
-                                               convert_to(parts[1] || '.' || parts[2], 'UTF8')) IS NOT TRUE THEN
-        RAISE EXCEPTION 'bad';
+      -- a token this connection checked against this key already has its note among the connection's
+      -- (authz_int.token_note), and its signature is not checked again; the notes compared through their hashes
+      v_note := authz_int.token_note(p_token, v_key.n);
+      IF v_note IS NULL OR NOT EXISTS (
+           SELECT 1 FROM unnest(string_to_array(current_setting('authz.checked_tokens', true), ' ')) x
+           WHERE sha256(convert_to(x, 'UTF8')) = sha256(convert_to(v_note, 'UTF8'))) THEN
+        IF v_key.kid IS NULL OR authz_int.rsa_ok(authz_int.b64url(parts[3]), v_key.n, v_key.e,
+                                                 convert_to(parts[1] || '.' || parts[2], 'UTF8')) IS NOT TRUE THEN
+          RAISE EXCEPTION 'bad';
+        END IF;
+        -- the newest 64 are kept, for as long as the connection lasts (once this transaction commits: a setting)
+        v_notes := coalesce(string_to_array(current_setting('authz.checked_tokens', true), ' '), '{{}}') || v_note;
+        PERFORM set_config('authz.checked_tokens',
+                           array_to_string(v_notes[greatest(1, cardinality(v_notes) - 63):], ' '), false);
       END IF;
     ELSE
       RAISE EXCEPTION 'bad';
