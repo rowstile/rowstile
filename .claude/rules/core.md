@@ -208,7 +208,10 @@ For one suite, start a container and run it inside:
   Postgres takes a bare name for a column of a table in scope before a parameter, without a word, and the query
   compares the table with itself. `OwnNames` in `tests/unit_test.py` finds any that doesn't, from the compiled SQL
   of the fixed and the hand-answered policies (`tests/kept_names.py` reads each function's names);
-  `tests/adversarial.sh` holds a write rule on a link table with a column `p_id`.
+  `tests/adversarial.sh` holds a write rule on a link table with a column `p_id`. A row has the same trouble:
+  `to_jsonb(n)` is the row `n` only while the table has no column called `n`. A row handed on whole is written
+  `n.*` (`to_jsonb(NEW.*)` in a trigger's `WHEN`: the same value, so no ALTER is stopped); the same test finds a
+  row named by its alias alone, and `tests/children.sh`'s jobs have columns `n`, `o`, `new` and `old`.
 - Mutating API functions call `authz_int.check_writable()` first (scopes / view-as are read-only).
 - Anything a later function calls must exist before it in `compile()` output order, or be plpgsql (bodies
   resolve at run time); SQL-language functions referencing later objects sit between

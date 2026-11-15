@@ -2917,7 +2917,7 @@ BEGIN
         SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
         UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
         UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
-        WHERE n."org_id" IS DISTINCT FROM o."org_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."parent_id" IS DISTINCT FROM o."parent_id" OR n."parent_type" IS DISTINCT FROM o."parent_type" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['archived', 'locked', 'not'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['archived', 'locked', 'not']))), 'update');
+        WHERE n."org_id" IS DISTINCT FROM o."org_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."parent_id" IS DISTINCT FROM o."parent_id" OR n."parent_type" IS DISTINCT FROM o."parent_type" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['archived', 'locked', 'not'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['archived', 'locked', 'not']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -3184,7 +3184,7 @@ BEGIN
         SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
         UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
         UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
-        WHERE (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this']))), 'update');
+        WHERE (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this']))), 'update');
   RETURN NULL;
 END $f$;
 -- @object trigger "authz_user_col_audit_upd" ON "mt"."users"
@@ -3261,7 +3261,7 @@ BEGIN
         SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
         UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
         UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
-        WHERE (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['not', 'suspended'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['not', 'suspended']))), 'update');
+        WHERE (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['not', 'suspended'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['not', 'suspended']))), 'update');
   RETURN NULL;
 END $f$;
 -- @object trigger "authz_org_col_audit_upd" ON "mt"."orgs"
@@ -3836,7 +3836,7 @@ BEGIN
   IF p_id IS NULL THEN
     RAISE EXCEPTION 'which row? authz.explain_rule(%, %, id)', 'mt.docs', p_command USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
   END IF;
-  SELECT (jsonb_populate_record(NULL::"mt"."docs", to_jsonb(x))).* INTO r_old FROM "mt"."docs_visible" x WHERE x."id" = p_id::uuid;
+  SELECT (jsonb_populate_record(NULL::"mt"."docs", to_jsonb(x.*))).* INTO r_old FROM "mt"."docs_visible" x WHERE x."id" = p_id::uuid;
   IF NOT FOUND THEN
     RETURN NULL;          -- not there, or the signed-in user can't see it
   END IF;

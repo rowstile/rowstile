@@ -262,7 +262,7 @@ END $f$;"""
             # the app role can't read a masked column from the table: the row as the masked view gives it (the
             # same rows, a masked column NULL unless its rule holds), by column name
             fetch = (
-                f"SELECT (jsonb_populate_record(NULL::{qt(table)}, to_jsonb(x))).* INTO r_old "
+                f"SELECT (jsonb_populate_record(NULL::{qt(table)}, to_jsonb(x.*))).* INTO r_old "
                 f"FROM {qt(self.pol.views[table])} x WHERE {find};"
             )
         return f"""CREATE FUNCTION {self.rule_fn(table, "rules", "explain")}(p_command text, p_id text, p_row jsonb) RETURNS text[]

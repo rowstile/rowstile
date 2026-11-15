@@ -2121,7 +2121,7 @@ BEGIN
         SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
         UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
         UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
-        WHERE n."domain_id" IS DISTINCT FROM o."domain_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['verified'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['verified']))), 'update');
+        WHERE n."domain_id" IS DISTINCT FROM o."domain_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['verified'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['verified']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -2866,13 +2866,13 @@ DO $tr$ BEGIN
     EXECUTE 'CREATE TRIGGER "authz_update_after org_id" AFTER UPDATE ON "lp"."domains" FOR EACH ROW
   WHEN ((OLD."org_id" IS DISTINCT FROM NEW."org_id")
     AND pg_catalog.row_security_active(''"lp"."domains"''::pg_catalog.regclass)
-    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
+    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.to_jsonb(NEW.*), current_user))
   EXECUTE FUNCTION authz_int."lp.domains:column org_id after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after org_id" BEFORE UPDATE ON "lp"."domains" FOR EACH ROW
   WHEN ((OLD."org_id" IS DISTINCT FROM NEW."org_id")
     AND pg_catalog.row_security_active(''"lp"."domains"''::pg_catalog.regclass)
-    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.to_jsonb(NEW), current_user))
+    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.to_jsonb(NEW.*), current_user))
   EXECUTE FUNCTION authz_int."lp.domains:column org_id after"()';
   END IF;
 END $tr$;
@@ -2899,7 +2899,7 @@ BEGIN
   v_one := (SELECT count(*) FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)) = 1
        AND (SELECT count(*) FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)) = 1;
   FOR v_row IN
-    SELECT (pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(n))).* FROM new_rows n
+    SELECT (pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(n.*))).* FROM new_rows n
     WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text AND o."org_id" IS NOT DISTINCT FROM n."org_id")
       AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
                AND EXISTS (SELECT 1 FROM old_rows o WHERE o."org_id" IS NOT DISTINCT FROM n."org_id"

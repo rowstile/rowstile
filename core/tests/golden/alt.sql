@@ -3311,7 +3311,7 @@ BEGIN
         SELECT n."doc_no"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."doc_no"::text = n."doc_no"::text)
         UNION SELECT o."doc_no"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."doc_no"::text = o."doc_no"::text)
         UNION SELECT n."doc_no"::text FROM new_rows n JOIN old_rows o ON n."doc_no"::text = o."doc_no"::text
-        WHERE n."blocked_id" IS DISTINCT FROM o."blocked_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."project_id" IS DISTINCT FROM o."project_id" OR n."up" IS DISTINCT FROM o."up" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['alt', 'authz', 'exists', 'from', 'h', 'holds', 'is', 'locked', 'not', 'null', 'select', 'target', 'this', 'uid', 'where'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['alt', 'authz', 'exists', 'from', 'h', 'holds', 'is', 'locked', 'not', 'null', 'select', 'target', 'this', 'uid', 'where']))), 'update');
+        WHERE n."blocked_id" IS DISTINCT FROM o."blocked_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."project_id" IS DISTINCT FROM o."project_id" OR n."up" IS DISTINCT FROM o."up" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n.*)) e WHERE lower(e.key) = ANY (ARRAY['alt', 'authz', 'exists', 'from', 'h', 'holds', 'is', 'locked', 'not', 'null', 'select', 'target', 'this', 'uid', 'where'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o.*)) e WHERE lower(e.key) = ANY (ARRAY['alt', 'authz', 'exists', 'from', 'h', 'holds', 'is', 'locked', 'not', 'null', 'select', 'target', 'this', 'uid', 'where']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -4119,7 +4119,7 @@ END $f$;
 CREATE TRIGGER "authz_update owner_id" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
   WHEN ((OLD."owner_id" IS DISTINCT FROM NEW."owner_id")
     AND pg_catalog.row_security_active('"alt"."docs"'::pg_catalog.regclass)
-    AND NOT authz_int."alt.docs:column owner_id:holds"(pg_catalog.to_jsonb(OLD), current_user))
+    AND NOT authz_int."alt.docs:column owner_id:holds"(pg_catalog.to_jsonb(OLD.*), current_user))
   EXECUTE FUNCTION authz_int."alt.docs:column owner_id"();
 
 CREATE FUNCTION authz_gen."alt.docs:column up after:items"(p_row "alt"."docs", authz__role name) RETURNS boolean[]
@@ -4203,13 +4203,13 @@ DO $tr$ BEGIN
     EXECUTE 'CREATE TRIGGER "authz_update_after up" AFTER UPDATE ON "alt"."docs" FOR EACH ROW
   WHEN ((OLD."up" IS DISTINCT FROM NEW."up")
     AND pg_catalog.row_security_active(''"alt"."docs"''::pg_catalog.regclass)
-    AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.to_jsonb(NEW), current_user))
+    AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.to_jsonb(NEW.*), current_user))
   EXECUTE FUNCTION authz_int."alt.docs:column up after"()';
   ELSE
     EXECUTE 'CREATE TRIGGER "authz_update_after up" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
   WHEN ((OLD."up" IS DISTINCT FROM NEW."up")
     AND pg_catalog.row_security_active(''"alt"."docs"''::pg_catalog.regclass)
-    AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.to_jsonb(NEW), current_user))
+    AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.to_jsonb(NEW.*), current_user))
   EXECUTE FUNCTION authz_int."alt.docs:column up after"()';
   END IF;
 END $tr$;
@@ -4236,7 +4236,7 @@ BEGIN
   v_one := (SELECT count(*) FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."doc_no"::text = o."doc_no"::text)) = 1
        AND (SELECT count(*) FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."doc_no"::text = n."doc_no"::text)) = 1;
   FOR v_row IN
-    SELECT (pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(n))).* FROM new_rows n
+    SELECT (pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(n.*))).* FROM new_rows n
     WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."doc_no"::text = n."doc_no"::text AND o."up" IS NOT DISTINCT FROM n."up")
       AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."doc_no"::text = n."doc_no"::text)
                AND EXISTS (SELECT 1 FROM old_rows o WHERE o."up" IS NOT DISTINCT FROM n."up"

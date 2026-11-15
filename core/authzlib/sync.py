@@ -477,7 +477,7 @@ class SyncMixin(Core):
         mt = self.mirror_table(t)
         return (
             f"SELECT mr.* FROM {source} {row} CROSS JOIN LATERAL pg_catalog.jsonb_populate_record(NULL::{mt}, "
-            f"pg_catalog.to_jsonb({row}) || pg_catalog.jsonb_build_object('readers', {self.mirror_readers_sql(t, row)})) mr"
+            f"pg_catalog.to_jsonb({row}.*) || pg_catalog.jsonb_build_object('readers', {self.mirror_readers_sql(t, row)})) mr"
         )
 
     def mirror_columns_sql(self, s: Sync, rel: str, mirror: bool = False) -> str:

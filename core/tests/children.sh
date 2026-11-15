@@ -456,12 +456,16 @@ echo "-- a generated column the rows a trigger is handed don't hold (PostgreSQL 
 # a job is done by a column Postgres works out: on 18, when its table is read (virtual, what GENERATED makes there
 # unless it says STORED), and the row a trigger is handed holds none of it; before 18, stored. Only a job's owner
 # may leave it done: a rule that read the column as a trigger's row holds it (NULL) would let anyone. Jobs are
-# partitioned by their key: a row an update puts in another partition has a new key
+# partitioned by their key: a row an update puts in another partition has a new key. And jobs have columns called as
+# rowstile calls the rows it reads (n and o: a statement's new and old rows; new and old: a trigger's), NULL in every
+# row: a row handed on by its name alone (to_jsonb(n)) would be the column there, and a rule asked of it would be
+# asked of NULLs, which `not {this.is_done}` passes
 KIND=STORED; [ "$(PSQL -c "SHOW server_version_num")" -ge 180000 ] && KIND=VIRTUAL
 DB4=${DB}_virtual
 dropdb --if-exists "$DB4" 2>/dev/null; createdb "$DB4" && schema "$DB4" || exit 1
 D=$DB4 PSQL -c "CREATE TABLE ch.jobs (id bigint PRIMARY KEY, state text NOT NULL DEFAULT 'open', owner_id bigint,
-                  is_done boolean GENERATED ALWAYS AS (state = 'done') $KIND) PARTITION BY RANGE (id)" \
+                  is_done boolean GENERATED ALWAYS AS (state = 'done') $KIND,
+                  n text, o text, new text, old text) PARTITION BY RANGE (id)" \
   -c "CREATE TABLE ch.jobs_low PARTITION OF ch.jobs FOR VALUES FROM (0) TO (100)" -c "CREATE TABLE ch.jobs_high PARTITION OF ch.jobs FOR VALUES FROM (100) TO (1000)" \
   -c "GRANT SELECT, UPDATE ON ch.jobs TO app_user" -c "INSERT INTO ch.jobs VALUES (1, 'open', 1), (2, 'done', 1), (3, 'kept', 1)" \
   -c "CREATE TABLE ch.tallies (a int, b int, c int, twice int GENERATED ALWAYS AS (c * 2) STORED)"

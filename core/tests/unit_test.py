@@ -1074,10 +1074,26 @@ class OwnNames(unittest.TestCase):
     """A table's columns may have any name, a generated function's parameter's too (`p_id`). In a function written
     in SQL, Postgres takes a bare name for a column of a table in scope before it takes it for a parameter, and says
     nothing: the query then compares the table's rows with themselves. So where such a function reads a table or a
-    row of the app's, it writes its parameters by position (`$1`), which no column can be."""
+    row of the app's, it writes its parameters by position (`$1`), which no column can be.
+    A row has the same trouble: `to_jsonb(n)` is the row n of `FROM new_rows n` only while the table has no column
+    called n. A row handed on whole is written `n.*`, which is the row whatever the columns are called."""
 
     # a table of the app's ("app"."docs"), or a column of a row of one ("docs"."owner_id"): not rowstile's own
     APP = re.compile(r'"(?!authz(?:_int|_gen|_sync)?")[^"]+"[.]"[^"]+"')
+
+    @staticmethod
+    def texts() -> dict[str, str]:
+        """The compiled SQL the names are read in: the fixed policies, the docs policy with a sync index (one with
+        a mirror), and the hand-answered ones, which hold the forms the fixed ones lack (caveats, masks, roles,
+        `shared if`, rules on columns)."""
+        texts = {name: compiled(name) for name in POLICIES}
+        texts["docs with sync"] = compiled_sync()
+        texts["docs with sync by folder"] = compiled_sync(SYNC_KEYED_LINES)
+        texts["docs with a mirror"] = compiled_sync(replaced(SYNC_LINES, "files : view\n", "files : view mirrored\n"))
+        for path in sorted(glob.glob(os.path.join(ROOT, "tests", "hand", "*.authz"))):
+            rel = os.path.relpath(path, ROOT)
+            texts[rel] = Compiler(parse_policy(read(rel), rel)).compile(rel)
+        return texts
 
     def test_the_functions_of_compiled_sql_are_read_with_the_names_they_keep(self) -> None:
         sql = (
@@ -1106,13 +1122,7 @@ class OwnNames(unittest.TestCase):
         self.assertEqual(sorted(kept_names.kept(sql)["p_id"]), ["authz.move", 'authz_int."a__links"'])
 
     def test_a_function_written_in_sql_writes_no_parameter_by_name_where_a_column_could_be_meant(self) -> None:
-        texts = {name: compiled(name) for name in POLICIES}
-        texts["docs with sync"] = compiled_sync()
-        texts["docs with sync by folder"] = compiled_sync(SYNC_KEYED_LINES)
-        # the hand-answered policies hold the forms the fixed ones lack (caveats, masks, roles, `shared if`)
-        for path in sorted(glob.glob(os.path.join(ROOT, "tests", "hand", "*.authz"))):
-            rel = os.path.relpath(path, ROOT)
-            texts[rel] = Compiler(parse_policy(read(rel), rel)).compile(rel)
+        texts = self.texts()
         self.assertGreater(len(texts), 50)
         names: set[str] = set()
         for name, sql in texts.items():
@@ -1129,6 +1139,60 @@ class OwnNames(unittest.TestCase):
             self.assertIn(kind, kinds)
         self.assertTrue(any(kind.startswith("check_") for kind in kinds), sorted(kinds))
         self.assertTrue(any(n.startswith('authz_int."sync:') for n in names), sorted(names)[:20])
+
+    def test_a_row_named_by_its_alias_alone_is_found(self) -> None:
+        def found(sql: str) -> list[str]:
+            return [alias for part in kept_names.read_apart(sql) for alias, _ in kept_names.rows_by_alias(part)]
+
+        self.assertEqual(found("SELECT to_jsonb(n) FROM new_rows n"), ["n"])
+        self.assertEqual(found('SELECT to_jsonb(n.*), n."id", n.id, (n.*)::"app"."docs" FROM new_rows n'), [])
+        self.assertEqual(
+            found("SELECT 1 FROM new_rows n JOIN old_rows o ON o.id = n.id WHERE n IS DISTINCT FROM o"), ["n", "o"]
+        )
+        self.assertEqual(
+            found('SELECT (jsonb_populate_record(NULL::"a"."t", to_jsonb(x))).* FROM "a"."t_seen" x'), ["x"]
+        )
+        # a table given no alias is called by its name, quoted or not
+        self.assertEqual(found('SELECT row_to_json("docs") FROM "app"."docs" WHERE "docs"."id" = 1'), ['"docs"'])
+        self.assertEqual(found('SELECT row_to_json(docs) FROM ONLY "app"."docs" WHERE docs.id = 1'), ['"docs"'])
+        self.assertEqual(found('UPDATE "app"."Docs" SET "n" = 1 WHERE f("Docs") AND g(docs)'), ['"Docs"'])
+        # a trigger's WHEN reads the rows NEW and OLD, and a policy its table's
+        trigger = (
+            'CREATE TRIGGER t BEFORE UPDATE ON "app"."docs" REFERENCING OLD TABLE AS old_rows FOR EACH ROW '
+            "WHEN (f(to_jsonb(NEW)) AND OLD.id = 1 AND g(old.*)) EXECUTE FUNCTION h()"
+        )
+        self.assertEqual(found(trigger), ["new"])
+        self.assertEqual(
+            found('CREATE POLICY p ON "app"."docs" USING (f(docs) AND g((docs.*)::"app"."docs"))'), ['"docs"']
+        )
+        # ... in a function's body, each statement apart, and in what a DO block runs from a string
+        body = "BEGIN\n  PERFORM f(n) FROM unnest($1) n;  -- to_jsonb(o)\n  PERFORM to_jsonb(o) FROM old_rows o;\nEND"
+        self.assertEqual(
+            found(f"CREATE FUNCTION authz_int.f(bigint[]) RETURNS void LANGUAGE plpgsql AS $f$\n{body} $f$"), ["o"]
+        )
+        made = trigger.replace("'", "''")
+        self.assertEqual(found(f"DO $d$\nBEGIN\n  EXECUTE '{made}';\nEND $d$"), ["new"])
+        # where an alias is given it isn't read: by the compiler's SQL, or by a condition's own
+        self.assertEqual(
+            found(
+                'SELECT r."id" FROM "app"."docs" AS r WHERE EXISTS (select 1 from app.marks r where r.ref_id = 1) '
+                'AND r."id" IN (SELECT m.id FROM (SELECT 1 AS id) r JOIN "app"."marks" m ON m.id = r.id)'
+            ),
+            [],
+        )
+
+    def test_a_row_handed_on_whole_is_never_named_by_its_alias_alone(self) -> None:
+        seen = ""
+        for name, sql in self.texts().items():
+            for _, statement in statements.split(sql):
+                for part in kept_names.read_apart(statement):
+                    self.assertEqual(kept_names.rows_by_alias(part), [], f"{name}: {statement[:90]}")
+                    seen += part if ".*" in part else ""
+        # the rows this is about are all met: a statement's new and old rows where a column's change is looked for
+        # and where a rule is asked again of the rows an update moved, a trigger's in its WHEN, a masked view's where
+        # a rule is explained, a table's and a statement's where a mirror is filled
+        for row in ("n", "o", "NEW", "OLD", "x", "f"):
+            self.assertIn(f"to_jsonb({row}.*)", seen)
 
 
 class Refusals(unittest.TestCase):

@@ -167,7 +167,7 @@ BEGIN
             set_config('authz.scopes', '', true);
     v_line := 'example/docs.test.authz line 5'; v_text := 'given ann = {INSERT INTO app.users (id, name) VALUES (9001, ''Ann'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.users (id, name) VALUES (9001, ''Ann'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.users (id, name) VALUES (9001, ''Ann'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given ann = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -176,7 +176,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 6'; v_text := 'given bo = {INSERT INTO app.users (id, name) VALUES (9002, ''Bo'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.users (id, name) VALUES (9002, ''Bo'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.users (id, name) VALUES (9002, ''Bo'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given bo = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -185,7 +185,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 7'; v_text := 'given acme = {INSERT INTO app.orgs (id, name) VALUES (9001, ''Acme'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.orgs (id, name) VALUES (9001, ''Acme'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.orgs (id, name) VALUES (9001, ''Acme'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given acme = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -194,7 +194,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 8'; v_text := 'given m = {INSERT INTO app.org_members (org_id, user_id, role) VALUES ($acme, $ann, ''member'') RETURNING org_id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.org_members (org_id, user_id, role) VALUES (' || quote_nullable(v2_acme) || ', ' || quote_nullable(v2_ann) || ', ''member'') RETURNING org_id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.org_members (org_id, user_id, role) VALUES (' || quote_nullable(v2_acme) || ', ' || quote_nullable(v2_ann) || ', ''member'') RETURNING org_id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given m = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -203,7 +203,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 9'; v_text := 'given top = {INSERT INTO app.folders (org_id, owner_id, name) VALUES ($acme, $ann, ''Top'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, owner_id, name) VALUES (' || quote_nullable(v2_acme) || ', ' || quote_nullable(v2_ann) || ', ''Top'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, owner_id, name) VALUES (' || quote_nullable(v2_acme) || ', ' || quote_nullable(v2_ann) || ', ''Top'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given top = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -212,7 +212,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 10'; v_text := 'given sub = {INSERT INTO app.folders (org_id, parent_id, name) VALUES ($acme, $top, ''Sub'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, parent_id, name) VALUES (' || quote_nullable(v2_acme) || ', ' || quote_nullable(v2_top) || ', ''Sub'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, parent_id, name) VALUES (' || quote_nullable(v2_acme) || ', ' || quote_nullable(v2_top) || ', ''Sub'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given sub = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -221,7 +221,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 11'; v_text := 'given f = {INSERT INTO app.files (folder_id, name) VALUES ($sub, ''plan.txt'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.files (folder_id, name) VALUES (' || quote_nullable(v2_sub) || ', ''plan.txt'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.files (folder_id, name) VALUES (' || quote_nullable(v2_sub) || ', ''plan.txt'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given f = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -368,7 +368,7 @@ BEGIN
             set_config('authz.scopes', '', true);
     v_line := 'example/docs.test.authz line 22'; v_text := 'given ann = {INSERT INTO app.users (id, name) VALUES (9001, ''Ann'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.users (id, name) VALUES (9001, ''Ann'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.users (id, name) VALUES (9001, ''Ann'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given ann = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -377,7 +377,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 23'; v_text := 'given acme = {INSERT INTO app.orgs (id, name) VALUES (9001, ''Acme'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.orgs (id, name) VALUES (9001, ''Acme'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.orgs (id, name) VALUES (9001, ''Acme'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given acme = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -386,7 +386,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 24'; v_text := 'given m = {INSERT INTO app.org_members (org_id, user_id, role) VALUES ($acme, $ann, ''member'') RETURNING org_id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.org_members (org_id, user_id, role) VALUES (' || quote_nullable(v3_acme) || ', ' || quote_nullable(v3_ann) || ', ''member'') RETURNING org_id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.org_members (org_id, user_id, role) VALUES (' || quote_nullable(v3_acme) || ', ' || quote_nullable(v3_ann) || ', ''member'') RETURNING org_id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given m = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -395,7 +395,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 25'; v_text := 'given top = {INSERT INTO app.folders (org_id, owner_id, name) VALUES ($acme, $ann, ''Top'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, owner_id, name) VALUES (' || quote_nullable(v3_acme) || ', ' || quote_nullable(v3_ann) || ', ''Top'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, owner_id, name) VALUES (' || quote_nullable(v3_acme) || ', ' || quote_nullable(v3_ann) || ', ''Top'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given top = {...} returned % rows: it must return one (RETURNING id)', v_n;
@@ -404,7 +404,7 @@ BEGIN
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
     v_line := 'example/docs.test.authz line 26'; v_text := 'given sub = {INSERT INTO app.folders (org_id, parent_id, name, inherit) VALUES ($acme, $top, ''Private'', false) RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
-    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, parent_id, name, inherit) VALUES (' || quote_nullable(v3_acme) || ', ' || quote_nullable(v3_top) || ', ''Private'', false) RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, parent_id, name, inherit) VALUES (' || quote_nullable(v3_acme) || ', ' || quote_nullable(v3_top) || ', ''Private'', false) RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q.*)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
     IF v_n <> 1 THEN
       RAISE EXCEPTION 'given sub = {...} returned % rows: it must return one (RETURNING id)', v_n;
