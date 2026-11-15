@@ -128,8 +128,11 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   admin's filter reads every row of inherits, 766,000. Right after the first apply, before autovacuum has run, a
   write that reads many of the index's rows can take forty times as long: run `VACUUM` on its tables after it. <!-- unchecked: times measured by hand on 2026-10-31 and 2026-11-01 -->
 - **Identity providers**: `authz.sync_members` takes the member list; there is no SCIM
-  endpoint. JWTs are HS256 only (no RS256/JWKS in plpgsql); for asymmetric tokens,
-  verify in your backend and sign in from there ([Identity](identity.md)), or use an API key. <!-- checked: tests/identity.sh "alg none" -->
+  endpoint. A JWT's signature is checked in plain SQL: HS256, or RS256 against the provider's stored keys,
+  which takes about 2 ms a sign-in with a 2048-bit key, 4 ms with a 3072-bit one and 7 ms with a 4096-bit
+  one. <!-- unchecked: times measured by hand on 2026-11-15, PostgreSQL 16 -->
+  Tokens signed another way (ES256, EdDSA) are refused, since a check of ES256 written in plain SQL took 12 ms:
+  verify those in your backend and sign in from there ([Identity](identity.md)), or use an API key. <!-- checked: tests/identity.sh "a token that says ES256: neither a secret nor a stored key checks it"; tests/identity.sh "alg none" -->
 - **Writes cost more**: each closure table is maintained on every tree write,
   and tree writes to one type are serialized. Inheritance conditions that read
   other tables are re-evaluated for every row of the type when those tables change

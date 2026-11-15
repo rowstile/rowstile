@@ -9,6 +9,16 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+### Added
+
+- `authz.login_jwt` takes a token an identity provider signs with its RSA key (RS256), checked in plain SQL
+  against the provider's keys. The owner stores them with `authz.set_jwks(jwks)`, the key set as the provider
+  serves it, and again when its keys change: a row for each key says whether it was added, replaced, kept, removed,
+  or skipped and why; a set that leaves no key is refused and the stored keys stay (AZ719). What a token says of
+  itself chooses its check: an HS256 token is checked against `jwt_secret` alone, an RS256 one against the stored
+  keys alone, the one its `kid` names. Keys of 2048 to 4096 bits; a check takes about 2 ms at 2048 bits and 7 ms
+  at 4096. ES256 and EdDSA tokens still go through the backend ([Identity](docs/reference/identity.md)).
+
 ### Fixed
 
 - `authz.set_role_permissions` lets the caller add a permission they hold on an object the role is given on, even

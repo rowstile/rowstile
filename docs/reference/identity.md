@@ -17,8 +17,8 @@ Three ways to say who is asking, all per transaction:
    `authz.login_key(key)` works in read-only transactions too (a replica), and requests with
    the same key never wait for each other: when a key was last used (`last_used_at`) is kept to
    the minute, and not by read-only transactions. <!-- checked: tests/identity.sh "a key signs in to a read-only transaction (a replica, a GET)"; tests/identity.sh "and requests with one key don't wait for each other"; tests/identity.sh "last_used_at is kept, to the minute" -->
-3. **JWTs** from your identity provider: `authz.login_jwt(token)` checks an HS256
-   signature, a required `exp` and optional `nbf`, and the issuer and the audience once the settings
+3. **JWTs** from your identity provider: `authz.login_jwt(token)` checks the token's
+   signature (HS256 with a secret, or RS256 with the provider's keys, below), a required `exp` and optional `nbf`, and the issuer and the audience once the settings
    `jwt_issuer` and `jwt_audience` name them (a token that names none is then refused); a `scope` claim limits
    the transaction. <!-- checked: tests/identity.sh "wrong signature"; tests/identity.sh "alg none"; tests/identity.sh "no expiry"; tests/identity.sh "not valid yet (nbf in an hour)"; tests/identity.sh "another issuer"; tests/identity.sh "a token that names no issuer, once one is asked"; tests/identity.sh "a token for no audience, once one is asked"; tests/identity.sh "a valid token signs in as bob, with its scope" -->
    The settings are rows of `authz.settings`, which the owner writes and the app role
@@ -29,11 +29,37 @@ Three ways to say who is asking, all per transaction:
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
    ```
 
-   `jwt_secret` is required: without it `login_jwt` signs nobody in. <!-- checked: tests/identity.sh "no secret, no JWT login" -->
-   It is the secret your identity
-   provider signs with, and HS256 asks for 32 random bytes or more (RFC 7518): a short one can be
-   guessed from any token. The other settings: `jwt_audience`, `jwt_user_claim` (the claim that holds
+   `jwt_secret` is the secret your identity provider signs HS256 tokens with, and HS256 asks for 32 random
+   bytes or more (RFC 7518): a short one can be guessed from any token. With no secret and no stored keys,
+   `login_jwt` signs nobody in. <!-- checked: tests/identity.sh "no secret and no keys, no JWT login" -->
+   The other settings: `jwt_audience`, `jwt_user_claim` (the claim that holds
    the user's id, `sub` by default) and `jwt_type_claim` (below).
+
+   **A provider that signs with a key pair** (RS256) serves its public keys as a key set (a JWKS, RFC 7517).
+   The owner stores the set, and `login_jwt` checks an RS256 token against the key its `kid` names: <!-- checked: tests/reference.sh "the key set identity.md stores: a token signed by that key, naming it, signs in" -->
+
+   ```sql
+   SELECT * FROM authz.set_jwks('{"keys": [{"kty": "RSA", "kid": "2026-11", "n": "...", "e": "AQAB"}]}');
+   ```
+
+   The set replaces the stored one, and a row for each key says what became of it: `added`, `replaced` (its
+   `kid` has another key now), `kept`, `removed` (it left the set), or `skipped` and why. <!-- checked: tests/identity.sh "the owner stores the provider's key set: each key added, or skipped and why"; tests/identity.sh "the next key set replaces the stored one: a key that left is removed, one that stays is kept"; tests/identity.sh "a kid given another key: replaced" -->
+   Stored are RSA keys for signatures, of 2048 to 4096 bits, with the exponent 65537. <!-- checked: tests/identity.sh "a key under 2048 bits signs nothing here"; tests/identity.sh "an exponent other than 65537 is refused" -->
+   Store the set again when the provider's keys change: from then on, a token signed by a key that left the
+   set is refused. <!-- checked: tests/identity.sh "a token signed by a key that left the set" -->
+   A set that leaves no key is refused, saying why each key was skipped, and the stored keys stay (AZ719): a
+   fetch that failed signs nobody out. <!-- checked: tests/identity.sh "a key set that leaves no key is refused"; tests/identity.sh "... saying why each key was skipped"; tests/identity.sh "... and the stored keys stay as they were" -->
+   `authz.set_jwks` is the owner's, as the settings are: whoever stores a key signs in as anyone. The app
+   role can't call it or read the keys, and the audit trail says when the keys were set. <!-- checked: tests/identity.sh "the app role cannot store keys"; tests/identity.sh "... nor read them"; tests/identity.sh "the audit trail says the keys were set, and which" -->
+
+   What a token says of itself (`alg`) chooses its check, and nothing else does. An HS256 token is checked
+   against `jwt_secret` alone and an RS256 token against the stored keys alone, so a public key, which anyone
+   has, is never taken for the secret. <!-- checked: tests/identity.sh "an HS256 token signed with the public key as its secret"; tests/identity.sh "a token that says RS256, signed with the secret"; tests/identity.sh "alg none, naming a stored key" -->
+   A token whose `kid` names no stored key is refused, and one that names no key is checked against the
+   stored key when there is one only. <!-- checked: tests/identity.sh "a token that names a key nobody stored"; tests/identity.sh "a token that names no key, with one stored: checked against that one"; tests/identity.sh "an RS256 token that names no key, with two stored" -->
+   The signature is checked in plain SQL, which takes a few milliseconds a sign-in, more with a longer key
+   ([Limits](limits.md)). Tokens signed another way (ES256, EdDSA) aren't checked in the database: check
+   them in your backend, and sign in with `authz.act_as`. <!-- checked: tests/identity.sh "a token that says ES256: neither a secret nor a stored key checks it" -->
 
 What a scope leaves a key able to do can be said in the policy's tests: a line with `with scope read`
 is checked as a key limited to that scope would be

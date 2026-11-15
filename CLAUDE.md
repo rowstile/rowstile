@@ -73,4 +73,4 @@ simplest is Docker, from the repo root:
 ## Known limits / open ideas
 
 See "Limits" in `docs/reference/limits.md`: no sharding, no SCIM endpoint (sync
-function only), HS256-only JWTs.
+function only), JWTs checked in SQL when signed HS256 or RS256 (ES256 and EdDSA go through the backend).

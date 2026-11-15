@@ -28,9 +28,11 @@ policy for that seed and draws a world for it:
                 schema, which the database's search path supplies; a schema on that path that others may create in
   the session   who connects: the owner switched to the app role (as the other suites do), a login role that is
                 a member of the app role, or one that has to SET ROLE to it; the last two sign each user in with
-                authz.act_as(). Or, in half the worlds, with what the user sent: their API key
-                (authz.login_key) or a JWT (authz.login_jwt), which sign in only someone who is an active row
-                now; the one the checks ask again with a scope is then asked by a key, or a JWT, limited to it.
+                authz.act_as(). Or, in five worlds of eight, with what the user sent: their API key
+                (authz.login_key) or a JWT (authz.login_jwt: signed with a secret, HS256, or by an identity
+                provider's RSA key, RS256, whose key set the owner stored with authz.set_jwks), which sign in
+                only someone who is an active row now; the one the checks ask again with a scope is then asked
+                by a key, or a JWT, limited to it.
                 Each sets the user's request context (authz_ctx.*), which caveats read.
                 Settings of the app's transaction that must change no answer, set before signing in as a
                 connection that has them from its start: planner switches, read-only, how dates, numbers and
@@ -55,7 +57,9 @@ and checks, after each random change to the data:
   - a role the policy doesn't name gets no row of a governed table, whatever it was granted there, and a
     member of the app role that didn't sign in gets an error (28000) or nothing, never a row; nor one whose
     token was refused (an API key that expired, was revoked or was never made; a JWT that expired, is signed
-    with another secret, or says it needs no signature)
+    with another secret, or says it needs no signature; an RS256 one that expired, that another key signed
+    under the stored key's name, whose signature has a bit changed, or that the secret signed; an HS256 one
+    signed with the stored key set as its secret)
   - the privileges on authz, authz_gen and authz_int are the ones a database with no world around it has
   - what changed behind the policy's back: authz.lint() reports it, and `rowstile apply` puts it right (or
     refuses, AZ612, for the schema others may create in) and then answers `unchanged`
@@ -76,6 +80,7 @@ import argparse
 import base64
 import contextlib
 import dataclasses
+import functools
 import hashlib
 import hmac
 import json
@@ -89,6 +94,7 @@ import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from itertools import combinations
+from typing import NamedTuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -112,6 +118,8 @@ INSERTS = 6  # how many rows of each table an insert is tried with
 SLOW = genpolicy.SLOW_TO_PLAN  # in the compiled policy: lint's warning that a permission or a rule is slow to plan
 SECRET = "around.py's secret, which signs its JWTs"  # authz.settings' jwt_secret, in a world's database
 TYPE_CLAIM = "kind"  # ... and its jwt_type_claim: what a token for a service says
+KID = "around-1"  # the key its RS256 JWTs name: the one key of the set authz.set_jwks stored there
+RS256 = "RS256 jwt"  # a world that signs in with those (World.signs)
 TOP = 1000000  # range partitions end here: ids never get that far, a partition made later starts here
 
 LAYOUTS = ["plain", "plain", "hash", "range", "inherits", "inherits"]
@@ -213,7 +221,7 @@ class World:
     drift: list[str] = field(default_factory=list)  # what changes behind the policy's back, halfway
     gone: str = ""  # a user's row, a third of the way: deleted | rekeyed ('': it stays)
     # how the app says who is asking: '' (authz.act_as, or the owner's session setting it), or with what the
-    # user sent, an 'api key' (authz.login_key) or a 'jwt' (authz.login_jwt)
+    # user sent, an 'api key' (authz.login_key), a 'jwt' (authz.login_jwt, HS256) or an 'RS256 jwt'
     signs: str = ""
 
     def describe(self) -> str:
@@ -266,7 +274,8 @@ def draw(seed: int, spec: Spec) -> World:
     x = random.Random(f"around/{seed}/tables")  # the other tables' layout, drawn apart too
     w.layout.update({t: x.choice(LAYOUTS) for t in others(spec)})
     w.gone = x.choice(["", "", "deleted", "rekeyed"])
-    w.signs = ("", "api key", "", "jwt")[seed % 4]  # in turn: any four seeds in a row meet each
+    # in turn: any eight seeds in a row meet each, and the first four (each push's) the three kinds of token
+    w.signs = ("", "api key", "", "jwt", RS256, "api key", "", "jwt")[seed % 8]
     # (one setting in twenty-eight is rarely drawn, and it is the only one of its kind: one world in five has it)
     level = ("default_transaction_isolation", "repeatable read")
     if level not in w.settings and random.Random(f"around/{seed}/isolation").random() < 0.2:
@@ -286,7 +295,7 @@ FEATURES = [
     *[f"keys: {k}" for k in ("int", "text", "uuid", "two columns", "words")],
     *[f"database: {d}" for d in DATABASES],
     *[f"session: {x}" for x in ("owner", "member", "set role")],
-    *[f"signing in: {x}" for x in ("api key", "jwt")],
+    *[f"signing in: {x}" for x in ("api key", "jwt", RS256)],
     *[f"a user's row: {x}" for x in ("deleted", "rekeyed")],
     *[
         f"{t}: {how}"
@@ -813,16 +822,95 @@ def api_key(u: str, scope: str = "", what: str = "") -> str:
     return "ak_around_" + hashlib.sha256(f"{u}/{scope}/{what}".encode()).hexdigest()[:40]
 
 
-def jwt(kind: str, pid: str, scope: str = "", secret: str = SECRET, lasts: int = 3600, alg: str = "HS256") -> str:
-    """A JWT for a principal, as an identity provider that holds the secret signs it (lasts: seconds from now)."""
+def b64(raw: bytes) -> str:
+    """Bytes as a JWT writes them: base64url, without its padding."""
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
-    def b64(raw: bytes) -> str:
-        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
+def unb64(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+class RsaKey(NamedTuple):
+    """An RSA key of 2048 bits: its modulus, its private exponent, and the modulus's two primes."""
+
+    n: int
+    d: int
+    p: int
+    q: int
+
+
+E = 65537  # every key's public exponent
+SMALL_PRIMES = [p for p in range(3, 2000, 2) if all(p % q for q in range(3, int(p**0.5) + 1, 2))]
+
+
+def probably_prime(p: int, r: random.Random) -> bool:
+    """Miller-Rabin's test of an odd number, with twenty bases drawn from r: a composite passes each one time in
+    four at most."""
+    odd, twos = p - 1, 0
+    while odd % 2 == 0:
+        odd, twos = odd // 2, twos + 1
+    for _ in range(20):
+        x = pow(r.randrange(2, p - 1), odd, p)
+        if x in (1, p - 1):
+            continue
+        for _ in range(twos - 1):
+            x = x * x % p
+            if x == p - 1:
+                break
+        else:
+            return False
+    return True
+
+
+@functools.cache
+def rsa_key(name: str) -> RsaKey:
+    """An identity provider's RSA key, made here (the standard library has none to sign with): two primes of 1024
+    bits drawn from the name, so the same at every run."""
+    r = random.Random(f"around/rsa/{name}")
+
+    def prime() -> int:
+        while True:
+            p = r.getrandbits(1024) | 3 << 1022 | 1  # (its two highest bits set: the modulus has 2048)
+            # (p - 1 must share nothing with the exponent, a prime: else the key has no private exponent)
+            if all(p % x for x in SMALL_PRIMES) and p % E != 1 and probably_prime(p, r):
+                return p
+
+    p, q = prime(), prime()
+    return RsaKey(p * q, pow(E, -1, (p - 1) * (q - 1)), p, q)
+
+
+def rsa_signature(key: RsaKey, message: bytes) -> bytes:
+    """The message signed as RS256 signs (RSASSA-PKCS1-v1_5 with SHA-256, RFC 8017 section 8.2.1): its digest,
+    padded to the modulus's length, raised to the private exponent (modulo each prime, then put together: four
+    times faster than modulo their product)."""
+    k = (key.n.bit_length() + 7) // 8
+    digest = bytes.fromhex("3031300d060960864801650304020105000420") + hashlib.sha256(message).digest()
+    m = int.from_bytes(b"\x00\x01" + b"\xff" * (k - len(digest) - 3) + b"\x00" + digest, "big")
+    by_p, by_q = pow(m % key.p, key.d % (key.p - 1), key.p), pow(m % key.q, key.d % (key.q - 1), key.q)
+    return (by_q + key.q * ((by_p - by_q) * pow(key.q, -1, key.p) % key.p)).to_bytes(k, "big")
+
+
+def jwks() -> str:
+    """The key set the identity provider serves (a JWKS): the public half of its one key, named KID."""
+    n = rsa_key(KID).n
+    key = {"kty": "RSA", "use": "sig", "alg": "RS256", "kid": KID, "e": b64(E.to_bytes(3, "big"))}
+    return json.dumps({"keys": [key | {"n": b64(n.to_bytes((n.bit_length() + 7) // 8, "big"))}]})
+
+
+def jwt(
+    kind: str, pid: str, scope: str = "", secret: str = SECRET, lasts: int = 3600, alg: str = "", key: str = ""
+) -> str:
+    """A JWT for a principal, as an identity provider signs it (lasts: seconds from now): with the secret it holds
+    (HS256), or, where key names an RSA key (rsa_key), with that one (RS256), the token naming the key the database
+    stored (KID) whichever signed it. alg: what the token says of itself, whatever signed it."""
+    head = {"alg": alg or ("RS256" if key else "HS256"), "typ": "JWT"} | ({"kid": KID} if key else {})
     claims: dict[str, str | int] = {"sub": pid, "exp": int(time.time()) + lasts}
     claims |= {TYPE_CLAIM: kind} if kind != "user" else {}
     claims |= {"scope": scope} if scope else {}
-    signed = f"{b64(json.dumps({'alg': alg, 'typ': 'JWT'}).encode())}.{b64(json.dumps(claims).encode())}"
+    signed = f"{b64(json.dumps(head).encode())}.{b64(json.dumps(claims).encode())}"
+    if key:
+        return f"{signed}.{b64(rsa_signature(rsa_key(key), signed.encode()))}"
     return f"{signed}.{b64(hmac.new(secret.encode(), signed.encode(), hashlib.sha256).digest())}"
 
 
@@ -830,7 +918,7 @@ def tokens_sql(checker: AroundChecker) -> str:
     """What signing in by token needs, written as the owner: for whoever the checks sign in, an API key, and one
     limited to each scope (a hash each, as authz.create_api_key keeps them: that function makes a key only for
     someone signed in, and the checks' users come and go); for the first user, one that expired and one revoked;
-    and the secret JWTs are signed with."""
+    the secret JWTs are signed with; and the key set of the provider that signs them with its key (RS256)."""
     keys = []
     for u in checker.users:
         kind, pid = evaluate.principal_of(u, checker.types)
@@ -848,7 +936,8 @@ def tokens_sql(checker: AroundChecker) -> str:
         "INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash, scopes, expires_at, revoked_at) "
         f"VALUES {', '.join(rows)};\n"
         f"INSERT INTO authz.settings (key, value) VALUES ('jwt_secret', {lit(SECRET)}), "
-        f"('jwt_type_claim', {lit(TYPE_CLAIM)});"
+        f"('jwt_type_claim', {lit(TYPE_CLAIM)});\n"
+        f"DO $$ BEGIN PERFORM authz.set_jwks({lit(jwks())}); END $$;"
     )
 
 
@@ -877,7 +966,8 @@ def transaction(w: World, u: str, checker: AroundChecker, body: list[str], reads
             lines.append(f"SET LOCAL ROLE {checker.role};")
         by_hand = [f"PERFORM authz.act_as({f'{lit(kind)}, {lit(pid)}' if pid else 'NULL, NULL'});"]
     if w.signs and pid:
-        token = api_key(u, scope) if w.signs == "api key" else jwt(kind, pid, scope)
+        by_key = KID if w.signs == RS256 else ""
+        token = api_key(u, scope) if w.signs == "api key" else jwt(kind, pid, scope, key=by_key)
         call = f"authz.login_{'key' if w.signs == 'api key' else 'jwt'}({lit(token)})"
         lines.append(
             f"DO $$ BEGIN\n  PERFORM {call};\n  PERFORM set_config('around.login', 'ok', true);\n"
@@ -985,6 +1075,7 @@ class AroundChecker(Checker):
 # what a login says when it refuses: a key (unknown, expired, revoked, or of someone who is no active row now),
 # a token that names no active user
 REFUSALS = {"api key": ("invalid API key",), "jwt": ("the token names no active user",)}
+REFUSALS[RS256] = REFUSALS["jwt"]
 
 
 def login_problems(checker: AroundChecker) -> list[str]:
@@ -1385,6 +1476,8 @@ def bad_tokens(checker: AroundChecker) -> dict[str, str]:
     u = checker.users[0]
     kind, pid = evaluate.principal_of(u, checker.types)
     unsigned = jwt(kind, pid, alg="none").rsplit(".", 1)[0] + "."
+    signed, signature = jwt(kind, pid, key=KID).rsplit(".", 1)
+    changed = b64(bytes([*unb64(signature)[:-1], unb64(signature)[-1] ^ 1]))  # (its last bit)
     return {
         "an API key that expired": f"authz.login_key({lit(api_key(u, what='expired'))})",
         "an API key that was revoked": f"authz.login_key({lit(api_key(u, what='revoked'))})",
@@ -1392,6 +1485,15 @@ def bad_tokens(checker: AroundChecker) -> dict[str, str]:
         "a JWT signed with another secret": f"authz.login_jwt({lit(jwt(kind, pid, secret='another secret'))})",
         "a JWT that expired": f"authz.login_jwt({lit(jwt(kind, pid, lasts=-60))})",
         "a JWT that says it needs no signature": f"authz.login_jwt({lit(unsigned)})",
+        "an RS256 JWT that expired": f"authz.login_jwt({lit(jwt(kind, pid, lasts=-60, key=KID))})",
+        "an RS256 JWT another key signed, under the stored key's name": (
+            f"authz.login_jwt({lit(jwt(kind, pid, key='another'))})"
+        ),
+        "an RS256 JWT whose signature has a bit changed": f"authz.login_jwt({lit(f'{signed}.{changed}')})",
+        "a JWT that says RS256, signed with the secret": f"authz.login_jwt({lit(jwt(kind, pid, alg='RS256'))})",
+        "a JWT that says HS256, signed with the stored key set as its secret": (
+            f"authz.login_jwt({lit(jwt(kind, pid, secret=jwks()))})"
+        ),
     }
 
 

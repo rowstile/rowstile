@@ -897,8 +897,10 @@ CODES = {
         "Login refused",
         "`authz.login_key()` or `authz.login_jwt()` didn't sign anyone in: the API key is unknown or revoked, the "
         "token's signature, time, issuer or audience is wrong, it names nobody who is active or a type that doesn't "
-        "sign in, or JWT login isn't set up (`jwt_secret` in `authz.settings`). SQLSTATE 28000; answer 401, as the "
-        "SDKs do, with the database's words.",
+        "sign in, or JWT login isn't set up (`jwt_secret` in `authz.settings`, or the provider's keys stored with "
+        "`authz.set_jwks`). An RS256 token is refused as one with a wrong signature when its `kid` names no stored "
+        "key: the usual cause is a provider whose keys changed since they were stored (`rowstile help AZ719`). "
+        "SQLSTATE 28000; answer 401, as the SDKs do, with the database's words.",
         when="runtime",
     ),
     "AZ704": Code(
@@ -1044,6 +1046,20 @@ CODES = {
         "refused, and the message says when it was. Nothing closes a review by itself: `authz.close_review` still "
         "closes it and applies the decisions made in time, and `authz.review_items` still lists them. Start a new "
         "review to decide again. SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this code).",
+        when="runtime",
+    ),
+    "AZ719": Code(
+        "A key set with no key to check tokens with",
+        "`authz.set_jwks` stores the keys an identity provider signs its tokens with, as the provider serves them "
+        "(a JWKS), and the set it is given replaces the stored one. This set holds no key `authz.login_jwt` checks "
+        "an RS256 token with: an RSA key (`kty`) for signatures (`use` absent or `sig`, `key_ops` absent or with "
+        "`verify`, `alg` absent or `RS256`) of 2048 to 4096 bits with the exponent 65537. The error's detail says "
+        "why each key was skipped, or that the set holds none. The usual causes: the answer of a fetch that "
+        "failed (an error page, an empty body), a provider that signs with another algorithm (ES256, EdDSA: check "
+        "those tokens in the backend and sign in with `authz.act_as`), or keys under 2048 bits. Nothing changed: "
+        "the stored keys stay, so a fetch that failed signs nobody out. The call is the owner's (an administrator's, "
+        "a job's that runs when the keys change), not a request's: the SDKs give this error no answer of its own, "
+        "and a request that met it would be left an error, a 500. SQLSTATE 22023.",
         when="runtime",
     ),
     "AZ801": Code(
