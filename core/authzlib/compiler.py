@@ -57,6 +57,7 @@ from .sqlutil import (
     reads_tables,
     reserved_names,
     row_cond,
+    sql_code,
     this_alone,
     union,
     whole_row,
@@ -66,6 +67,10 @@ from .sqlutil import (
 UID = "(SELECT authz.uid())"
 UIDT = "(SELECT authz.uid()::text)"
 LINKS = "(SELECT authz.link_hashes())::text[]"
+# a view named in SQL (a function of that schema is followed by its arguments)
+VIEW_NAMED = re.compile(r'authz_int[.]"([^"]+)"(?![(])')
+# rowstile's own names where they aren't code: in a string, a comment or a quoted name (reader_once)
+AUTHZ_AS_TEXT = re.compile(r"authz(?:[.]|_int)")
 # a type's relation or permission: (type name, its name)
 Name: TypeAlias = "tuple[str, str]"
 # an inheritance link of a recursive permission: (child type, relation, condition or None, parent type)
@@ -280,6 +285,11 @@ class Core:
         self.made_views: set[str] = set()  # and those added
         self.view_sql: list[str] = []  # CREATE VIEW / FUNCTION statements, dependency order
         self.views: list[str] = []  # the views made, in authz_int (add_view)
+        self.view_bodies: dict[str, str] = {}  # and the query each one is
+        # what a query asks of its reader, each a function called in a scalar subquery -> a name for its answer:
+        # who is signed in, the links they presented, and (me, group_ids) each other principal type's id and each
+        # nested group's ids
+        self.reader_calls: dict[str, str] = {"authz.uid()": "uid", "authz.link_hashes()": "link_hashes"}
         self.app_views: list[str] = []  # those the app role's rules read, through them alone (output.compile)
         self.app_functions: list[str] = []  # the authz_gen functions it may call by name, quoted (output.compile)
         self.trees: dict[TreeKey, str] = {}  # tree key -> tree name
@@ -1203,6 +1213,7 @@ class Core:
         self.making.discard(name)
         self.made_views.add(name)
         self.views.append(name)
+        self.view_bodies[name] = sql
         self.view_sql.append(f"{header}CREATE VIEW authz_int.{q(name)} AS\n  {sql};")
 
     def view_is(self, name: str, of: ViewOf) -> None:
@@ -1262,7 +1273,9 @@ class Core:
 
     def group_ids(self, view: str, text: bool = False) -> str:
         """A user's nested groups as an array, worked out once per statement (a scalar subquery)."""
-        return f"(SELECT authz_int.{q(view + '__ids')}())::{'text' if text else self.nested[view]}[]"
+        call = f"authz_int.{q(view + '__ids')}()"
+        self.reader_calls[call] = view + "__ids"
+        return f"(SELECT {call})::{'text' if text else self.nested[view]}[]"
 
     def ids_in(self, view: str, text: bool = False) -> str:
         """A match for 'is one of the ids in this view'."""
@@ -1455,7 +1468,9 @@ class Core:
         """The signed-in principal's id if it is a st (NULL otherwise): authz.uid() for users."""
         if st == "user":
             return UIDT if text else UID
-        return f"(SELECT authz_int.{q(st + '__me')}(){'::text' if text else ''})"
+        call = f"authz_int.{q(st + '__me')}()"
+        self.reader_calls[call] = st + "__me"
+        return f"(SELECT {call}{'::text' if text else ''})"
 
     def source_sql(self, t: Type, r: Relation, src: Source, subj: Subject) -> str | None:
         """Ids of t linked through one source of relation r to what the current
@@ -1788,10 +1803,14 @@ class Core:
         return self.where_kept(t, body)
 
     def point_check_function(self, t: Type, perm: Perm, tree: str, flatten: Flatten) -> None:
-        """t.perm for one object: its ancestors (and itself) tested against the starting points, one index
-        lookup each. The view builds every starting point first, which is right for lists and slow for
-        one object when the user starts from many (an org admin: every folder). PL/pgSQL, so its plan
-        is made once per session. The app role calls it through its rules alone (authz_int: add_view)."""
+        """t.perm for one object: whether one of its ancestors (or itself) is a starting point. Postgres joins the
+        object's few ancestors with the starting points, which it reads source by source and stops reading at the
+        first match: a user whose first sources answer (an org admin starts from every folder) is done there,
+        where the view would build every starting point. Anyone else's starting points are all built, as the view
+        builds them, and looked through once per ancestor: the check costs what its reader holds, not a lookup
+        per ancestor (probing each ancestor by key was measured in 2026-11 and was slower for every reader).
+        PL/pgSQL, so its plan is made once per session. The app role calls it through its rules alone
+        (authz_int: add_view)."""
         name = f"{t.name}__{perm.name}__has"
         self.point_checks[f"{t.name}__{perm.name}"] = name
         # like every view (add_view): an object failing its type's where holds nothing
@@ -1892,14 +1911,96 @@ class Core:
         fn = f"authz_int.{q(name)}"
         if not self.first_time(name, f"{t.name}.{perm.name}" + (" in one walk" if flatten else "")):
             return fn
-        body = self.start_sql(t, perm, flatten)
+        views = self.start_sql(t, perm, flatten)
+        body = self.reader_once(views)
+        # the query now holds the policy's own conditions, and no variable of the function: a column PL/pgSQL has
+        # a variable for (found) is the column
+        columns = "#variable_conflict use_column\n" if body != views else ""
         self.view_sql.append(
             f"-- {t.name}.{perm.name}: where inheritance starts, for the current user\n"
             f"CREATE FUNCTION {fn}() RETURNS SETOF {t.pktype}\n"
             f"LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$\n"
-            f"BEGIN\n  RETURN QUERY\n  {body};\nEND $f$;"
+            f"{columns}BEGIN\n  RETURN QUERY\n  {body};\nEND $f$;"
         )
         return fn
+
+    def reader_asked(self, sql: str) -> dict[str, int]:
+        """What sql asks of its reader (reader_calls), and how many times each."""
+        asked = {
+            call: sql.count(f"(SELECT {call})") + sql.count(f"(SELECT {call}::text)") for call in self.reader_calls
+        }
+        return {call: n for call, n in asked.items() if n}
+
+    def reader_once(self, sql: str) -> str:
+        """sql, the query one call of a function runs, asking once what it asked of its reader again and again.
+        Each relation's view asks for itself who is signed in and which groups they are in, and a query that reads
+        several of them asks as many times: a member's teams were worked out four times to find where folder.view
+        starts. So the views that ask are written into the query, as CTEs Postgres plans as it plans the views (NOT
+        MATERIALIZED), and each answer is a CTE of its own, worked out when first read and once (MATERIALIZED).
+        The query is the one the views make, row for row: the same snapshot, the same owner reading. The CTEs have
+        names no condition writes (RESERVED, AZ113).
+        Left as it is when it asks fewer than two questions, and when rowstile's own names are in it as text (a
+        string, a comment or a quoted name of a condition): the views and the questions are found by their names,
+        and only code may be rewritten."""
+        bodies: dict[str, str] = {}
+
+        def read(text: str) -> None:
+            for name in VIEW_NAMED.findall(text):
+                if name in self.view_bodies and name not in bodies:
+                    bodies[name] = self.view_bodies[name]
+                    read(bodies[name])
+
+        read(sql)
+        asks: dict[str, bool] = {}
+
+        def asking(name: str) -> bool:
+            if name not in asks:
+                body = bodies[name]
+                asks[name] = bool(self.reader_asked(body)) or any(
+                    asking(n) for n in VIEW_NAMED.findall(body) if n in bodies
+                )
+            return asks[name]
+
+        # each after the views it reads, and by name: the order the policy declares things in changes nothing
+        inside: list[str] = []
+
+        def place(name: str) -> None:
+            if name not in inside:
+                for n in sorted(set(VIEW_NAMED.findall(bodies[name]))):
+                    if n in bodies and asking(n):
+                        place(n)
+                inside.append(name)
+
+        for name in sorted(bodies):
+            if asking(name):
+                place(name)
+        texts = [sql, *(bodies[name] for name in inside)]
+        asked: dict[str, int] = {}
+        for text in texts:
+            for call, n in self.reader_asked(text).items():
+                asked[call] = asked.get(call, 0) + n
+        if sum(asked.values()) < 2:
+            return sql
+        if any(
+            '&"' in text or any(AUTHZ_AS_TEXT.search(x) for code, x in sql_code(text) if not code) for text in texts
+        ):
+            return sql
+
+        # a view's CTE and an answer's are told apart by what follows the prefix, which no view's name holds (a
+        # name too long for Postgres is shortened with a hash, as every generated name: q)
+        view = {name: q(f"{RESERVED}view:{name}") for name in inside}
+        answer = {call: q(f"{RESERVED}reader:{self.reader_calls[call]}") for call in sorted(asked)}
+
+        def once(text: str) -> str:
+            text = VIEW_NAMED.sub(lambda m: view.get(m[1], m[0]), text)
+            for call, name in answer.items():
+                text = text.replace(f"(SELECT {call})", f"(SELECT v FROM {name})")
+                text = text.replace(f"(SELECT {call}::text)", f"(SELECT v::text FROM {name})")
+            return text
+
+        ctes = [f"{name} AS MATERIALIZED (SELECT {call} AS v)" for call, name in answer.items()]
+        ctes += [f"{view[name]} AS NOT MATERIALIZED (\n  {once(bodies[name])})" for name in inside]
+        return "WITH " + ",\n  ".join(ctes) + "\n  " + once(sql)
 
     # --- set SQL: ids of t for which the expression holds -----------------
     def set_sql(self, t: Type, node: Expr, loc: Loc, flatten: Flatten = None) -> str:

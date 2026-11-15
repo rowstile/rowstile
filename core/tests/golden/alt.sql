@@ -3510,17 +3510,44 @@ CREATE VIEW authz_int."doc__roles:view" AS
 -- doc.view__base: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."doc__view__base__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  (SELECT id FROM authz_int."doc__owner")
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__reader:grp__member__ids" AS MATERIALIZED (SELECT authz_int."grp__member__ids"() AS v),
+  "authz__view:doc__blocked" AS NOT MATERIALIZED (
+  SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."blocked_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:doc__owner" AS NOT MATERIALIZED (
+  SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."owner_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:proj__lead" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "alt"."projects" r WHERE r."lead_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:proj__team" AS NOT MATERIALIZED (
+  SELECT s."project_id" AS id FROM "alt"."project_groups" s WHERE s."group_id" = ANY ((SELECT v FROM "authz__reader:grp__member__ids")::bigint[])),
+  "authz__view:proj__view" AS NOT MATERIALIZED (
+  (SELECT id FROM "authz__view:proj__lead")
+  UNION ALL
+  (SELECT id FROM "authz__view:proj__team")),
+  "authz__view:doc__project__view" AS NOT MATERIALIZED (
+  (SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."project_id" IN (SELECT id FROM "authz__view:proj__view"))
+  UNION ALL
+  (SELECT s."doc_no" AS id FROM "alt"."doc_projects" s WHERE s."proj_id" IN (SELECT id FROM "authz__view:proj__view"))),
+  "authz__view:doc__reader" AS NOT MATERIALIZED (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'reader' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'reader' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:grp__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)),
+  "authz__view:doc__roles:view" AS NOT MATERIALIZED (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:grp__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL))
+  (SELECT id FROM "authz__view:doc__owner")
   UNION ALL
   (SELECT r."doc_no" AS id FROM "alt"."docs" r
-  WHERE r."doc_no" IN (SELECT id FROM authz_int."doc__reader")
-    AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM authz_int."doc__blocked") x WHERE x.id = r."doc_no"))
+  WHERE r."doc_no" IN (SELECT id FROM "authz__view:doc__reader")
+    AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM "authz__view:doc__blocked") x WHERE x.id = r."doc_no"))
   UNION ALL
-  (SELECT id FROM authz_int."doc__project__view")
+  (SELECT id FROM "authz__view:doc__project__view")
   UNION ALL
-  (SELECT id FROM authz_int."doc__roles:view");
+  (SELECT id FROM "authz__view:doc__roles:view");
 END $f$;
 
 -- doc.view__base (line 36): (owner or (reader and not blocked) or project.view or shortcut.view or (parent.view and {not exists (select 1 from alt.holds h where h.target = this.doc_no)}) or roles) and not hidden  (its inheritance, before the deny)
@@ -3559,9 +3586,16 @@ CREATE VIEW authz_int."doc__banned" AS
 -- doc.hidden: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."doc__hidden__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  SELECT id FROM authz_int."doc__banned";
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__reader:grp__member__ids" AS MATERIALIZED (SELECT authz_int."grp__member__ids"() AS v),
+  "authz__view:doc__banned" AS NOT MATERIALIZED (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'banned' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'banned' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:grp__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL))
+  SELECT id FROM "authz__view:doc__banned";
 END $f$;
 
 -- doc.hidden (line 35): banned or parent.hidden or shortcut.hidden
@@ -3588,12 +3622,18 @@ CREATE VIEW authz_int."doc__view" AS
 -- doc.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."doc__edit__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  (SELECT id FROM authz_int."doc__owner")
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__view:doc__owner" AS NOT MATERIALIZED (
+  SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."owner_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:doc__writer" AS NOT MATERIALIZED (
+  SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'writer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  (SELECT id FROM "authz__view:doc__owner")
   UNION ALL
   (SELECT r."doc_no" AS id FROM "alt"."docs" r
-  WHERE r."doc_no" IN (SELECT id FROM authz_int."doc__writer")
+  WHERE r."doc_no" IN (SELECT id FROM "authz__view:doc__writer")
     AND r."doc_no" IN (SELECT id FROM authz_int."doc__view"));
 END $f$;
 

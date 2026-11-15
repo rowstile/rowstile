@@ -953,6 +953,95 @@ class PointChecks(unittest.TestCase):
                 scanned = re.search(r'FROM authz_int\."?$', before) and re.match(r"\) \w+", sql[call.end() :])
                 self.assertTrue(made or scanned, f"{name}: {said}")
 
+    def start(self, sql: str, name: str) -> str:
+        return search(rf'CREATE FUNCTION authz_int\."{name}__start"\(\).*?END \$f\$;', sql, re.S).group(0)
+
+    def test_starting_points_ask_once_who_the_reader_is(self) -> None:
+        """Each relation's view asks for itself who is signed in and which groups they are in; the query that gives
+        where a recursive permission starts read several and asked as many times (a member's teams four times for
+        folder.view). It takes the views that ask in as CTEs, and each answer is a CTE worked out once."""
+        sql = compiled("docs")
+        views = {
+            "folder__share": ["org__admin", "folder__org__admin", "folder__owner"],
+            "folder__edit": ["folder__editor", "org__admin", "folder__org__admin", "folder__owner"],
+            "folder__view": [
+                *("folder__editor", "org__admin", "folder__org__admin", "folder__owner"),
+                *("org__member", "folder__viewer"),
+            ],
+        }
+        for name, inside in views.items():
+            fn = self.start(sql, name)
+            self.assertEqual(fn.count("authz.uid()"), 1, fn)
+            self.assertIn('WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),\n', fn)
+            teams = 'authz_int."team__member__ids"()'
+            self.assertEqual(fn.count(teams), 0 if name == "folder__share" else 1, fn)
+            if name != "folder__share":
+                self.assertIn(f'  "authz__reader:team__member__ids" AS MATERIALIZED (SELECT {teams} AS v),\n', fn)
+                self.assertIn('ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[])', fn)
+                self.assertIn('ANY ((SELECT v FROM "authz__reader:team__member__ids")::bigint[])', fn)
+            self.assertIn('= (SELECT v FROM "authz__reader:uid")', fn)
+            # each view after the views it reads, then by name (whatever order the policy declares things in), and
+            # planned as the view is; none that asks is read by its name any more
+            self.assertEqual(re.findall(r'"authz__view:(\w+)" AS NOT MATERIALIZED \(\n', fn), inside)
+            self.assertEqual(
+                set(re.findall(r'authz_int\."(\w+)"', fn)) - {"team__member__ids", name + "__start"}, set()
+            )
+            # the query holds the policy's conditions now, and the function has no variable: a column named as
+            # PL/pgSQL names one of its own (found) is the column
+            self.assertIn(" AS $f$\n#variable_conflict use_column\nBEGIN\n  RETURN QUERY\n  WITH ", fn)
+            # then the query as it was, of the CTEs: the permission's items in its own order
+            last = {"folder__share": "org__admin", "folder__edit": "editor", "folder__view": "viewer"}[name]
+            self.assertTrue(fn.endswith(f'\n  (SELECT id FROM "authz__view:folder__{last}");\nEND $f$;'), fn[-200:])
+        # the views are as they were: the rules read them
+        owner = 'CREATE VIEW authz_int."folder__owner" AS\n  SELECT r."id" AS id FROM "app"."folders" r WHERE '
+        self.assertIn(owner + 'r."owner_id" = (SELECT authz.uid());\n', sql)
+        # a permission of the same tree that walks for itself asks for itself: read by its name (composite's
+        # folder.view starts from folder.edit, which inherits through other links)
+        fn = self.start(compiled("composite"), "folder__view")
+        self.assertIn('(SELECT id FROM authz_int."folder__edit")', fn)
+        self.assertNotIn('"authz__view:folder__edit"', fn)
+
+    def reader_policy(self, doc: str) -> str:
+        text = (
+            f"app role app_user\ntype user = app.users\ntype doc = app.docs\n{doc}\nrules app.docs\n  select : view\n"
+        )
+        return self.start(Compiler(parse_policy(text, "p.authz")).compile("p.authz"), "doc__view")
+
+    def test_a_starting_point_query_left_as_it_was(self) -> None:
+        finder = "  finder : user = app.doc_finders(doc_id -> user_id)"
+        tree = "  owner : user = owner_id\n  parent : doc = up\n"
+        # asked twice: once
+        fn = self.reader_policy(f"{tree}{finder}\n  can view = owner or finder or parent.view")
+        self.assertEqual((fn.count("authz.uid()"), fn.count("#variable_conflict")), (1, 1), fn)
+        # one question: the views by their names, as before
+        fn = self.reader_policy(f"{tree}  can view = owner or parent.view")
+        self.assertIn('BEGIN\n  RETURN QUERY\n  SELECT id FROM authz_int."doc__owner";\nEND $f$;', fn)
+        self.assertNotIn("#variable_conflict", fn)
+        # rowstile's own names as text in a condition (a string, a comment): only code may be rewritten, and the
+        # query is found by those names, so it stays as it was
+        for cond in ("note <> 'set by authz.uid()'", "kind = 1 /* not authz_int's */", 'kind = "authz.kind"'):
+            fn = self.reader_policy(f"{tree}{finder} where {{{cond}\n}}\n  can view = owner or finder or parent.view")
+            self.assertNotIn("WITH ", fn, cond)
+            self.assertIn('(SELECT id FROM authz_int."doc__finder")', fn, cond)
+            self.assertNotIn("#variable_conflict", fn, cond)
+        # (a condition that calls authz.uid() in its code asks the same question: once)
+        fn = self.reader_policy(
+            f"  parent : doc = up\n{finder} where {{by_id = authz.uid()}}\n  can view = finder or parent.view"
+        )
+        self.assertEqual(fn.count("authz.uid()"), 1, fn)
+        self.assertIn('AND coalesce((by_id = (SELECT v FROM "authz__reader:uid")), false)', fn)
+        # a CTE's name longer than Postgres keeps (63 bytes) is shortened with a hash, as every generated name is:
+        # two that start alike stay two
+        long = "finder_" + "x" * 45
+        both = f"{finder.replace('finder :', long + 'a :')}\n{finder.replace('finder :', long + 'b :')}\n"
+        fn = self.reader_policy(f"  parent : doc = up\n{both}  can view = {long}a or {long}b or parent.view")
+        names = re.findall(r'"(authz__view:[^"]+)" AS NOT MATERIALIZED', fn)
+        self.assertEqual(len(set(names)), 2, fn)
+        for name in names:
+            self.assertEqual(len(name), 63)
+            self.assertRegex(name, rf"^authz__view:doc__{long[:37]}_[0-9a-f]{{8}}$")
+            self.assertIn(f'(SELECT id FROM "{name}")', fn)
+
     def test_own_columns_first(self) -> None:
         """Reads check a recursive permission against what the object's own columns give (owner, org admin)
         before its view, and each check lists its cheapest items first."""

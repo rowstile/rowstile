@@ -3465,14 +3465,33 @@ CREATE VIEW authz_int."folder__roles:edit" AS
 -- folder.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__edit__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__reader:team__member__ids" AS MATERIALIZED (SELECT authz_int."team__member__ids"() AS v),
+  "authz__view:folder__editor" AS NOT MATERIALIZED (
   SELECT x.id FROM (
-  (SELECT id FROM authz_int."folder__owner")
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
-  (SELECT id FROM authz_int."folder__editor")
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
+  WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false))),
+  "authz__view:folder__owner" AS NOT MATERIALIZED (
+  SELECT x.id FROM (
+  SELECT r."id" AS id FROM "mt"."folders" r WHERE r."owner_id" = (SELECT v FROM "authz__reader:uid")) x
+  WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false))),
+  "authz__view:folder__roles:edit" AS NOT MATERIALIZED (
+  SELECT x.id FROM (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
-  (SELECT id FROM authz_int."folder__roles:edit")) x
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
+  WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false)))
+  SELECT x.id FROM (
+  (SELECT id FROM "authz__view:folder__owner")
+  UNION ALL
+  (SELECT id FROM "authz__view:folder__editor")
+  UNION ALL
+  (SELECT id FROM "authz__view:folder__roles:edit")) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
 END $f$;
 
@@ -3487,11 +3506,21 @@ CREATE VIEW authz_int."project__org__admin" AS
 -- project.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."project__edit__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  (SELECT id FROM authz_int."project__lead")
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__view:org__admin" AS NOT MATERIALIZED (
+  SELECT x.id FROM (
+  SELECT s."org_id" AS id FROM "mt"."org_members" s WHERE s."user_id" = (SELECT v FROM "authz__reader:uid") AND coalesce((role = 'admin'), false)) x
+  WHERE EXISTS (SELECT 1 FROM "mt"."orgs" w WHERE w."id" = x.id AND coalesce((not suspended), false))),
+  "authz__view:project__lead" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "mt"."projects" r WHERE r."lead_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:project__org__admin" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "mt"."projects" r WHERE r."org_id" IN (SELECT id FROM "authz__view:org__admin"))
+  (SELECT id FROM "authz__view:project__lead")
   UNION ALL
-  (SELECT id FROM authz_int."project__org__admin");
+  (SELECT id FROM "authz__view:project__org__admin");
 END $f$;
 
 -- project.edit (line 25): lead or org.admin or parent.edit
@@ -3535,14 +3564,34 @@ CREATE VIEW authz_int."folder__roles:view" AS
 -- folder.view: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__view__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
+  WITH "authz__reader:link_hashes" AS MATERIALIZED (SELECT authz.link_hashes() AS v),
+  "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__reader:team__member__ids" AS MATERIALIZED (SELECT authz_int."team__member__ids"() AS v),
+  "authz__view:folder__roles:view" AS NOT MATERIALIZED (
+  SELECT x.id FROM (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
+  WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false))),
+  "authz__view:folder__viewer" AS NOT MATERIALIZED (
+  SELECT x.id FROM (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = '*' AND (SELECT v FROM "authz__reader:uid") IS NOT NULL AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'link' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:link_hashes")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
+  WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false)))
   SELECT x.id FROM (
   (SELECT id FROM authz_int."folder__edit")
   UNION ALL
-  (SELECT id FROM authz_int."folder__viewer")
+  (SELECT id FROM "authz__view:folder__viewer")
   UNION ALL
-  (SELECT id FROM authz_int."folder__roles:view")) x
+  (SELECT id FROM "authz__view:folder__roles:view")) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
 END $f$;
 
@@ -3567,13 +3616,31 @@ CREATE VIEW authz_int."project__roles:view" AS
 -- project.view: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."project__view__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
+  WITH "authz__reader:link_hashes" AS MATERIALIZED (SELECT authz.link_hashes() AS v),
+  "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__reader:team__member__ids" AS MATERIALIZED (SELECT authz_int."team__member__ids"() AS v),
+  "authz__view:project__roles:view" AS NOT MATERIALIZED (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))),
+  "authz__view:project__viewer" AS NOT MATERIALIZED (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = '*' AND (SELECT v FROM "authz__reader:uid") IS NOT NULL AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'anyone' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'link' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:link_hashes")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)))
   (SELECT id FROM authz_int."project__edit")
   UNION ALL
-  (SELECT id FROM authz_int."project__viewer")
+  (SELECT id FROM "authz__view:project__viewer")
   UNION ALL
-  (SELECT id FROM authz_int."project__roles:view");
+  (SELECT id FROM "authz__view:project__roles:view");
 END $f$;
 
 -- project.view (line 26): edit or viewer or parent.view or roles

@@ -3480,11 +3480,19 @@ CREATE VIEW authz_int."folder__org__admin" AS
 -- folder.share: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__share__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  (SELECT id FROM authz_int."folder__owner")
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__view:org__admin" AS NOT MATERIALIZED (
+  SELECT s."org_id" AS id FROM "app"."org_members" s WHERE s."user_id" = (SELECT v FROM "authz__reader:uid") AND coalesce((role = 'admin'), false)),
+  "authz__view:folder__org__admin" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "app"."folders" r WHERE r."org_id" IN (SELECT id FROM "authz__view:org__admin")),
+  "authz__view:folder__owner" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "app"."folders" r WHERE r."owner_id" = (SELECT v FROM "authz__reader:uid"))
+  (SELECT id FROM "authz__view:folder__owner")
   UNION ALL
-  (SELECT id FROM authz_int."folder__org__admin");
+  (SELECT id FROM "authz__view:folder__org__admin");
 END $f$;
 
 -- folder.share (line 48): owner or org.admin or (parent.share and {inherit})
@@ -3538,13 +3546,28 @@ CREATE VIEW authz_int."folder__editor" AS
 -- folder.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__edit__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  ((SELECT id FROM authz_int."folder__owner")
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__reader:team__member__ids" AS MATERIALIZED (SELECT authz_int."team__member__ids"() AS v),
+  "authz__view:folder__editor" AS NOT MATERIALIZED (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT id FROM authz_int."folder__org__admin"))
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT id FROM authz_int."folder__editor");
+  (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT v FROM "authz__reader:team__member__ids")::bigint[]) AND coalesce((access = 'edit'), false))),
+  "authz__view:org__admin" AS NOT MATERIALIZED (
+  SELECT s."org_id" AS id FROM "app"."org_members" s WHERE s."user_id" = (SELECT v FROM "authz__reader:uid") AND coalesce((role = 'admin'), false)),
+  "authz__view:folder__org__admin" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "app"."folders" r WHERE r."org_id" IN (SELECT id FROM "authz__view:org__admin")),
+  "authz__view:folder__owner" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "app"."folders" r WHERE r."owner_id" = (SELECT v FROM "authz__reader:uid"))
+  ((SELECT id FROM "authz__view:folder__owner")
+  UNION ALL
+  (SELECT id FROM "authz__view:folder__org__admin"))
+  UNION ALL
+  (SELECT id FROM "authz__view:folder__editor");
 END $f$;
 
 -- folder.edit (line 49): share or editor or (parent.edit and {inherit})
@@ -3583,15 +3606,40 @@ CREATE VIEW authz_int."folder__viewer" AS
 -- folder.view: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__view__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  (((SELECT id FROM authz_int."folder__owner")
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__reader:team__member__ids" AS MATERIALIZED (SELECT authz_int."team__member__ids"() AS v),
+  "authz__view:folder__editor" AS NOT MATERIALIZED (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT id FROM authz_int."folder__org__admin"))
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT id FROM authz_int."folder__editor"))
+  (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT v FROM "authz__reader:team__member__ids")::bigint[]) AND coalesce((access = 'edit'), false))),
+  "authz__view:org__admin" AS NOT MATERIALIZED (
+  SELECT s."org_id" AS id FROM "app"."org_members" s WHERE s."user_id" = (SELECT v FROM "authz__reader:uid") AND coalesce((role = 'admin'), false)),
+  "authz__view:folder__org__admin" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "app"."folders" r WHERE r."org_id" IN (SELECT id FROM "authz__view:org__admin")),
+  "authz__view:folder__owner" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "app"."folders" r WHERE r."owner_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:org__member" AS NOT MATERIALIZED (
+  SELECT s."org_id" AS id FROM "app"."org_members" s WHERE s."user_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:folder__viewer" AS NOT MATERIALIZED (
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT id FROM authz_int."folder__viewer");
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'org' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM "authz__view:org__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  UNION ALL
+  (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT v FROM "authz__reader:team__member__ids")::bigint[])))
+  (((SELECT id FROM "authz__view:folder__owner")
+  UNION ALL
+  (SELECT id FROM "authz__view:folder__org__admin"))
+  UNION ALL
+  (SELECT id FROM "authz__view:folder__editor"))
+  UNION ALL
+  (SELECT id FROM "authz__view:folder__viewer");
 END $f$;
 
 -- folder.view (line 50): edit or viewer or (parent.view and {inherit}) or linked_into.view
