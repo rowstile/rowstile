@@ -3,17 +3,17 @@
 -- + type file: can comment = folder.view
 
 -- a migration is one transaction: outside one, nothing below changes anything
-SELECT pg_catalog.set_config('authz_ctx.migration', 'e7e665f4d5502b07', true);
+SELECT pg_catalog.set_config('authz_ctx.migration', '9e69a2a801d55234', true);
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM 'e7e665f4d5502b07' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '9e69a2a801d55234' THEN
     PERFORM pg_catalog.set_config('authz_migration.read_only', pg_catalog.current_setting('default_transaction_read_only'), false);
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM 'e7e665f4d5502b07' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '9e69a2a801d55234' THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
       USING HINT = 'nothing was changed, and this session is read-only until the migration''s last statement; run the file with your migration tool, or with psql -1 -f';
   END IF;
@@ -29,13 +29,13 @@ BEGIN
   IF to_regclass('authz.policy_versions') IS NOT NULL THEN
     EXECUTE 'SELECT lock FROM authz.policy_versions ORDER BY id DESC LIMIT 1' INTO v_lock;
   END IF;
-  IF v_lock = 'e7e665f4d5502b07' THEN
+  IF v_lock = '9e69a2a801d55234' THEN
     RAISE EXCEPTION 'rowstile: this database already holds what this migration brings (it ran here before, or rowstile dev or push took the database there): don''t run it, tell your migration tool it is applied [AZ607]'
       USING HINT = 'Prisma: prisma migrate resolve --applied <the migration''s folder>. Alembic: alembic stamp head. '
                    'Others, and why: rowstile help AZ607';
-  ELSIF v_lock IS DISTINCT FROM '8891e94a74df203b' THEN
+  ELSIF v_lock IS DISTINCT FROM 'b7f772a3eb2df4e7' THEN
     RAISE EXCEPTION 'rowstile: this migration changes the policy the migration before it left (%), but the database has % [AZ607]',
-      '8891e94a74df203b', coalesce(v_lock, 'none')
+      'b7f772a3eb2df4e7', coalesce(v_lock, 'none')
       USING HINT = 'apply the migrations in order; a database changed with rowstile push or apply since needs the '
                    'migrations from the start (or rowstile apply of the policy the previous migration left) '
                    '(rowstile help AZ607)';
@@ -631,7 +631,7 @@ END $f$;
 
 CREATE FUNCTION authz_int."file__comment__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM (SELECT r."folder_id" AS id FROM "app"."files" r WHERE r."id" = p_id AND r."folder_id" IS NOT NULL) tg, LATERAL authz_int."folder__view__who"(tg.id) x
+  SELECT x FROM (SELECT r."folder_id" AS id FROM "app"."files" r WHERE r."id" = $1 AND r."folder_id" IS NOT NULL) tg, LATERAL authz_int."folder__view__who"(tg.id) x
 $f$;
 
 CREATE FUNCTION authz_int."file__comment__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
@@ -1140,7 +1140,7 @@ test
   user 5 can view file 16      -- erin: Joint project is linked into Company
   user 5 cannot edit file 16   -- links pass on view rights only
 $authz_policy$,
-  $authz_files${}$authz_files$::jsonb, 'BUILD', 'e7e665f4d5502b07');
+  $authz_files${}$authz_files$::jsonb, 'BUILD', '9e69a2a801d55234');
 
 -- the session made read-only above (its statements committed one by one) is as it was again
 DO $authz_tx$

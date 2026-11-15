@@ -2180,7 +2180,7 @@ class Core:
                 f"-- {t.name}: a condition that reads other rows, run with the policy's rights wherever it is checked\n"
                 f"CREATE FUNCTION {fn}(p_row {qt(table)}) RETURNS boolean\n"
                 f"LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
-                f"  SELECT coalesce(({row_cond(sql, bare)}), false) FROM (SELECT (p_row).*) AS {bare}\n$f$;"
+                f"  SELECT coalesce(({row_cond(sql, bare)}), false) FROM (SELECT ($1).*) AS {bare}\n$f$;"
             )
         return f"{fn}({whole_row(alias, table)})"
 
@@ -2226,7 +2226,8 @@ class Core:
         suffix = "" if names == [st for st, _ in r.subjects()] else "__on_" + "__".join(names)
         name = f"{t.name}__{r.name}__{perm_name}{suffix}__links"
         fn = f"authz_int.{q(name)}"
-        body = or_join(self.link_checks(t, r, names, checks, "p_id"))
+        # the object by position: the link table may have a column of the parameter's name, which SQL would take
+        body = or_join(self.link_checks(t, r, names, checks, "$1"))
         if self.first_time(name, body):
             self.view_sql.append(
                 f"-- {t.name}.{r.name}.{perm_name} for one object, through link tables and shares: as the owner\n"

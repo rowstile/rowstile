@@ -897,7 +897,7 @@ LANGUAGE sql STABLE {DEF_CURRENT} AS $f$
   WITH RECURSIVE k(id, key) AS (
     SELECT x.{pk}::text, v.key FROM {qt(t.table)} x
       CROSS JOIN LATERAL (VALUES ({lit(t.name + ":")} || x.{pk}::text), ({lit(t.name + ":*")}), ('anyone')) v(key)
-    WHERE x.{pk} IN (SELECT unnest({self.typed(t, "p_ids")})){where}
+    WHERE x.{pk} IN (SELECT unnest({self.typed(t, "$1")})){where}
     UNION
     SELECT k.id, g.grp FROM k JOIN authz_sync.groups g ON g.key = k.key)
   SELECT k.id, k.key FROM k
@@ -1836,7 +1836,7 @@ class Deriver:
             + "\n"
             f"CREATE FUNCTION {fn}(p_ids {t.pktype}[]) RETURNS TABLE (o_id {t.pktype}, o_key text, o_dep boolean)\n"
             f"LANGUAGE sql STABLE {DEF_CURRENT} AS $f$\n"
-            f"  WITH o AS (SELECT {c.key(t, 'x')} AS id FROM {qt(t.table)} x WHERE {c.key_in(t, 'x', 'SELECT unnest(p_ids) AS id')}{where})\n"
+            f"  WITH o AS (SELECT {c.key(t, 'x')} AS id FROM {qt(t.table)} x WHERE {c.key_in(t, 'x', 'SELECT unnest($1) AS id')}{where})\n"
             f"  SELECT DISTINCT r.id, r.key, r.d FROM (\n  {rows}) r\n$f$;"
         )
         return fn
@@ -1861,7 +1861,7 @@ class Deriver:
         if t.where:
             c.sync_cond_ok(t.where, t.loc, f"the where of {t.name}")
             where = f" WHERE {c.where_holds(t, 'x.id')}"
-        entry = f"o AS (SELECT DISTINCT x.id FROM unnest(p_ids) x(id){where})"
+        entry = f"o AS (SELECT DISTINCT x.id FROM unnest($1) x(id){where})"
         key = c.recursive.get(pair)
         if name in t.relations:
             r = t.relations[name]
@@ -1961,7 +1961,7 @@ class Deriver:
         if t.where:
             c.sync_cond_ok(t.where, t.loc, f"the where of {t.name}")
             where = f" WHERE {c.where_holds(t, 'x.id')}"
-        entry = f"WITH o AS (SELECT DISTINCT x.id FROM unnest(p_ids) x(id){where})"
+        entry = f"WITH o AS (SELECT DISTINCT x.id FROM unnest($1) x(id){where})"
         sources: list[tuple[Name, list[Expr]]]
         if len(members) == 1:
             tree = c.trees[(t.name, edges)]
@@ -2002,7 +2002,7 @@ class Deriver:
                 f"-- {mt.name}.{p[1]} ({mp.loc}): what each object gives itself, before what it inherits, as keys\n"
                 f"CREATE FUNCTION {gfn}(p_ids {mt.pktype}[]) RETURNS TABLE (o_id {mt.pktype}, o_key text)\n"
                 f"LANGUAGE sql STABLE {DEF_CURRENT} AS $f$\n"
-                f"  SELECT DISTINCT r.id, r.key FROM (\n  WITH o AS (SELECT DISTINCT x.id FROM unnest(p_ids) x(id))\n"
+                f"  SELECT DISTINCT r.id, r.key FROM (\n  WITH o AS (SELECT DISTINCT x.id FROM unnest($1) x(id))\n"
                 f"  {rows}) r WHERE NOT r.d\n$f$;"
             )
 

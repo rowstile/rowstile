@@ -1,7 +1,7 @@
 # How many checks each suite passes, by the name run_tests.sh's `--- passed:` line gives it. core/ci.sh holds every
 # run to it (tests/check_counts.py): fewer or more fails, so that a count that changes is in the diff. After adding
 # or taking away checks on purpose, write the new count here, or python3 tests/check_counts.py --write LOG.
-adversarial 124
+adversarial 129
 apply 178
 capitals 112
 children 193
@@ -43,5 +43,5 @@ small policies 4
 studio 244
 sync index 263
 tools 45
-unit 780
+unit 782
 upgrade 71

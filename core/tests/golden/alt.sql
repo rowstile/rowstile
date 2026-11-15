@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('doc__parent_shortcut__tree2', 'f8ea593c3b2ea5dcefcffb95223627c4', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('doc__parent_shortcut__tree2', '101c099450fe5727b3efe14f70eab663', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'doc__parent_shortcut__tree2')) n(name, hash, oids, rel)
@@ -789,7 +789,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('doc__parent_shortcut__tree2', 'f8ea593c3b2ea5dcefcffb95223627c4', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('doc__parent_shortcut__tree2', '101c099450fe5727b3efe14f70eab663', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1467,7 +1467,7 @@ CREATE VIEW authz_int."doc__parent__tree_links" AS
 CREATE FUNCTION authz_int."doc__parent__tree_compute"(p_ids bigint[]) RETURNS TABLE (o_descendant bigint, o_ancestor bigint)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   WITH RECURSIVE up(_d, _a) AS (
-    SELECT x."doc_no", x."doc_no" FROM "alt"."docs" x WHERE x."doc_no" = ANY (p_ids)
+    SELECT x."doc_no", x."doc_no" FROM "alt"."docs" x WHERE x."doc_no" = ANY ($1)
     UNION
     SELECT up._d, e._parent
     FROM up
@@ -1730,7 +1730,7 @@ CREATE VIEW authz_int."doc__parent_shortcut__tree_links" AS
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_compute"(p_ids bigint[]) RETURNS TABLE (o_descendant bigint, o_ancestor bigint)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   WITH RECURSIVE up(_d, _a) AS (
-    SELECT x."doc_no", x."doc_no" FROM "alt"."docs" x WHERE x."doc_no" = ANY (p_ids)
+    SELECT x."doc_no", x."doc_no" FROM "alt"."docs" x WHERE x."doc_no" = ANY ($1)
     UNION
     SELECT up._d, e._parent
     FROM up
@@ -2037,7 +2037,7 @@ CREATE VIEW authz_int."doc__parent_shortcut__tree2_links" AS
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_compute"(p_ids bigint[]) RETURNS TABLE (o_descendant bigint, o_ancestor bigint)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   WITH RECURSIVE up(_d, _a) AS (
-    SELECT x."doc_no", x."doc_no" FROM "alt"."docs" x WHERE x."doc_no" = ANY (p_ids)
+    SELECT x."doc_no", x."doc_no" FROM "alt"."docs" x WHERE x."doc_no" = ANY ($1)
     UNION
     SELECT up._d, e._parent
     FROM up
@@ -3681,43 +3681,43 @@ CREATE VIEW authz_int."doc__project__view:ext" AS
 -- doc.parent.edit for one object, through link tables and shares: as the owner
 CREATE FUNCTION authz_int."doc__parent__edit__links"(p_id bigint) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = p_id AND authz_int."doc__edit__has"(s."parent"))
+  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = $1 AND authz_int."doc__edit__has"(s."parent"))
 $f$;
 
 -- doc.shortcut.view__base for one object, through link tables and shares: as the owner
 CREATE FUNCTION authz_int."doc__shortcut__view__base__links"(p_id bigint) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__view__base__has"(g.subject_id::bigint))
+  SELECT EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = $1::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__view__base__has"(g.subject_id::bigint))
 $f$;
 
 -- doc: a condition that reads other rows, run with the policy's rights wherever it is checked
 CREATE FUNCTION authz_int."doc__check_60f7f3204e"(p_row "alt"."docs") RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT coalesce((not exists (select 1 from alt.holds h where h.target = "docs".doc_no)), false) FROM (SELECT (p_row).*) AS "docs"
+  SELECT coalesce((not exists (select 1 from alt.holds h where h.target = "docs".doc_no)), false) FROM (SELECT ($1).*) AS "docs"
 $f$;
 
 -- doc.parent.view__base for one object, through link tables and shares: as the owner
 CREATE FUNCTION authz_int."doc__parent__view__base__links"(p_id bigint) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = p_id AND authz_int."doc__view__base__has"(s."parent"))
+  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = $1 AND authz_int."doc__view__base__has"(s."parent"))
 $f$;
 
 -- doc.parent.hidden for one object, through link tables and shares: as the owner
 CREATE FUNCTION authz_int."doc__parent__hidden__links"(p_id bigint) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = p_id AND authz_int."doc__hidden__has"(s."parent"))
+  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = $1 AND authz_int."doc__hidden__has"(s."parent"))
 $f$;
 
 -- doc.shortcut.hidden for one object, through link tables and shares: as the owner
 CREATE FUNCTION authz_int."doc__shortcut__hidden__links"(p_id bigint) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint))
+  SELECT EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = $1::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint))
 $f$;
 
 -- doc: a condition that reads other rows, run with the policy's rights wherever it is checked
 CREATE FUNCTION authz_int."doc__check_cdfdd53dac"(p_row "alt"."docs") RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT coalesce((exists (select 1 from alt.holds h where h.target = "docs".up)), false) FROM (SELECT (p_row).*) AS "docs"
+  SELECT coalesce((exists (select 1 from alt.holds h where h.target = "docs".up)), false) FROM (SELECT ($1).*) AS "docs"
 $f$;
 
 -- doc.shortcut.view__base
@@ -3799,7 +3799,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")), false),
     coalesce(coalesce((up is null), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[7]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "docs"
 $f$;
 
 CREATE FUNCTION authz_gen."alt.docs:insert:why"(p_row "alt"."docs") RETURNS SETOF text
@@ -3888,7 +3888,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     AND (authz_int."doc__edit__has"("docs"."up")
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "docs"
 $f$;
 
 CREATE FUNCTION authz_gen."alt.docs:update:why"(p_row "alt"."docs", p_stored boolean) RETURNS SETOF text
@@ -3931,7 +3931,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false),
     coalesce(NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "docs"
 $f$;
 
 CREATE FUNCTION authz_gen."alt.docs:delete:why"(p_row "alt"."docs") RETURNS SETOF text
@@ -4062,7 +4062,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     coalesce(true, false),
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "docs"
 $f$;
 
 CREATE FUNCTION authz_gen."alt.docs:column owner_id:why"(p_row "alt"."docs") RETURNS SETOF text
@@ -4086,7 +4086,7 @@ END $f$;
 -- be in another order), with the caller's role; the function runs as the owner, reading only that row (sqlutil.from_row)
 CREATE FUNCTION authz_int."alt.docs:column owner_id:holds"(p_row jsonb, authz__role name) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false) FROM pg_catalog.jsonb_populate_record(NULL::"alt"."docs", p_row) AS "docs"
+  SELECT coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false) FROM pg_catalog.jsonb_populate_record(NULL::"alt"."docs", $1) AS "docs"
 $f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."alt.docs:column owner_id"() RETURNS trigger
@@ -4134,7 +4134,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")), false),
     coalesce(coalesce((up is null), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs"
+  FROM pg_catalog.unnest(ARRAY[$1]) AS "docs"
 $f$;
 
 CREATE FUNCTION authz_gen."alt.docs:column up after:why"(p_row "alt"."docs") RETURNS SETOF text
@@ -4166,7 +4166,7 @@ CREATE FUNCTION authz_int."alt.docs:column up after:holds"(p_row jsonb, authz__r
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT coalesce((coalesce((up is null), false)
     OR (authz_int."doc__edit__has"("docs"."up")
-    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))), false) FROM pg_catalog.jsonb_populate_record(NULL::"alt"."docs", p_row) AS "docs"
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))), false) FROM pg_catalog.jsonb_populate_record(NULL::"alt"."docs", $1) AS "docs"
 $f$;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."alt.docs:column up after"() RETURNS trigger
@@ -5723,117 +5723,117 @@ SET LOCAL check_function_bodies = off;
 
 CREATE FUNCTION authz_int."user__self__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT r."id" FROM "alt"."users" r WHERE r."id" = p_id AND r."id" IS NOT NULL
+  SELECT r."id" FROM "alt"."users" r WHERE r."id" = $1 AND r."id" IS NOT NULL
 $f$;
 
 CREATE FUNCTION authz_int."grp__owner__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT r."owner_id" FROM "alt"."groups" r WHERE r."gid" = p_id AND r."owner_id" IS NOT NULL
+  SELECT r."owner_id" FROM "alt"."groups" r WHERE r."gid" = $1 AND r."owner_id" IS NOT NULL
 $f$;
 
 CREATE FUNCTION authz_int."grp__member__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  WITH RECURSIVE gs(id) AS (SELECT p_id UNION SELECT e.subj FROM (SELECT g.object_id::bigint AS obj, g.subject_id::bigint AS subj FROM authz.shares g WHERE g.object_type = 'grp' AND g.relation = 'member' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) e JOIN gs ON e.obj = gs.id)
+  WITH RECURSIVE gs(id) AS (SELECT $1 UNION SELECT e.subj FROM (SELECT g.object_id::bigint AS obj, g.subject_id::bigint AS subj FROM authz.shares g WHERE g.object_type = 'grp' AND g.relation = 'member' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) e JOIN gs ON e.obj = gs.id)
   SELECT x FROM gs, LATERAL (SELECT s."user_id" FROM "alt"."group_members" s WHERE s."group_id" = gs.id AND coalesce((s.active), false)) w(x)
 $f$;
 
 CREATE FUNCTION authz_int."proj__lead__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT r."lead_id" FROM "alt"."projects" r WHERE r."id" = p_id AND r."lead_id" IS NOT NULL
+  SELECT r."lead_id" FROM "alt"."projects" r WHERE r."id" = $1 AND r."lead_id" IS NOT NULL
 $f$;
 
 CREATE FUNCTION authz_int."proj__team__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM "alt"."project_groups" s, LATERAL authz_int."grp__member__who"(s."group_id") x WHERE s."project_id" = p_id
+  SELECT x FROM "alt"."project_groups" s, LATERAL authz_int."grp__member__who"(s."group_id") x WHERE s."project_id" = $1
 $f$;
 
 CREATE FUNCTION authz_int."doc__owner__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT r."owner_id" FROM "alt"."docs" r WHERE r."doc_no" = p_id AND r."owner_id" IS NOT NULL
+  SELECT r."owner_id" FROM "alt"."docs" r WHERE r."doc_no" = $1 AND r."owner_id" IS NOT NULL
 $f$;
 
 CREATE FUNCTION authz_int."doc__reader__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = 'reader' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = 'reader' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."grp__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = 'reader' AND g.subject_type = 'grp' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."grp__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = 'reader' AND g.subject_type = 'grp' AND g.subject_relation = 'member')
 $f$;
 
 CREATE FUNCTION authz_int."doc__writer__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = 'writer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*'
+  SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = 'writer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*'
 $f$;
 
 CREATE FUNCTION authz_int."doc__banned__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = 'banned' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = 'banned' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."grp__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = 'banned' AND g.subject_type = 'grp' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."grp__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = 'banned' AND g.subject_type = 'grp' AND g.subject_relation = 'member')
 $f$;
 
 CREATE FUNCTION authz_int."doc__roles:view__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."grp__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."grp__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member')
 $f$;
 
 CREATE FUNCTION authz_int."doc__roles:publish__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  (SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT x FROM authz.shares g, LATERAL authz_int."grp__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member')
+  (SELECT x FROM authz.shares g, LATERAL authz_int."grp__member__who"(g.subject_id::bigint) x WHERE g.object_type = 'doc' AND g.object_id = ($1)::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member')
 $f$;
 
 CREATE FUNCTION authz_int."user__manage_roles__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."user__self__who"(p_id) x
+  SELECT x FROM authz_int."user__self__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."grp__share__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."grp__owner__who"(p_id) x
+  SELECT x FROM authz_int."grp__owner__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."proj__view__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."proj__lead__who"(p_id) x)
+  (SELECT x FROM authz_int."proj__lead__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."proj__team__who"(p_id) x)
+  (SELECT x FROM authz_int."proj__team__who"($1) x)
 $f$;
 
 CREATE FUNCTION authz_int."doc__share__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."doc__owner__who"(p_id) x
+  SELECT x FROM authz_int."doc__owner__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."doc__edit__who_base"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."doc__owner__who"(p_id) x)
+  (SELECT x FROM authz_int."doc__owner__who"($1) x)
   UNION ALL
-  ((SELECT x FROM authz_int."doc__writer__who"(p_id) x) INTERSECT (SELECT x FROM authz_int."doc__view__who"(p_id) x))
+  ((SELECT x FROM authz_int."doc__writer__who"($1) x) INTERSECT (SELECT x FROM authz_int."doc__view__who"($1) x))
 $f$;
 
 CREATE FUNCTION authz_int."doc__edit__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."doc__parent__tree" c, LATERAL authz_int."doc__edit__who_base"(c.ancestor) x WHERE c.descendant = p_id
+  SELECT x FROM authz_int."doc__parent__tree" c, LATERAL authz_int."doc__edit__who_base"(c.ancestor) x WHERE c.descendant = $1
 $f$;
 
 CREATE FUNCTION authz_int."doc__hidden__who_base"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."doc__banned__who"(p_id) x
+  SELECT x FROM authz_int."doc__banned__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."doc__hidden__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."doc__parent_shortcut__tree2" c, LATERAL authz_int."doc__hidden__who_base"(c.ancestor) x WHERE c.descendant = p_id
+  SELECT x FROM authz_int."doc__parent_shortcut__tree2" c, LATERAL authz_int."doc__hidden__who_base"(c.ancestor) x WHERE c.descendant = $1
 $f$;
 
 CREATE FUNCTION authz_int."doc__publish__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."doc__edit__who"(p_id) x)
+  (SELECT x FROM authz_int."doc__edit__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."doc__roles:publish__who"(p_id) x)
+  (SELECT x FROM authz_int."doc__roles:publish__who"($1) x)
 $f$;
 
 CREATE FUNCTION authz_int."doc__mine__who"(p_id bigint) RETURNS SETOF bigint
@@ -5843,25 +5843,25 @@ $f$;
 
 CREATE FUNCTION authz_int."doc__view__base__who_base"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  (SELECT x FROM authz_int."doc__owner__who"(p_id) x)
+  (SELECT x FROM authz_int."doc__owner__who"($1) x)
   UNION ALL
-  (SELECT x FROM authz_int."doc__reader__who"(p_id) x)
+  (SELECT x FROM authz_int."doc__reader__who"($1) x)
   UNION ALL
-  ((SELECT x FROM (SELECT r."project_id" AS id FROM "alt"."docs" r WHERE r."doc_no" = p_id AND r."project_id" IS NOT NULL) tg, LATERAL authz_int."proj__view__who"(tg.id) x)
+  ((SELECT x FROM (SELECT r."project_id" AS id FROM "alt"."docs" r WHERE r."doc_no" = $1 AND r."project_id" IS NOT NULL) tg, LATERAL authz_int."proj__view__who"(tg.id) x)
   UNION ALL
-  (SELECT x FROM (SELECT s."proj_id" AS id FROM "alt"."doc_projects" s WHERE s."doc_no" = p_id AND s."proj_id" IS NOT NULL) tg, LATERAL authz_int."proj__view__who"(tg.id) x))
+  (SELECT x FROM (SELECT s."proj_id" AS id FROM "alt"."doc_projects" s WHERE s."doc_no" = $1 AND s."proj_id" IS NOT NULL) tg, LATERAL authz_int."proj__view__who"(tg.id) x))
   UNION ALL
-  (SELECT x FROM authz_int."doc__roles:view__who"(p_id) x)
+  (SELECT x FROM authz_int."doc__roles:view__who"($1) x)
 $f$;
 
 CREATE FUNCTION authz_int."doc__view__base__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."doc__parent_shortcut__tree" c, LATERAL authz_int."doc__view__base__who_base"(c.ancestor) x WHERE c.descendant = p_id
+  SELECT x FROM authz_int."doc__parent_shortcut__tree" c, LATERAL authz_int."doc__view__base__who_base"(c.ancestor) x WHERE c.descendant = $1
 $f$;
 
 CREATE FUNCTION authz_int."doc__view__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT x FROM authz_int."doc__view__base__who"(p_id) x
+  SELECT x FROM authz_int."doc__view__base__who"($1) x
 $f$;
 
 CREATE FUNCTION authz_int."user__self__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])

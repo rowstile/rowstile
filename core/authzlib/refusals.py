@@ -69,7 +69,7 @@ class RefusalMixin(Core):
             f"LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
             f"  SELECT CASE WHEN authz_int.{q(table + ':seen')}({self.key(t, alias)}) THEN ARRAY[\n    {body}]\n"
             f"    ELSE pg_catalog.array_fill(false, ARRAY[{len(exprs)}]) END\n"
-            f"  FROM {from_row('p_row', alias)}\n$f$;"
+            f"  FROM {from_row('$1', alias)}\n$f$;"
         )
 
     def row_targets_sql(self, t: Type, alias: str, node: Expr, rel: str) -> list[tuple[str, str]]:
