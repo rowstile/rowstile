@@ -2,7 +2,7 @@
 # compare.sh: the scale benchmark on two builds in turn on this machine: another commit (base) and this tree (here).
 # One machine is up to three times another, and one hour differs from the next: two builds are compared only when
 # one machine ran both, in turn, more than once. A tenth of a difference can't be read from two results of two days.
-#   core/bench/compare.sh main              # this tree against main: the dev size, two rounds (base, here, base, here)
+#   core/bench/compare.sh main              # this tree against main: the dev size, two rounds (base, here, here, base)
 #   core/bench/compare.sh v0.1.0 --large    # against a tag, at another of scale.sh's sizes
 # Environment: ROUNDS (default 2), and scale.sh's own (PG, DURATION, ...). The gate's speed limits are shown, not
 # judged (SPEED_GATES=0). The other commit is checked out beside this tree (a git worktree, .ci/bench-base, removed
@@ -34,7 +34,9 @@ git worktree remove --force "$WT" >/dev/null 2>&1
 git worktree add --detach --force "$WT" "$commit" >/dev/null || exit 1
 trap 'git worktree remove --force "$WT" >/dev/null 2>&1' EXIT
 for n in $(seq "$ROUNDS"); do
-  for which in base here; do
+  # which build goes first changes each round: a machine that warms up or slows down favours neither
+  if [ $((n % 2)) = 1 ]; then order="base here"; else order="here base"; fi
+  for which in $order; do
     echo "== round $n of $ROUNDS: $which"
     if [ "$which" = base ]; then root=$WT; else root=.; fi
     OUT=core/bench/results/scale-latest.txt bash "$root/core/bench/scale.sh" "$SIZE"; rc=$?

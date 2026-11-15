@@ -65,11 +65,13 @@ intended change. CI (GitHub's runners) keeps its own in the Actions cache:
 `compare.sh <commit> [size]` answers whether a change is faster or slower. One machine is up to three times
 another, and a shared one differs from hour to hour, so a result is compared with another only when one machine
 made both, in turn: the script checks the other commit out beside this tree (a git worktree, removed at the end),
-runs that commit's benchmark and this tree's one after the other, twice (`ROUNDS`), and `compare.py` puts the
-results side by side: each round's figure for each measure (a read's p50, not its p95: the question is what the
-code costs), and this tree's mean over the other's. It calls a difference faster or slower when every round of
-one build is beyond every round of the other, and says nothing where they overlap. Nothing is judged; the results
-are in `core/bench/results/compare/`, which git ignores. On a runner:
+runs that commit's benchmark and this tree's one after the other, twice (`ROUNDS`; the other one first the second
+time), and `compare.py` puts the results side by side: each round's figure for each measure (a read's p50, not its
+p95: the question is what the code costs), and this tree's mean over the other's. It calls a difference faster or
+slower when every round of one build is beyond every round of the other and the means differ by more than one
+build's own runs do, and says nothing otherwise: on a runner, the same build against itself differed by up to 2%
+for a read's p50 and up to 7% for tree writes a second (2026-11-15), so under 3% (10% for writes a second) nothing
+is called. Nothing is judged; the results are in `core/bench/results/compare/`, which git ignores. On a runner:
 `gh workflow run nightly.yml --ref <branch> -f only=scale -f size=dev -f against=main` (the run's `scale-compare`
 files).
 

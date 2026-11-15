@@ -18694,15 +18694,29 @@ class Benchmarks(unittest.TestCase):
         self.assertEqual(rows["3. open_file in the gate, p50 ms"][:2], ["1.00", "1.00"])
         self.assertEqual(rows["5. member: authz.list('file', 'view', NULL, 1000), s"][0], "0.24")
         self.assertEqual(rows["6. a team's 4000 folders, p50 ms"][0], "5.08")
-        self.assertEqual(len(rows), 9, "nothing else is a measure: not the sizes, not step 2's table per kind of write")
+        # nothing else is a measure: not the sizes, not step 2's table per kind of write, and not the reads' "all"
+        # row (members and admins together have two speeds: their middle moves with how many of each a run drew)
+        self.assertEqual(len(rows), 8, sorted(rows))
+        self.assertNotIn("3. all in the gate, p50 ms", rows)
         self.assertEqual(
             lines[-2],
-            "# faster, slower: every round of one build is beyond every round of the other; nothing said: they overlap",
+            "# faster, slower: every round of one build is beyond every round of the other, and the means differ by "
+            "more than 3% (10% for writes a second); nothing said otherwise",
         )
         with tempfile.TemporaryDirectory() as d:
             done = self.two_builds(d, {"base": [(2.0, 80.0, 1.0), (2.1, 84.0, 1.1)], "here": [(2.4, 70.0, 1.0)] * 2})
         self.assertIn("1.17  slower\n", done.stdout)
         self.assertIn("0.85  slower\n", done.stdout, "fewer writes a second in every round")
+        # every round beyond the other's, by less than one build's own runs differ on a runner (the same build
+        # against itself: a read's p50 by up to 2%, tree writes a second by up to 7%), or by a hundredth or two,
+        # which is how a figure is rounded: nothing is called
+        with tempfile.TemporaryDirectory() as d:
+            close = {"base": [(2.00, 80.0, 0.13), (2.01, 81.0, 0.13)], "here": [(1.95, 87.0, 0.14), (1.96, 88.0, 0.15)]}
+            done = self.two_builds(d, close)
+        self.assertRegex(done.stdout, r"(?m)^1\. open_folder, p50 ms .* 0\.98$")
+        self.assertRegex(done.stdout, r"(?m)^2\. 1 clients, writes/s .* 1\.09$")
+        self.assertRegex(done.stdout, r"(?m)^4\. the big move, s .* 1\.12$")
+        self.assertNotRegex(done.stdout, r"(?m)(faster|slower)$")
         # one round each shows no spread: nothing is called
         with tempfile.TemporaryDirectory() as d:
             done = self.two_builds(d, {"base": [(2.0, 80.0, 1.0)], "here": [(1.0, 160.0, 0.5)]})
@@ -18765,12 +18779,14 @@ class Benchmarks(unittest.TestCase):
                 table = fh.read()
             trees = subprocess.run(["git", "worktree", "list"], cwd=d, capture_output=True, text=True).stdout
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        # the commit's own tree and benchmark, then this tree as it is (uncommitted changes too), twice; the gate's
-        # speed limits are a machine of its own's, shown and not judged
-        self.assertEqual(runs, ["base --large SPEED_GATES=0", "here --large SPEED_GATES=0"] * 2)
+        # the commit's own tree and benchmark and this tree as it is (uncommitted changes too), twice, the other one
+        # first the second time (a machine that warms up or slows down favours neither); the gate's speed limits are
+        # a machine of its own's, shown and not judged
+        runs = [run.replace(" --large SPEED_GATES=0", "") for run in runs]
+        self.assertEqual(runs, ["base", "here", "here", "base"])
         self.assertEqual(kept, ["base-1.txt", "base-2.txt", "compare.txt", "here-1.txt", "here-2.txt"])
         self.assertEqual(base, "# result of base (commit base)\n")
-        self.assertIn("== round 2 of 2: here\nscale.sh in here\n", done.stdout)
+        self.assertIn("== round 2 of 2: here\nscale.sh in here\n== round 2 of 2: base\n", done.stdout)
         self.assertIn("base (commit base, 2 rounds) and here (commit here, 2 rounds)\n", table)
         self.assertTrue(done.stdout.endswith(table), "the table is the last thing said")
         self.assertEqual(len(trees.strip().split("\n")), 1, "the other commit's tree is removed at the end: " + trees)
