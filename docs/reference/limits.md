@@ -130,7 +130,8 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
 - **Identity providers**: `authz.sync_members` takes the member list; there is no SCIM
   endpoint. A JWT's signature is checked in plain SQL: HS256, or RS256 against the provider's stored keys,
   which takes about 2 ms a sign-in with a 2048-bit key, 4 ms with a 3072-bit one and 7 ms with a 4096-bit
-  one. <!-- unchecked: times measured by hand on 2026-11-15, PostgreSQL 16 -->
+  one, the first time a connection sees the token; the same token there again takes 0.3 ms, as an HS256 token
+  does. <!-- unchecked: times measured by hand on 2026-11-15, PostgreSQL 16 -->
   Tokens signed another way (ES256, EdDSA) are refused, since a check of ES256 written in plain SQL took 12 ms:
   verify those in your backend and sign in from there ([Identity](identity.md)), or use an API key. <!-- checked: tests/identity.sh "a token that says ES256: neither a secret nor a stored key checks it"; tests/identity.sh "alg none" -->
 - **Writes cost more**: each closure table is maintained on every tree write,

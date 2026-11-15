@@ -61,7 +61,16 @@ Three ways to say who is asking, all per transaction:
    A token whose `kid` names no stored key is refused, and one that names no key is checked against the
    stored key when there is one only. <!-- checked: tests/identity.sh "a token that names a key nobody stored"; tests/identity.sh "a token that names no key, with one stored: checked against that one"; tests/identity.sh "an RS256 token that names no key, with two stored" -->
    The signature is checked in plain SQL, which takes a few milliseconds a sign-in, more with a longer key
-   ([Limits](limits.md)). Tokens signed another way (ES256, EdDSA) aren't checked in the database: check
+   ([Limits](limits.md)). A connection checks a token's signature once: `login_jwt` leaves a note of the check
+   in a setting of the connection (`authz.checked_tokens`), and the same token signing in there again costs
+   what an HS256 token does. <!-- checked: tests/sessions.sh "a token's first sign-in on a connection leaves its note there, and its next one adds none"; tests/sessions.sh "the same token signing in again on a connection costs under a quarter of its first sign-in" -->
+   A note says what the check did, that this key signed this token, and no more: the token's time, issuer,
+   audience and user are read at every sign-in. <!-- checked: tests/sessions.sh "a token with a note is still held to the issuer asked for, at every sign-in" -->
+   The app role may read and set that setting, as any, so a note is believed only as the database made it,
+   with the key that signs sessions: for that token, that key and that connection. <!-- checked: tests/sessions.sh "... nor one made up: the token's hash, hashes of what the app role knows"; tests/sessions.sh "a note copied from another connection is not believed"; tests/sessions.sh "a note kept after its kid was given another key is not believed"; tests/sessions.sh "... nor one kept after its key left the set" -->
+   A connection keeps the notes of the 64 tokens it checked last, from the commit of the transaction that
+   checked each (a pooler's connection serves many tokens). <!-- checked: tests/sessions.sh "65 tokens on one connection: the newest 64 notes are kept, and the first token's is made again"; tests/sessions.sh "... and a note made in a transaction that is rolled back goes with it, as any setting" -->
+   Tokens signed another way (ES256, EdDSA) aren't checked in the database: check
    them in your backend, and sign in with `authz.act_as`. <!-- checked: tests/identity.sh "a token that says ES256: neither a secret nor a stored key checks it" -->
 
 What a scope leaves a key able to do can be said in the policy's tests: a line with `with scope read`
