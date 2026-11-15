@@ -55,6 +55,9 @@ echo "-- lint and indexes"
 [ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity IN ('error', 'warning')")" = 0 ] && ok "lint: no error, no warning" || bad "lint" "$(PSQL -c "SELECT * FROM authz.lint()")"
 [ "$(PSQL -c "SELECT string_agg(object, ' ' ORDER BY object) FROM authz.lint() WHERE problem LIKE '%may read every row%'")" = 'public."Team" public."TeamMember" public."User"' ] &&
   ok "lint names the tables read in full as Postgres writes them (the link table too), and not Prisma's own" || bad "lint, tables read in full" "$(PSQL -c "SELECT object, problem FROM authz.lint()")"
+[ "$(PSQL -c "SELECT string_agg(object, ' ' ORDER BY object) FROM authz.lint() WHERE severity = 'info' AND problem LIKE 'the primary key of public.\"%\", which app_user may choose:%'")" = 'public."Folder_pkey" public."Note_pkey"' ] &&
+  ok "lint finds the keys the app role may choose, on the tables with rules, found by their quoted names" ||
+  bad "lint, the keys the app role may choose" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE severity = 'info'")"
 # a table beside the policy's that it doesn't name, and a view of Folder that runs with its owner's rights: lint finds
 # both from the policy's tables, by their quoted names
 PSQL -c 'CREATE TABLE "Lookup" (id int)' -c 'CREATE VIEW "FolderView" AS SELECT id FROM "Folder"' \
@@ -176,6 +179,11 @@ PSQL -c 'GRANT REFERENCES ON "FolderArchive" TO app_user'
 [ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'info' AND object = 'public.\"FolderArchive\"' AND problem LIKE 'is a partition of public.\"Folder\" (or inherits from it), and app_user may make foreign keys to it %'")" = 1 ] &&
   ok "... and lint says the app role may make foreign keys to it, under Folder as Postgres writes it" ||
   bad "lint, a table under Folder" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE object LIKE '%Archive%'")"
+# ... and one it may empty: said once, Folder being one table above it, with rules (not also one rowstile only watches)
+PSQL -c 'GRANT TRUNCATE ON "FolderArchive" TO app_user'
+[ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'public.\"FolderArchive\"' AND problem LIKE 'is a partition of public.\"Folder\" (or inherits from it), and app_user may TRUNCATE it, %'")" = 1 ] &&
+  ok "... and that it may empty it, once" ||
+  bad "lint, a table under Folder the app role may empty" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE object LIKE '%Archive%'")"
 PSQL -c 'DROP TABLE "FolderArchive"'
 
 echo "-- migrations: a second database takes them, and holds what this one holds"
@@ -617,9 +625,21 @@ psql -X -q -d postgres -c 'DO $o$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = $$authz_capitals_sync$$) THEN CREATE ROLE authz_capitals_sync NOLOGIN; END IF;
   END $o$' >/dev/null
 dropdb --if-exists "$DB7" 2>/dev/null; createdb "$DB7" || exit 1; schema "$DB7" || exit 1
-printf '%s\n' "sync role authz_capitals_sync" "sync public.Folder : view" | cat tests/prisma.authz - > "$T/synced.authz"
+# Tag, keyed by a column named with a capital, is mirrored (for PowerSync): its rows, each with its readers
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB7" -c 'CREATE TABLE "Tag" ("tagId" integer PRIMARY KEY, "ownerId" integer NOT NULL REFERENCES "User")' \
+  -c 'CREATE INDEX ON "Tag" ("ownerId")' -c 'GRANT SELECT, INSERT, UPDATE, DELETE ON "Tag" TO app_user' \
+  -c 'INSERT INTO "Tag" VALUES (7, 1), (8, 2)' >/dev/null
+printf '%s\n' "type tag = public.Tag (tagId int)" "  owner : user = ownerId" "  can view = owner" "rules public.Tag" "  select : view" \
+  "sync role authz_capitals_sync" "sync public.Folder : view" "sync public.Tag : view mirrored" | cat tests/prisma.authz - > "$T/synced.authz"
 run --db "dbname=$DB7" apply "$T/synced.authz"
 case "$out" in *"synced.authz: applied") ;; *) bad "apply with Folder synced" "$out";; esac
+got=$(psql -X -q -At -d "$DB7" -c 'SELECT string_agg("tagId" || $$ $$ || "ownerId" || $$ $$ || readers, $$, $$ ORDER BY "tagId") FROM authz_sync.tag__mirror' 2>&1)
+[ "$got" = '7 1 ["user:1"], 8 2 ["user:2"]' ] && ok "a mirrored table keyed by a column named with a capital: its mirror holds its rows, each with its readers" ||
+  bad "the mirror of Tag" "$got"
+psql -X -q -d "$DB7" -c 'UPDATE "Tag" SET "ownerId" = 3 WHERE "tagId" = 8' >/dev/null
+got=$(psql -X -q -At -d "$DB7" -c 'SELECT readers FROM authz_sync.tag__mirror WHERE "tagId" = 8' -c "SELECT authz.sync_verify()" 2>&1 | paste -sd' ')
+[ "$got" = '["user:3"] t' ] && ok "... its owner changed: the mirror row's readers follow, and the index matches a rebuild (sync_verify reads Tag by its quoted name)" ||
+  bad "the mirror of Tag after a change, and sync_verify" "$got"
 if [ -n "${PGSUPERUSER:-}" ]; then
   psql -X -q -U "$PGSUPERUSER" -d "$DB7" -c 'ALTER TABLE "Folder" OWNER TO authz_capitals_sync' >/dev/null
   got=$(psql -X -q -At -d "$DB7" -c "SELECT object FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'is owned by the sync role%'")

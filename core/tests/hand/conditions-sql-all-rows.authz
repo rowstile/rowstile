@@ -1,0 +1,30 @@
+-- answer: conditions-sql, inheritance
+-- A condition that reads another table, changed for several folders of a tree by one statement: each one's
+-- inheritance is worked out again, and so is what the folders below them inherit through them. A seal stops what a
+-- folder inherits; ann owns folder 1, folder 2 is in it and folder 3 in folder 2.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  parent : folder = parent_id
+  can view = owner or (parent.view and {not exists (select 1 from app.marks m where m.ref_id = this.id and m.kind = 'seal')})
+
+rules app.folders
+  select : view
+
+test "seals put on a folder and on the one above it in one statement stop what is below them too"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given {INSERT INTO app.folders (id, owner_id, parent_id) VALUES (1, $ann, NULL), (2, NULL, 1), (3, NULL, 2)}
+  as user $ann sees 3 {SELECT FROM app.folders}
+  as user $ann sees 3 {SELECT FROM authz.list('folder', 'view')}
+  given {INSERT INTO app.marks VALUES (200, 1, 'seal', NULL), (201, 2, 'seal', NULL)}
+  user $ann can view folder 1
+  user $ann cannot view folder 2
+  user $ann cannot view folder 3
+  as user $ann sees 1 {SELECT FROM app.folders}
+  as user $ann sees 1 {SELECT FROM authz.list('folder', 'view')}
+  given {DELETE FROM app.marks}
+  user $ann can view folder 3
+  as user $ann sees 3 {SELECT FROM app.folders}
+  as user $ann sees 3 {SELECT FROM authz.list('folder', 'view')}

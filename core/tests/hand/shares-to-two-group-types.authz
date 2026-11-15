@@ -26,3 +26,9 @@ test "who: the members of a team and of a squad"
   user $bo can view folder $f
   user $cy can view folder $f
   as user $ann sees 3 {SELECT FROM authz.who('folder', $f, 'view')}
+
+test "a relation shared with groups alone is none a user can ask for"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  as user $bo refused {SELECT authz.request_access('folder', $f, 'viewer', 'for the audit')}   -- error: the policy does not allow sharing folder.viewer with a user

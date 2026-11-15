@@ -158,6 +158,11 @@ got=$(PSQL -c "BEGIN" -c "INSERT INTO authz.shares (object_type, object_id, rela
            -c "INSERT INTO authz_sync.due VALUES ('file', '14', now()) ON CONFLICT (object_type, object_id) DO UPDATE SET at = now()" \
            -c "SELECT authz.sync_tick()" -c "ROLLBACK")
 [ "$got" = 1 ] && ok "... a share ending at the very moment it runs has ended: counted then" || bad "a share ending as sync_tick runs" "$got"
+got=$(PSQL -c "BEGIN" -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at)
+                           VALUES ('file', '14', 'viewer', 'user', '6', now())" \
+           -c "INSERT INTO authz_sync.due VALUES ('file', '14', now()) ON CONFLICT (object_type, object_id) DO UPDATE SET at = now()" \
+           -c "SELECT authz.sync_tick()" -c "ROLLBACK")
+[ "$got" = 1 ] && ok "... and one starting at that very moment has begun: counted too" || bad "a share starting as sync_tick runs" "$got"
 PSQL -c "DELETE FROM authz.shares WHERE subject_id = '6' AND (expires_at IS NOT NULL OR starts_at IS NOT NULL)"
 # a writer's transaction open while a share ends or begins, and a tick meanwhile: the writer works the share out as
 # of when it began, after the tick (which can't see a share not committed yet); the next tick works it out again

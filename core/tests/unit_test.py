@@ -393,6 +393,8 @@ class ThisRow(unittest.TestCase):
             sql_code('the\'x\' = 1$$y$$ and "a""b"'),
             [(True, "the"), (False, "'x'"), (True, " = 1"), (False, "$$y$$"), (True, " and "), (False, '"a""b"')],
         )
+        # a comment the text ends in, no line end after it, is a comment to the end: the quote in it opens nothing
+        self.assertEqual(sql_code("x = 1 -- it's"), [(True, "x = 1 "), (False, "-- it's")])
         for cond in (
             "x = $$'$$ and y = 'a' and created < now() and z = 'b'",
             "x = E'\\'' and created < now() and z = 'b'",
@@ -6214,6 +6216,38 @@ class Draft(unittest.TestCase):
         )
         self.assertEqual(text.count("update project_id after"), 1)
         self.assertNotIn("project2", text)
+
+    def test_a_link_of_two_columns_names_both(self) -> None:
+        """A table keyed by two columns: what points at it, a foreign key or a membership table, names both."""
+        to_team = (["org_id", "team_id"], "app.teams", ["org_id", "id"])
+        text = self.compiled(
+            [
+                self.table("app.users", {"id": "bigint"}, ["id"]),
+                self.table(
+                    "app.teams",
+                    {"org_id": "bigint", "id": "bigint", "parent_id": "bigint", "owner_id": "bigint"},
+                    ["org_id", "id"],
+                    ((["org_id", "parent_id"], "app.teams", ["org_id", "id"]), (["owner_id"], "app.users", ["id"])),
+                ),
+                self.table(
+                    "app.team_members",
+                    {"org_id": "bigint", "team_id": "bigint", "user_id": "bigint", "role": "text"},
+                    ["org_id", "team_id", "user_id"],
+                    (to_team, (["user_id"], "app.users", ["id"])),
+                ),
+                self.table("app.docs", {"id": "bigint", "org_id": "bigint", "team_id": "bigint"}, ["id"], (to_team,)),
+            ]
+        )
+        self.assertIn("type doc = app.docs\n  team : team = [org_id, team_id]\n", text)
+        self.assertIn(
+            "type team = app.teams (org_id, id)\n"
+            "  team : team = [org_id, parent_id]\n"
+            "  owner : user = owner_id\n"
+            "  member : user = app.team_members([org_id, team_id] -> user_id)\n"
+            "  -- decide: app.team_members.role may say who does more, e.g.\n"
+            "  --   admin : user = app.team_members([org_id, team_id] -> user_id) where {role = 'admin'}\n",
+            text,
+        )
 
     def test_the_whole_draft(self) -> None:
         # what init writes, line by line: the user's own row and the team it is in (no rule to change who it is in:

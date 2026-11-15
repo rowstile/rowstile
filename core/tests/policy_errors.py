@@ -113,6 +113,14 @@ COMPILE = [
         "AZ211",
     ),
     (
+        "custom roles from a relation to a group's members: their owner is an object, not people",
+        "  team : grp#member = up\n  roles : user from team\n  can view = owner or roles\n",
+        "custom roles on doc come from 'team', which must link to objects of a type (the roles' owner), not to "
+        "grp#member",
+        11,
+        "AZ211",
+    ),
+    (
         "roles under a not",
         "  roles : user\n  can view = owner and not roles\n",
         "doc.view: `not roles` would take a permission away",
