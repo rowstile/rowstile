@@ -66,6 +66,20 @@ class LintRow(TypedDict):
     problem: str
 
 
+class KeyChange(TypedDict):
+    """What became of a key of an identity provider's key set: added, replaced, kept, removed, or skipped and why."""
+
+    kid: str
+    change: str
+    why: str | None
+
+
+class StoredKey(TypedDict):
+    kid: str
+    bits: int
+    stored: str  # when, to the minute, UTC
+
+
 class DiffRow(TypedDict):
     change: str  # gains | loses
     user_id: str | None  # None: someone not signed in
@@ -946,6 +960,29 @@ def lint(db: Db) -> list[LintRow]:
         for r in db.rows("SELECT severity, object, problem FROM authz.lint()")
     ]
     return sorted(rows, key=lambda r: (LINT_ORDER.get(r["severity"], 9), r["object"], r["problem"]))
+
+
+def set_jwks(db: Db, jwks: str) -> list[KeyChange]:
+    """An identity provider's key set (a JWKS, as JSON) stored in place of the one before, as the tables' owner
+    (authz.set_jwks): what became of each key. A set that leaves no key to check tokens with is the server's error
+    (AZ719), and nothing changes."""
+    applied(db)
+    return [
+        {"kid": text(r, "kid"), "change": text(r, "change"), "why": text_or_none(r, "why")}
+        for r in db.rows("SELECT kid, change, why FROM authz.set_jwks($1::jsonb)", [jwks])
+    ]
+
+
+def stored_keys(db: Db) -> list[StoredKey]:
+    """The keys authz.login_jwt checks RS256 tokens with, the oldest first: each one's kid, size and day."""
+    applied(db)
+    return [
+        {"kid": text(r, "kid"), "bits": int(text(r, "n")).bit_length(), "stored": text(r, "stored")}
+        for r in db.rows(
+            "SELECT kid, n::text AS n, to_char(added_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') AS stored "
+            "FROM authz.jwt_keys ORDER BY added_at, kid"
+        )
+    ]
 
 
 def draft(db: Db, schemas: Sequence[str] | None = None, users: str | None = None, role: str | None = None) -> str:

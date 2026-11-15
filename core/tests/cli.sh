@@ -27,7 +27,7 @@ T=$(mktemp -d)
 cleanup() {
   stop_sessions
   if [ -z "${KEEP:-}" ]; then
-    for d in "$DB" "${DB}_other" authz_cli_lint authz_cli_plain; do dropdb --force --if-exists "$d" 2>/dev/null; done
+    for d in "$DB" "${DB}_other" authz_cli_lint authz_cli_plain authz_cli_keys; do dropdb --force --if-exists "$d" 2>/dev/null; done
     for r in authz_cli_lint_app authz_cli_plain_app; do psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1; done
   fi
   rm -rf "$T"
@@ -687,6 +687,131 @@ PLAIN sql --as user:2 "UPDATE app.notes SET body = 'theirs' WHERE id = 1"
 PLAIN sql --as user:1 "UPDATE app.notes SET body = 'still mine' WHERE id = 1"
 [ "$out" = "UPDATE 1, as user:1; rolled back" ] && ok "... or one" || bad "sql --as, a write" "$out"
 dropdb "$N"; psql -X -q -d postgres -c "DROP ROLE IF EXISTS $R" >/dev/null 2>&1
+
+echo "-- jwks: an identity provider's keys, fetched from its server and stored"
+N=authz_cli_keys
+dropdb --if-exists "$N" 2>/dev/null; createdb "$N" || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$N" -f example/app_schema.sql >/dev/null || exit 1
+python3 cli/rowstile_cli.py --db "dbname=$N" apply example/docs.authz >/dev/null 2>&1 || bad "applying the docs app's policy, for jwks"
+K() { out=$(python3 cli/rowstile_cli.py "$1" --db "dbname=$N" "${@:2}" 2>&1); rc=$?; }   # $1 the command, then its arguments
+keys() { psql -X -q -At -d "$N" -c "SELECT coalesce(string_agg(kid, ' ' ORDER BY kid), '') FROM authz.jwt_keys"; }
+openssl genrsa -out "$T/idp1.pem" 2048 2>/dev/null; openssl genrsa -out "$T/idp2.pem" 2048 2>/dev/null
+# the provider's server, on this machine: its key sets as they change, and what a server may answer instead of one
+cat > "$T/provider.py" <<'PY'
+import base64, json, subprocess, sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+folder = sys.argv[1]
+
+
+def key(pem, kid):
+    out = subprocess.run(["openssl", "rsa", "-in", f"{folder}/{pem}.pem", "-noout", "-modulus"], check=True, capture_output=True, text=True)
+    n = bytes.fromhex(out.stdout.strip().split("=")[1])
+    return {"kty": "RSA", "use": "sig", "kid": kid, "n": base64.urlsafe_b64encode(n).rstrip(b"=").decode(), "e": "AQAB"}
+
+
+EC = {"kty": "EC", "kid": "ec-1", "crv": "P-256", "x": "x", "y": "y"}
+SETS = {
+    "/keys": {"keys": [key("idp1", "2026-10"), EC]},
+    "/rotating": {"keys": [key("idp2", "2026-11"), key("idp1", "2026-10")]},
+    "/rotated": {"keys": [key("idp2", "2026-11")]},
+    "/none": {"keys": [EC]},
+    "/list": [1, 2],
+    "/big": {"keys": [], "padding": "x" * 70000},
+}
+
+
+class Provider(BaseHTTPRequestHandler):
+    def do_GET(self):
+        port = self.server.server_address[1]
+        if self.path == "/hangup":  # the connection closed, nothing answered
+            self.close_connection = True
+            return
+        moved = {"/moved": f"http://127.0.0.1:{port}/keys", "/elsewhere": f"http://localhost:{port}/keys"}.get(self.path)
+        found = self.path in SETS or self.path == "/page"
+        body = b"<html>Sign in</html>" if self.path == "/page" else json.dumps(SETS.get(self.path, {})).encode()
+        self.send_response(302 if moved else 200 if found else 404)
+        if moved:
+            self.send_header("Location", moved)
+        self.send_header("Content-Type", "text/html" if self.path == "/page" else "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+PY
+python3 "$T/provider.py" "$T" > "$T/provider.port" &
+for _ in $(seq 100); do [ -s "$T/provider.port" ] && break; sleep 0.1; done
+URL="http://127.0.0.1:$(cat "$T/provider.port")"
+signed() {  # a token for user 1 signed by a key made above ($1), naming the key $2
+python3 - "$T/$1.pem" "$2" <<'PY'
+import base64, json, subprocess, sys, time
+part = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+head, claims = {"alg": "RS256", "typ": "JWT", "kid": sys.argv[2]}, {"sub": "1", "exp": int(time.time()) + 300}
+msg = part(json.dumps(head).encode()) + "." + part(json.dumps(claims).encode())
+print(msg + "." + part(subprocess.run(["openssl", "dgst", "-sha256", "-sign", sys.argv[1]], input=msg.encode(), check=True, capture_output=True).stdout))
+PY
+}
+signs_in() { psql -X -q -At -d "$N" -c "BEGIN" -c "SET LOCAL ROLE app_user" -c "SELECT authz.login_jwt('$(signed "$1" "$2")')" -c "SELECT authz.uid()" -c "COMMIT" 2>&1 | grep -E '^(ERROR:  |1$)' | head -n 1; }   # the id it signed in, or the refusal
+out=$(python3 cli/rowstile_cli.py jwks --db "dbname=$N" 2>&1); rc=$?
+case "$rc $out" in "0 no keys stored: "*) ok "jwks with no URL, and no keys stored yet, says so";; *) bad "jwks, no keys stored" "$rc $out";; esac
+K jwks "$URL/keys" --check
+case "$out" in "$URL/keys: the stored keys differ (nothing was stored)"*"2026-10  added"*"ec-1     skipped  not an RSA key")
+    [ $rc -eq 1 ] && [ -z "$(keys)" ] && ok "jwks --check says what storing the provider's set would change, stores nothing, exit 1" || bad "jwks --check, before" "$rc $(keys)";;
+  *) bad "jwks --check, before" "$out";; esac
+K jwks "$URL/keys"
+case "$out" in "$URL/keys: stored"*"2026-10  added"*"ec-1     skipped  not an RSA key")
+    [ $rc -eq 0 ] && [ "$(keys)" = "2026-10" ] && ok "jwks stores the key set the provider serves: each key added, or skipped and why" || bad "jwks" "$rc $(keys)";;
+  *) bad "jwks" "$out";; esac
+[ "$(signs_in idp1 2026-10)" = 1 ] && ok "... and a token the provider signs with that key signs in" || bad "a token of the stored key" "$(signs_in idp1 2026-10)"
+K jwks "$URL/keys" --check
+case "$out" in "$URL/keys: the stored keys are these"*"2026-10  kept"*) [ $rc -eq 0 ] && ok "jwks --check, once stored: nothing would change, exit 0" || bad "jwks --check, after: exit" "$rc";;
+  *) bad "jwks --check, after" "$out";; esac
+K jwks "$URL/moved"
+case "$out" in "$URL/moved: the stored keys are these already"*"2026-10  kept"*) [ $rc -eq 0 ] && ok "stored again, it says the keys are these already; a redirect on the same server is followed" || bad "jwks again: exit" "$rc";;
+  *) bad "jwks again" "$out";; esac
+# the provider's keys change: a new key beside the old one, then alone
+K jwks "$URL/rotating"
+case "$out" in *"2026-11  added"*"2026-10  kept"*) [ "$(keys)" = "2026-10 2026-11" ] && ok "the provider's next key is added beside the one in use" || bad "the next key" "$(keys)";; *) bad "the next key" "$out";; esac
+K jwks "$URL/rotated"
+case "$out" in *"2026-11  kept"*"2026-10  removed"*) [ "$(keys)" = "2026-11" ] && ok "... and the key it retired is removed" || bad "the retired key" "$(keys)";; *) bad "the retired key" "$out";; esac
+case "$(signs_in idp1 2026-10)" in *"invalid token"*) [ "$(signs_in idp2 2026-11)" = 1 ] && ok "... its tokens sign nobody in now, the new key's do" || bad "the new key's token" "$(signs_in idp2 2026-11)";;
+  *) bad "a token of the retired key" "$(signs_in idp1 2026-10)";; esac
+K jwks
+case "$out" in "kid      bits  stored (UTC)"*"2026-11  2048  20"*) [ $rc -eq 0 ] && ok "jwks with no URL lists the stored keys: each one's kid, size and day" || bad "jwks, the stored keys: exit" "$rc";;
+  *) bad "jwks, the stored keys" "$out";; esac
+# what must store nothing: a set with no key to check tokens with (the database's refusal), and every answer that is no key set
+K jwks "$URL/none"
+case "$out" in "the key set holds no key to check tokens with"*"DETAIL: key ec-1: not an RSA key"*"HINT: the stored keys stay as they were (rowstile help AZ719)")
+    [ $rc -eq 1 ] && [ "$(keys)" = "2026-11" ] && ok "a set with no RSA key for signatures is refused, saying why (AZ719), and the stored keys stay" || bad "a set with no key" "$rc $(keys)";;
+  *) bad "a set with no key" "$out";; esac
+kept() {  # $1 label, $2 what the command says first, then the command's arguments: exit 2, and the stored keys as they were
+  local label=$1 says=$2; shift 2
+  K jwks "$@"
+  case "$out" in "rowstile jwks: $says"*"Nothing was stored: the keys in the database are as they were.") [ $rc -eq 2 ] && [ "$(keys)" = "2026-11" ] && ok "$label" || bad "$label" "$rc $(keys)";;
+    *) bad "$label" "$out";; esac
+}
+kept "an address that isn't there: the server's answer, and nothing stored" "$URL/missing answers 404 Not Found" "$URL/missing"
+kept "a page that is no JSON" "$URL/page does not answer a key set (a JSON object with its keys): it answers '<html>Sign in</html>'" "$URL/page"
+kept "JSON that is no object" "$URL/list does not answer a key set" "$URL/list"
+kept "an answer of more than 64 KB" "$URL/big answers more than 64 KB: that is no key set" "$URL/big"
+kept "a redirect to another server is not followed" "$URL/elsewhere sends elsewhere, to http://localhost:" "$URL/elsewhere"
+kept "a server that hangs up" "can't fetch $URL/hangup: " "$URL/hangup"
+kept "a server that isn't there" "can't fetch http://127.0.0.1:1/keys: " "http://127.0.0.1:1/keys"
+kept "plain http to another machine is refused before anything is fetched" "http://id.example/keys is plain http" "http://id.example/keys"
+kept "a file is no https URL" "file:///etc/hostname is no https URL" "file:///etc/hostname"
+kept "a URL whose port is no number" "https://id.example:port/keys is no URL" "https://id.example:port/keys"
+K jwks --check
+[ "$rc $out" = "2 rowstile jwks --check: against which key set? Give the URL the identity provider serves it at" ] &&
+  ok "jwks --check with no URL asks for one, exit 2" || bad "jwks --check with no URL" "$rc $out"
+stop_sessions
+dropdb "$N"
 
 rm -rf "$T"
 if [ $fails -eq 0 ]; then echo "cli: all passed"; else echo "cli: $fails failed"; exit 1; fi

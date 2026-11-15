@@ -12749,12 +12749,13 @@ class Encodings(unittest.TestCase):
                 continue
             func = node.func
             name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
-            # os.open is a file descriptor's, no text; webbrowser.open opens a page, tarfile.open and zipfile's an
-            # archive; read_text and write_text are a Path's (the command has a read_text of its own, which names it)
+            # os.open is a file descriptor's, no text; webbrowser.open opens a page, an opener's (urllib's) a URL,
+            # tarfile.open and zipfile's an archive; read_text and write_text are a Path's (the command has a
+            # read_text of its own, which names it)
             on = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else ""
             if (
                 name not in cls.TEXT_BY_DEFAULT | cls.BINARY_BY_DEFAULT
-                or (name == "open" and on in ("os", "webbrowser", "tarfile", "zipfile"))
+                or (name == "open" and on in ("os", "webbrowser", "opener", "tarfile", "zipfile"))
                 or (isinstance(func, ast.Name) and name in ("read_text", "write_text"))
             ):
                 continue
@@ -12810,6 +12811,7 @@ class Encodings(unittest.TestCase):
                 "gzip.open(p)",
                 "gzip.open(p, 'rt')",  # 20
                 "gzip.open(p, 'w')",
+                "opener.open(request, timeout=10)",
             ]
         )
         self.assertEqual(self.unnamed(source), [1, 4, 5, 8, 10, 14, 20])
@@ -14416,6 +14418,68 @@ class DocPages(unittest.TestCase):
                 ):
                     wrong.append(f"{'/'.join(page)}: authz.{name}({', '.join(args)}): no form of it takes these")
         self.assertEqual(wrong, [], "calls the pages write that the functions don't take")
+
+
+class Jwks(unittest.TestCase):
+    """`rowstile jwks` gives an identity provider's server ten seconds to serve its key set. tests/cli.sh has the
+    rest of the fetch, against a server that answers at once; here the ten seconds are made a third of one."""
+
+    def fetch(self, server_is: str) -> tuple[object, str]:
+        """rowstile_cli.fetch_jwks, with 0.3 seconds for it, from a server on this machine that takes the request
+        and answers nothing ("silent"), or answers a byte at a time ("slow"): (its exit status, what it said)."""
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        done = threading.Event()
+
+        class Provider(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+            def do_GET(self) -> None:
+                if server_is == "silent":
+                    done.wait(10)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                with contextlib.suppress(OSError):  # (the command hung up)
+                    while not done.wait(0.02):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        said = io.StringIO()
+        try:
+            with (
+                mock.patch.object(rowstile_cli, "JWKS_SECONDS", 0.3),
+                contextlib.redirect_stderr(said),
+                self.assertRaises(SystemExit) as stopped,
+            ):
+                rowstile_cli.fetch_jwks(f"http://127.0.0.1:{server.server_port}/keys")
+        finally:
+            done.set()
+            server.shutdown()
+            server.server_close()
+        return stopped.exception.code, said.getvalue()
+
+    def test_a_server_that_takes_too_long_stores_nothing(self) -> None:
+        for server_is, says in (
+            ("silent", "did not answer in 0.3 seconds"),
+            ("slow", "answers for more than 0.3 seconds"),
+        ):
+            code, said = self.fetch(server_is)
+            self.assertEqual(code, 2, said)
+            self.assertRegex(said, rf"^rowstile jwks: http://127\.0\.0\.1:\d+/keys {says}", server_is)
+            self.assertIn("\nNothing was stored: the keys in the database are as they were.\n", said)
+
+    def test_the_fetch_is_imported_by_the_command_that_needs_it(self) -> None:
+        """urllib is loaded by `rowstile jwks` alone: no other command pays for it."""
+        text = read(os.path.join(ROOT, "cli", "rowstile_cli.py"))
+        self.assertNotRegex(text, r"(?m)^(import|from) (urllib|http)\b")
+        self.assertIn(
+            "    import urllib.request\n", text[text.index("\ndef fetch_jwks(") : text.index("\ndef jwks_cmd(")]
+        )
 
 
 class Promises(unittest.TestCase):

@@ -47,6 +47,9 @@ Three ways to say who is asking, all per transaction:
    Stored are RSA keys for signatures, of 2048 to 4096 bits, with the exponent 65537. <!-- checked: tests/identity.sh "a key under 2048 bits signs nothing here"; tests/identity.sh "an exponent other than 65537 is refused" -->
    Store the set again when the provider's keys change: from then on, a token signed by a key that left the
    set is refused. <!-- checked: tests/identity.sh "a token signed by a key that left the set" -->
+   The database fetches nothing itself. `rowstile jwks https://id.example/.well-known/jwks.json` fetches the
+   set from the provider and stores it, for a scheduled job or a deploy step, and with `--check` says whether
+   the stored keys are still the provider's ([Tools](tools.md)). <!-- checked: tests/cli.sh "jwks stores the key set the provider serves: each key added, or skipped and why"; tests/cli.sh "once stored: nothing would change, exit 0" -->
    A set that leaves no key is refused, saying why each key was skipped, and the stored keys stay (AZ719): a
    fetch that failed signs nobody out. <!-- checked: tests/identity.sh "a key set that leaves no key is refused"; tests/identity.sh "... saying why each key was skipped"; tests/identity.sh "... and the stored keys stay as they were" -->
    `authz.set_jwks` is the owner's, as the settings are: whoever stores a key signs in as anyone. The app
