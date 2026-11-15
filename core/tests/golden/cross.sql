@@ -8378,6 +8378,43 @@ END $f$;
 CREATE FUNCTION authz_int.b64url(p text) RETURNS bytea
 LANGUAGE sql IMMUTABLE STRICT AS $f$
   SELECT decode(rpad(translate(p, '-_', '+/'), ((length(p) + 3) / 4) * 4, '='), 'base64') $f$;
+-- Bytes read as a number, the first byte the highest (a key's modulus, a signature): seven bytes at a time
+CREATE FUNCTION authz_int.b2n(p bytea) RETURNS numeric
+LANGUAGE plpgsql IMMUTABLE STRICT AS $f$
+DECLARE h text := encode(p, 'hex'); r numeric := 0;
+BEGIN
+  h := repeat('0', (14 - length(h) % 14) % 14) || h;
+  FOR i IN 0..length(h) / 14 - 1 LOOP
+    r := r * 72057594037927936 + ('x00' || substr(h, i * 14 + 1, 14))::bit(64)::bigint;
+  END LOOP;
+  RETURN r;
+END $f$;
+-- An RSA signature checked in SQL (RSASSA-PKCS1-v1_5 with SHA-256, RFC 8017 section 8.2.2), for JWT signatures
+-- (RS256): the signature raised to the key's exponent under its modulus, compared with the encoding of the
+-- message's hash built whole, so nothing is parsed out of the signature. Refused before anything is computed: an
+-- exponent other than 65537 (with 1, a signature would be its own encoding), a modulus under 2048 bits or over
+-- 4096, a signature that isn't as long as the modulus, and one that isn't below it (s + n says what s says)
+CREATE FUNCTION authz_int.rsa_ok(p_sig bytea, p_n numeric, p_e int, p_msg bytea) RETURNS boolean
+LANGUAGE plpgsql IMMUTABLE STRICT AS $f$
+DECLARE k int := length(p_sig); s numeric; r numeric := 1; e int := p_e;
+BEGIN
+  IF p_e <> 65537 OR k NOT BETWEEN 256 AND 512
+     OR p_n < authz_int.b2n(decode('01' || repeat('00', k - 1), 'hex'))
+     OR p_n > authz_int.b2n(decode(repeat('ff', k), 'hex')) THEN
+    RETURN false;
+  END IF;
+  s := authz_int.b2n(p_sig);
+  IF s >= p_n THEN
+    RETURN false;
+  END IF;
+  WHILE e > 0 LOOP
+    IF e & 1 = 1 THEN r := (r * s) % p_n; END IF;
+    s := (s * s) % p_n;
+    e := e >> 1;
+  END LOOP;
+  RETURN r = authz_int.b2n(decode('0001' || repeat('ff', k - 54) || '003031300d060960864801650304020105000420', 'hex')
+                           || sha256(p_msg));
+END $f$;
 
 -- Sign in with a JWT (HS256) for this transaction: SELECT authz.login_jwt('eyJ...')
 -- Settings (authz.settings): jwt_secret (required), jwt_issuer, jwt_audience, jwt_user_claim (default sub),
