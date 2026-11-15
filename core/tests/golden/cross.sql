@@ -4564,13 +4564,27 @@ CREATE VIEW authz_int."folder__parent__file__on_project" AS
 -- folder.file: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__file__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__view:folder__owner" AS NOT MATERIALIZED (
   SELECT x.id FROM (
-  (SELECT id FROM authz_int."folder__owner")
+  SELECT r."id" AS id FROM "cx"."folders" r WHERE r."owner_id" = (SELECT v FROM "authz__reader:uid")) x
+  WHERE EXISTS (SELECT 1 FROM "cx"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false))),
+  "authz__view:project__lead" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "cx"."projects" r WHERE r."lead_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:project__file" AS NOT MATERIALIZED (
+  SELECT id FROM "authz__view:project__lead"),
+  "authz__view:folder__parent__file__on_project" AS NOT MATERIALIZED (
+  SELECT x.id FROM (
+  SELECT r."id" AS id FROM "cx"."folders" r WHERE (r."parent_type" = 'project' AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint IN (SELECT id FROM "authz__view:project__file"))) x
+  WHERE EXISTS (SELECT 1 FROM "cx"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false)))
+  SELECT x.id FROM (
+  (SELECT id FROM "authz__view:folder__owner")
   UNION ALL
   (SELECT r."id" AS id FROM "cx"."folders" r
-  WHERE r."id" IN (SELECT id FROM authz_int."folder__parent__file__on_project")
+  WHERE r."id" IN (SELECT id FROM "authz__view:folder__parent__file__on_project")
     AND coalesce((owner_id is null /* this.owner_id: nobody's */ and parent_type <> $$this.id$$ and parent_type <> e'it\'s' and parent_type <> 'this.id''s' and id <>-1), false))) x
   WHERE EXISTS (SELECT 1 FROM "cx"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
 END $f$;
@@ -4636,11 +4650,23 @@ CREATE VIEW authz_int."project__backer__fund__on_region" AS
 -- project.fund: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."project__fund__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  (SELECT id FROM authz_int."project__lead")
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__view:region__chief" AS NOT MATERIALIZED (
+  (SELECT r."id" AS id FROM "cx"."regions" r WHERE r."chief_id" = (SELECT v FROM "authz__reader:uid"))
   UNION ALL
-  (SELECT id FROM authz_int."project__backer__fund__on_region");
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'region' AND g.relation = 'chief' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)),
+  "authz__view:region__fund" AS NOT MATERIALIZED (
+  SELECT id FROM "authz__view:region__chief"),
+  "authz__view:project__backer__fund__on_region" AS NOT MATERIALIZED (
+  SELECT s."project_id" AS id FROM "cx"."backings" s WHERE (s."backer_type" = 'region' AND (CASE WHEN s."backer_type" = 'region' THEN s."backer_id" END)::bigint IN (SELECT id FROM "authz__view:region__fund"))),
+  "authz__view:project__lead" AS NOT MATERIALIZED (
+  SELECT r."id" AS id FROM "cx"."projects" r WHERE r."lead_id" = (SELECT v FROM "authz__reader:uid"))
+  (SELECT id FROM "authz__view:project__lead")
+  UNION ALL
+  (SELECT id FROM "authz__view:project__backer__fund__on_region");
 END $f$;
 
 -- folder.fund (line 24): owner or parent.fund
@@ -4700,9 +4726,15 @@ CREATE VIEW authz_int."project__judge" AS
 -- region.run: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."region__run__start"() RETURNS SETOF bigint
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  SELECT id FROM authz_int."region__chief";
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__view:region__chief" AS NOT MATERIALIZED (
+  (SELECT r."id" AS id FROM "cx"."regions" r WHERE r."chief_id" = (SELECT v FROM "authz__reader:uid"))
+  UNION ALL
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'region' AND g.relation = 'chief' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL))
+  SELECT id FROM "authz__view:region__chief";
 END $f$;
 
 -- site.run: where inheritance starts, for the current user

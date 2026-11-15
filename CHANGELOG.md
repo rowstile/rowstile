@@ -25,6 +25,16 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   stored keys are no longer the provider's; without a URL it lists the stored keys
   ([Tools](docs/reference/tools.md)).
 
+### Changed
+
+- A read through an inherited permission is faster for a reader who isn't an admin of what they read. Where the
+  permission starts for the reader is asked in one query, and that query now works out who is signed in and which
+  groups they are in once; each relation used to ask for itself, so the docs example worked out a member's teams
+  six times for one read. On a GitHub runner (20,000 folders 20 levels deep, the two builds in turn on the one
+  machine), an ordinary member opens a file in 2.2 ms where it took 2.8, and a folder in 2.4 ms where it took 3.0:
+  a fifth less. An admin's reads, `authz.list` and writes take what they took. Nothing to do: the next `apply`
+  or migration writes the functions again.
+
 ### Fixed
 
 - `authz.set_role_permissions` lets the caller add a permission they hold on an object the role is given on, even

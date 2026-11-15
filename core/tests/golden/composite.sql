@@ -4357,13 +4357,38 @@ CREATE VIEW authz_int."folder__parent__edit__on_project" AS
 -- folder.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__edit__start"() RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  (SELECT id FROM authz_int."folder__share")
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__reader:team__member__ids" AS MATERIALIZED (SELECT authz_int."team__member__ids"() AS v),
+  "authz__view:folder__editor" AS NOT MATERIALIZED (
+  SELECT (CASE WHEN (s."org_id", s."folder_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."folder_id"::bigint)::text END) AS id FROM "cx"."folder_teams" s WHERE (s."org_id", s."team_slug") IN (SELECT (k.k)."org_id", (k.k)."slug" FROM (SELECT x.id::authz_gen."team__key" AS k FROM (SELECT unnest((SELECT v FROM "authz__reader:team__member__ids")::text[]) AS id) x) k)),
+  "authz__view:org__admin" AS NOT MATERIALIZED (
+  SELECT s."org_id" AS id FROM "cx"."org_admins" s WHERE s."user_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:folder__org__admin" AS NOT MATERIALIZED (
+  SELECT ROW(r."org_id"::bigint, r."id"::bigint)::text AS id FROM "cx"."folders" r WHERE r."org_id" IN (SELECT id FROM "authz__view:org__admin")),
+  "authz__view:folder__owner" AS NOT MATERIALIZED (
+  SELECT ROW(r."org_id"::bigint, r."id"::bigint)::text AS id FROM "cx"."folders" r WHERE r."owner_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:project__lead" AS NOT MATERIALIZED (
+  SELECT ROW(r."org_id"::bigint, r."id"::bigint)::text AS id FROM "cx"."projects" r WHERE r."lead_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:project__org__admin" AS NOT MATERIALIZED (
+  SELECT ROW(r."org_id"::bigint, r."id"::bigint)::text AS id FROM "cx"."projects" r WHERE r."org_id" IN (SELECT id FROM "authz__view:org__admin")),
+  "authz__view:project__edit" AS NOT MATERIALIZED (
+  (SELECT id FROM "authz__view:project__lead")
   UNION ALL
-  (SELECT id FROM authz_int."folder__editor")
+  (SELECT id FROM "authz__view:project__org__admin")),
+  "authz__view:folder__parent__edit__on_project" AS NOT MATERIALIZED (
+  SELECT ROW(r."org_id"::bigint, r."id"::bigint)::text AS id FROM "cx"."folders" r WHERE (r."org_id", r."parent_id") IN (SELECT (k.k)."org_id", (k.k)."id" FROM (SELECT x.id::authz_gen."project__key" AS k FROM (SELECT id FROM "authz__view:project__edit") x) k) AND r."parent_type" = 'project'),
+  "authz__view:folder__share" AS NOT MATERIALIZED (
+  (SELECT id FROM "authz__view:folder__owner")
   UNION ALL
-  (SELECT id FROM authz_int."folder__parent__edit__on_project");
+  (SELECT id FROM "authz__view:folder__org__admin"))
+  (SELECT id FROM "authz__view:folder__share")
+  UNION ALL
+  (SELECT id FROM "authz__view:folder__editor")
+  UNION ALL
+  (SELECT id FROM "authz__view:folder__parent__edit__on_project");
 END $f$;
 
 -- folder.edit (line 40): share or editor or parent.edit
@@ -4398,19 +4423,43 @@ CREATE VIEW authz_int."folder__viewer" AS
 -- folder.view: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__view__start"() RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__reader:bot__me" AS MATERIALIZED (SELECT authz_int."bot__me"() AS v),
+  "authz__reader:team__member__ids" AS MATERIALIZED (SELECT authz_int."team__member__ids"() AS v),
+  "authz__view:folder__viewer" AS NOT MATERIALIZED (
+  (SELECT g.object_id::text AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:uid") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  UNION ALL
+  (SELECT g.object_id::text AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT v FROM "authz__reader:team__member__ids")::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  UNION ALL
+  (SELECT g.object_id::text AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'bot' AND g.subject_relation = '' AND g.subject_id = (SELECT v::text FROM "authz__reader:bot__me") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  UNION ALL
+  (SELECT g.object_id::text AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'bot' AND g.subject_relation = '' AND g.subject_id = '*' AND (SELECT v FROM "authz__reader:bot__me") IS NOT NULL AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL))
   (SELECT id FROM authz_int."folder__edit")
   UNION ALL
-  (SELECT id FROM authz_int."folder__viewer");
+  (SELECT id FROM "authz__view:folder__viewer");
 END $f$;
 
 -- project.view: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."project__view__start"() RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT ROWS 100 AS $f$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
-  SELECT id FROM authz_int."project__edit";
+  WITH "authz__reader:uid" AS MATERIALIZED (SELECT authz.uid() AS v),
+  "authz__view:org__admin" AS NOT MATERIALIZED (
+  SELECT s."org_id" AS id FROM "cx"."org_admins" s WHERE s."user_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:project__lead" AS NOT MATERIALIZED (
+  SELECT ROW(r."org_id"::bigint, r."id"::bigint)::text AS id FROM "cx"."projects" r WHERE r."lead_id" = (SELECT v FROM "authz__reader:uid")),
+  "authz__view:project__org__admin" AS NOT MATERIALIZED (
+  SELECT ROW(r."org_id"::bigint, r."id"::bigint)::text AS id FROM "cx"."projects" r WHERE r."org_id" IN (SELECT id FROM "authz__view:org__admin")),
+  "authz__view:project__edit" AS NOT MATERIALIZED (
+  (SELECT id FROM "authz__view:project__lead")
+  UNION ALL
+  (SELECT id FROM "authz__view:project__org__admin"))
+  SELECT id FROM "authz__view:project__edit";
 END $f$;
 
 -- project.view (line 29): edit or folder.view
