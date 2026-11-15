@@ -109,6 +109,38 @@ Step 6, a folder opened by a reader who holds more (p50, one client; the runs of
 
 Within a run, a reader who holds 4,000 folders pays 1.5 to 1.7 times what one who holds 100 pays.
 
+## Results of 2026-11-15, on a server shared with other work
+
+`main` at c0c33d09, PostgreSQL 16.16, `core/bench/scale.sh --large` and `--full` run by hand on a rented server:
+12 CPUs (AMD EPYC), 47 GB, shared by the server and pgbench, on a host that runs other machines' work and beside
+another project's services. It has the memory `--full` asks for, which a runner lacks. Its files in `results/`:
+`2026-11-15-1000000-files-pg16-vps.txt` and `2026-11-15-20000000-files-pg16-vps.txt`.
+
+| p95 | `--large` | `--full` |
+|---|---|---|
+| reads alone | 38.9 ms (p50 7.2) | 16.9 ms (p50 7.9) |
+| reads beside the gate's writes | 12.6 ms | 206 ms |
+| tree writes, the gate | 44.8 ms | 303 ms |
+| the big move | 1.30 s (16k below) | 9.44 s (53k below) |
+| apply, with the backfill | 17 s | 681 s |
+| `authz.verify()` after the writes | 13 s | 398 s |
+| tree writes a second, 1 client | 85 | 44 |
+| tree writes a second, 10 clients | 100 | 74 |
+| tree writes a second, 50 clients | 73 | 67 |
+| the database | 330 MB | 6.5 GB |
+
+Neither run had a failed, aborted or timed-out read or write, and `authz.verify()` said true after each.
+
+- **This server is slower than a runner.** At `--large`, with the same build, a read's median is 7.2 ms here
+  against 2.1 and 3.3 ms on the two runners of 2026-11-15, one client makes 85 tree writes a second against 185
+  and 237, and a reader who is shared 100 folders opens one in 3.6 ms against 1.4 and 1.8. Two to three and a
+  half times: its figures say what this machine does, and the gate's limits are not judged on it.
+- **What it adds is the full size with memory to spare**, on this build: it ran to the end, with nothing failed.
+  Between the two sizes on this one machine, twenty times apart, a read's median went from 7.2 to 7.9 ms, and one
+  client's tree writes from 85 to 44 a second. Loading, applying and vacuuming took forty of the run's fifty-one
+  minutes.
+- The figures of 2026-10-03, below, are still the ones from a machine of its own.
+
 ## Results of 2026-10-03, on a machine of its own, from a build before the rename
 
 These figures were measured on 2026-10-03 by the build of that day, before the project took the name rowstile:
