@@ -13,9 +13,12 @@ unit_test.py reads the functions here.
 A name too many does no harm (a column more to try); one too few would hide a clash.
 
 A row has the same trouble. `to_jsonb(n)` with `FROM new_rows n` is the row only while the table has no column
-called n: `rows_by_alias` finds, in a statement's code, each row of the app's named by its alias alone. What the
-SQL calls a row by is printed with the names the functions keep: `tests/hand_answers.sh --kept-names` gives the
-tables a column of each.
+called n: `rows_by_alias` finds, in a statement's code, each row of the app's named by its alias alone.
+
+And so has every word the SQL writes by itself: a column of rowstile's own tables or of a query (`x`, `id`) is the
+app's column of that name where a table that has one is in scope nearer. What is printed is all three: the names
+the functions keep, what the SQL calls a row by, and every word it writes by itself (`written`).
+`tests/hand_answers.sh --kept-names` gives the tables a column of each.
 
 In PL/pgSQL a name is looked up in the piece it is written in (a statement, an IF's condition): `pieces` cuts a
 body into them, `columns_in_scope` says which may read the app's columns, and `bare` whether one writes a name by
@@ -310,6 +313,23 @@ def given(sql: str) -> set[str]:
     return out
 
 
+def written(sql: str) -> set[str]:
+    """Every word the SQL writes by itself somewhere, in lower case: a name without quotes, not after a dot or `::`
+    (a column of something, a type), not before a dot or a parenthesis (what a column is of, a function). A column
+    of rowstile's own tables, a query's column (`x`, `id`), a keyword: where a table of the app's is in scope and
+    has a column of that name, the word may be read as that column."""
+    out: set[str] = set()
+    for _, statement in statements.split(sql):
+        for part in read_apart(statement):
+            words = [m.group(0) for m in WORD.finditer(part)]
+            for i, word in enumerate(words):
+                if not re.fullmatch(NAME, word) or (i and words[i - 1] in (".", "::")):
+                    continue
+                if i + 1 == len(words) or words[i + 1] not in (".", "("):
+                    out.add(word.lower())
+    return out
+
+
 def main() -> int:
     sql = sys.stdin.read()
     names = kept(sql)
@@ -318,6 +338,8 @@ def main() -> int:
         return 1
     for alias in given(sql):
         names.setdefault(alias, set()).add("(a row is called so)")
+    for word in written(sql):
+        names.setdefault(word, set()).add("(written by itself)")
     for name in sorted(names):
         print(name + (": " + ", ".join(sorted(names[name])) if "--by" in sys.argv else ""))
     return 0

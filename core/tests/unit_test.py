@@ -1242,6 +1242,23 @@ class OwnNames(unittest.TestCase):
             self.assertIn(kind, met)
         self.assertIn("authz_int.dependents", met)
 
+    def test_every_word_the_sql_writes_by_itself_is_read(self) -> None:
+        """What tests/hand_answers.sh --kept-names gives the tables a column of, beside the names the functions keep:
+        a word written by itself may be read as a column of the app's where a table that has one is in scope."""
+        sql = (
+            'CREATE VIEW authz_int.v AS SELECT x."id" AS id, relation, g.kind::text, count(*) AS n\n'
+            '  FROM "app"."t" x JOIN authz.shares g ON g.object_id = x."id"::text WHERE object_type = \'doc\';\n'
+            "CREATE FUNCTION authz_int.f(p_id bigint) RETURNS boolean LANGUAGE plpgsql AS $f$\n"
+            "BEGIN\n  RETURN found;  -- gone\nEND $f$;\n"
+            'DO $d$ BEGIN EXECUTE \'CREATE TRIGGER t BEFORE UPDATE ON "app"."t" WHEN (f(NEW.*, tg_one)) '
+            "EXECUTE FUNCTION g()'; END $d$;\n"
+        )
+        words = kept_names.written(sql)
+        # a query's column, a column of rowstile's own table, an alias where it is given, a keyword, a variable
+        self.assertLessEqual({"id", "relation", "n", "object_type", "x", "g", "select", "found", "tg_one"}, words)
+        # not a column of something, a type, a function, a string's or a comment's words, a quoted name, a header's
+        self.assertEqual(words & {"kind", "text", "count", "doc", "gone", "object_id", "p_id", "new", "app"}, set())
+
     def test_a_row_named_by_its_alias_alone_is_found(self) -> None:
         def found(sql: str) -> list[str]:
             return [alias for part in kept_names.read_apart(sql) for alias, _ in kept_names.rows_by_alias(part)]

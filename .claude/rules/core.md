@@ -218,7 +218,9 @@ For one suite, start a container and run it inside:
   `authz__.v_n`); what a statement puts a value into (`INTO v`, `v :=`, `FOR v IN`) stays bare, and a condition
   beside a query goes in an `IF` of its own (`IF TG_OP = 'TRUNCATE' THEN IF NOT EXISTS (...)`). The test reads
   each piece of a body apart, and `tests/hand_answers.sh --kept-names` runs the hand-answered policies again on
-  tables that have a column of every name the generated SQL keeps.
+  tables that have a column of every name the generated SQL keeps and of every word it writes by itself (some 500 a
+  table): a query's column or one of rowstile's own tables', written bare inside a query on a table of the app's, is
+  that table's column where it has one, so name it by its query (`c.id`).
 - Mutating API functions call `authz_int.check_writable()` first (scopes / view-as are read-only).
 - Anything a later function calls must exist before it in `compile()` output order, or be plpgsql (bodies
   resolve at run time); SQL-language functions referencing later objects sit between
