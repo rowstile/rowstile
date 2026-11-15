@@ -64,11 +64,11 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
 - **A read costs what its reader holds.** A rule looks the object's ancestors up among the folders where the
   reader's permission starts (the ones they own, are shared, or reach through a team), and that set is worked
   out for each query. On GitHub's runners (2026-11-15, with 50,000 and with 250,000 folders) a reader who holds
-  4,000 folders opened a folder in 1.6 to 3.1 ms where one who holds 100 took 1.0 to 1.8 ms on the same machine:
-  1.5 to 1.7 times, or 0.15 to 0.3 ms for each thousand folders held, at both sizes
+  4,000 folders opened a folder in 2.1 to 3.4 ms where one who holds 100 took 1.3 to 1.9 ms on the same machine:
+  1.7 to 1.9 times, or 0.2 to 0.4 ms for each thousand folders held
   ([`core/bench/README.md`](../../core/bench/README.md), step 6). How a reader comes to hold them counts for
   more than how many. An ordinary member of the benchmark, whose folders come through nested teams, ownership and
-  shares at once, opened a folder 2.3 to 2.5 times slower than an org's admin in the same runs: access through one
+  shares at once, opened a folder 2.0 to 2.1 times slower than an org's admin in the same runs: access through one
   membership of something big costs nothing of the kind, and the admin, who reaches every folder, reads faster
   than any member.
   This is the design's cost, and it stays. The other way, testing the object's ancestors one by one against each
