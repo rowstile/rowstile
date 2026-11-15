@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS authz.api_keys (
 CREATE INDEX IF NOT EXISTS api_keys_by_principal ON authz.api_keys (principal_type, user_id);
 -- Settings for the functions (jwt_secret, jwt_issuer, jwt_audience, jwt_user_claim, jwt_type_claim, ...)
 CREATE TABLE IF NOT EXISTS authz.settings (key text PRIMARY KEY, value text NOT NULL);
+-- The keys an identity provider signs its tokens with (RS256), as authz.set_jwks stored them: what a check
+-- reads and no more, the modulus as a number. A key the set gave no kid is kept under ''
+CREATE TABLE IF NOT EXISTS authz.jwt_keys (
+  kid      text PRIMARY KEY,
+  n        numeric NOT NULL,
+  e        integer NOT NULL,
+  added_at timestamptz NOT NULL DEFAULT now());
 -- The audit trail: every share, role, key, request and impersonation, and relationship changes
 CREATE TABLE IF NOT EXISTS authz.audit (
   id               bigserial PRIMARY KEY,
@@ -87,7 +94,7 @@ CREATE TABLE IF NOT EXISTS authz.audit (
   detail           jsonb,
   reason           text);
 CREATE INDEX IF NOT EXISTS audit_by_object ON authz.audit (object_type, object_id, at);
-REVOKE ALL ON authz.api_keys, authz.settings, authz.audit FROM PUBLIC;
+REVOKE ALL ON authz.api_keys, authz.settings, authz.jwt_keys, authz.audit FROM PUBLIC;
 
 -- For each object with a share that starts or ends later: the next such time, when authz.announce_timed_shares()
 -- announces the object (each share's write puts its times in, a run works out the next). A database made before
@@ -223,6 +230,7 @@ GENERATED_FUNCTIONS = (
     "revoke_api_key",
     "login_key",
     "login_jwt",
+    "set_jwks",
     "view_as",
     "sync_members",
     "changes_since",

@@ -16149,7 +16149,7 @@ class Features(unittest.TestCase):
         self.assertEqual(out, [], "a refusal no check asks for by its words")
         # every RAISE is found, and carries a code but the few ErrorCodes.UNCODED lists
         self.assertEqual(len(where), len(Guards().guards()))
-        self.assertEqual(sum(1 for c in where.values() if not c), 7)
+        self.assertEqual(sum(1 for c in where.values() if not c), 9)
 
     def test_the_page_shows_the_table(self) -> None:
         with open(self.PAGE, encoding="utf-8") as fh:
@@ -16861,13 +16861,17 @@ class Worlds(unittest.TestCase):
             self.assertEqual(stage.count("jsonb_populate_record(r, "), 2 * len(governed))
 
     def test_signing_in_by_token(self) -> None:
-        """Worlds where the app signs each user in with what they sent: an API key or a JWT, tried under the
-        connection's settings, the refusal kept and the user then signed in as elsewhere."""
+        """Worlds where the app signs each user in with what they sent: an API key or a JWT (signed with a secret,
+        or by an identity provider's key), tried under the connection's settings, the refusal kept and the user
+        then signed in as elsewhere."""
         import base64
         import hmac
         import time
 
-        self.assertEqual({self.a.draw(seed, self.g.make(seed)).signs for seed in range(1, 5)}, {"", "api key", "jwt"})
+        self.assertEqual(
+            [self.a.draw(seed, self.g.make(seed)).signs for seed in range(1, 9)],
+            ["api key", "", "jwt", "RS256 jwt", "api key", "", "jwt", ""],
+        )
         # a JWT as an identity provider signs it: HS256 with the secret, who, until when, the scope, a service's type
         signed, signature = self.a.jwt("bot", "7", "read").rsplit(".", 1)
 
@@ -16881,6 +16885,31 @@ class Worlds(unittest.TestCase):
         self.assertEqual(decoded(signature), hmac.new(self.a.SECRET.encode(), signed.encode(), hashlib.sha256).digest())
         self.assertLess(json.loads(decoded(self.a.jwt("user", "1", lasts=-60).split(".")[1]))["exp"], time.time())
         self.assertNotIn("kind", json.loads(decoded(self.a.jwt("user", "1").split(".")[1])))
+        # ... or RS256 with its own key, which the token names: the public half, as its key set gives it, checks
+        # the signature (the digest padded as PKCS#1 v1.5 pads it, to the modulus's 256 bytes)
+        signed, signature = self.a.jwt("bot", "7", "read", key=self.a.KID).rsplit(".", 1)
+        head, claims = (json.loads(decoded(x)) for x in signed.split("."))
+        self.assertEqual(head, {"alg": "RS256", "typ": "JWT", "kid": "around-1"})
+        self.assertEqual({k: v for k, v in claims.items() if k != "exp"}, {"sub": "7", "kind": "bot", "scope": "read"})
+        (key,) = json.loads(self.a.jwks())["keys"]
+        self.assertEqual(
+            {k: v for k, v in key.items() if k != "n"},
+            {"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "around-1", "e": "AQAB"},
+        )
+        n = int.from_bytes(decoded(key["n"]), "big")
+        self.assertEqual(n.bit_length(), 2048)
+        digest = bytes.fromhex("3031300d060960864801650304020105000420") + hashlib.sha256(signed.encode()).digest()
+        self.assertEqual(
+            pow(int.from_bytes(decoded(signature), "big"), 65537, n).to_bytes(256, "big"),
+            b"\x00\x01" + b"\xff" * 202 + b"\x00" + digest,
+        )
+        # the tokens that must sign nobody in: another key's under the stored key's name, one bit of a signature
+        other = self.a.jwt("bot", "7", key="another")
+        self.assertEqual(json.loads(decoded(other.split(".")[0]))["kid"], "around-1")
+        self.assertNotEqual(
+            pow(int.from_bytes(decoded(other.rsplit(".", 1)[1]), "big"), 65537, n).to_bytes(256, "big")[:2], b"\x00\x01"
+        )
+        self.assertEqual(json.loads(decoded(self.a.jwt("user", "1", alg="RS256").split(".")[0]))["alg"], "RS256")
         keys = {
             self.a.api_key(u, scope, what) for u in ("1", "2") for scope in ("", "read") for what in ("", "expired")
         }
@@ -16908,6 +16937,7 @@ class Worlds(unittest.TestCase):
         self.assertIn("'', now() - interval '1 hour', NULL)", sql)
         self.assertIn("'', NULL, now())", sql)
         self.assertIn("('jwt_type_claim', 'kind')", sql)
+        self.assertIn(f"DO $$ BEGIN PERFORM authz.set_jwks('{self.a.jwks()}'); END $$;", sql)
         # the app's transaction: the connection's settings first, then the token, then the request's context
         w = self.a.World(1, session="member", signs="api key", decoys=True, read_only=True)
         w.settings = [("DateStyle", "German, DMY")]
@@ -16933,6 +16963,16 @@ class Worlds(unittest.TestCase):
         self.assertIn("PERFORM set_config('authz.principal_type', 'bot', true);", text)
         self.assertLess(text.index("END $$;"), text.index("SET LOCAL ROLE app_user;"))
         self.assertNotIn("login_", self.a.transaction(self.a.World(1, session="set role"), "1", checker, [], True))
+        # a world of RS256 JWTs: each one says so, and names the stored key; the logins that must refuse know both
+        w = self.a.World(1, session="member", signs="RS256 jwt")
+        self.assertIn("signing in with each user's RS256 jwt", w.describe())
+        token = re.search(r"authz\.login_jwt\('([\w-]+)\.", self.a.transaction(w, "1", checker, [], reads=True))
+        self.assertEqual(json.loads(decoded(cast("re.Match[str]", token)[1]))["alg"], "RS256")
+        self.assertEqual(self.a.REFUSALS["RS256 jwt"], ("the token names no active user",))
+        refused = self.a.bad_tokens(checker)
+        self.assertEqual(len(refused), 11)
+        self.assertEqual(sum("RS256" in what for what in refused), 4)
+        self.assertEqual(len(set(refused.values())), 11)
 
     def test_every_two_features_of_the_worlds_meet_in_the_full_runs(self) -> None:
         """--pairs 1000, what the full run checks: about two dozen worlds (no fewer than twenty-four could: six kinds of

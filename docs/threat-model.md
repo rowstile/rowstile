@@ -29,6 +29,7 @@ outside the project.
 | **The app's backend** (the app role, or a member of it: the roles that may call `authz.act_as()`) | say who is signed in, per transaction | |
 | **The app role** (`app role` in the policy; the backend connects as it) | nothing beyond the rules | read or change rows the rules don't allow, touch rowstile's internals, turn row-level security off, share more than it holds, approve its own requests |
 | **Anyone signed in with an API key or JWT** | act as that user, within the key's scopes | widen the scopes, act as someone else |
+| **The identity provider** (whoever holds `jwt_secret`, or the private half of a key stored with `authz.set_jwks`) | say who each of its tokens signs in, and with which scopes | |
 | **The sync engine** (`sync role`, a preview: Electric, Zero, PowerSync) | read every row (it holds BYPASSRLS) and the sync index, and serve each client the rows the index gives its keys | read a masked column, or be the app role |
 
 The trust boundary is between the app role and everything above it. A bug in the app (say, SQL
@@ -51,6 +52,13 @@ do depends on identity:
 - **If the app role itself is compromised**, the attacker can claim any user either way: the
   backend is trusted to say who is signed in. Keep the app role's credentials inside the
   backend, and sign other clients in with keys or JWTs.
+- **A token is believed as whoever signed it.** Whoever holds `jwt_secret`, or the private half of a key
+  stored with `authz.set_jwks`, signs in as anyone, and so does whoever writes those rows: the owner, not the
+  app role. <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/identity.sh "the app role cannot store keys"; tests/identity.sh "... nor read them" -->
+  The stored keys are public: a copy of a database that holds `jwt_secret` lets its reader sign tokens, and a
+  copy that holds a provider's keys alone doesn't.
+  A key the provider retired is believed until the owner stores the provider's key set again
+  ([Identity](reference/identity.md)). <!-- checked: tests/identity.sh "a token signed by a key that left the set" -->
 
 ## What stops what
 
@@ -69,6 +77,7 @@ do depends on identity:
 | learn who has access, or the shares or links on, an object they can't share | `authz.who`, `authz.list_shares` and `authz.list_links` refuse, the same way for missing objects; so does `authz.revoke_link`, whether or not the id names a link; `authz.explain` for another user stops at what the one asking can't see, and leaves out who made a share and until when where they can't list the shares | adversarial.sh <!-- checked: tests/adversarial.sh "why someone else sees her file stops at the folder above it she can't see"; tests/adversarial.sh "names the share but not who made it or until when, as she can't list its shares"; tests/adversarial.sh "who may see a hidden object"; tests/adversarial.sh "listing the shares of a hidden object"; tests/adversarial.sh "listing the links of a hidden object"; tests/adversarial.sh "answers as for a missing file"; tests/multi_scenario.sql "nor turn one off, whether its id names a link or not" --> |
 | approve their own access request, decide one they can't share | `authz.decide_request()` checks the decider | governance.sh, adversarial.sh <!-- checked: tests/governance.sh "carol cannot approve her own request"; tests/governance.sh "alice cannot decide it"; tests/adversarial.sh "approving her own request" --> |
 | act as another user; widen a key's scopes; write during "view as" | signed sessions (above); scoped and view-as sessions are read-only where they must be | sessions.sh, identity.sh <!-- checked: tests/sessions.sh "changing authz.user_id after signing in is an error"; tests/identity.sh "a session limited to a scope cannot make a key with another"; tests/identity.sh "a key that may only view as someone"; tests/identity.sh "and cannot change anything"; tests/identity.sh "a write its scopes hold: viewing as alice, an UPDATE of her own file changes nothing" --> |
+| sign in with a token its provider didn't sign: one that says it needs no signature, one signed with the provider's public key as if it were the secret, one that names a key nobody stored | a token's `alg` chooses its check, HS256 against `jwt_secret` alone and RS256 against the stored keys alone; any other `alg`, and a `kid` that names no stored key, is refused | identity.sh <!-- checked: tests/identity.sh "alg none, naming a stored key"; tests/identity.sh "an HS256 token signed with the public key as its secret"; tests/identity.sh "a token that says RS256, signed with the secret"; tests/identity.sh "a token that names a key nobody stored" --> |
 | a stale closure table granting access after a move | the type-wide tree lock; serialization errors in stricter isolation levels | interleave.py, stress.sh, concurrency.sh <!-- checked: tests/interleave.py "inheritance tables exact after each"; tests/stress.sh "the inheritance tables match a rebuild"; tests/concurrency.sh "the late writer gets a serialization error (the app retries)" --> |
 | a policy with a mistake that silently grants too much | compile-time and apply-time checks with line numbers; conditions that decide inheritance must not depend on time or user | policy_errors.py, fuzz_parser.py <!-- checked: tests/policy_errors.py "inheritance that depends on the time"; tests/policy_errors.py "inheritance that depends on the user"; tests/fuzz_parser.py "refused without a line number" --> |
 

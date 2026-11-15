@@ -110,6 +110,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ716](AZ716.md): Signed in as someone else already
 - [AZ717](AZ717.md): A share of yours is in the way
 - [AZ718](AZ718.md): The review's deadline passed
+- [AZ719](AZ719.md): A key set with no key to check tokens with
 
 ## The sync index (a preview)
 

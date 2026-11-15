@@ -118,8 +118,38 @@ done < <(blocks authz)
 echo "-- SQL runs on the docs app"
 while IFS=$'\t' read -r id page kind line why; do
   [ -z "$why" ] || continue
+  # the key set identity.md stores leaves its key's modulus out ("..."): a key made here stands in for the provider's
+  if grep -q "authz.set_jwks(" "$T/blocks/$id"; then
+    openssl genrsa -out "$T/provider.pem" 2048 2>/dev/null
+    python3 - "$T/provider.pem" "$T/blocks/$id" <<'PY'
+import base64, subprocess, sys
+pem, block = sys.argv[1:]
+n = subprocess.run(["openssl", "rsa", "-in", pem, "-noout", "-modulus"], check=True, capture_output=True, text=True).stdout.strip().split("=")[1]
+with open(block, encoding="utf-8") as fh:
+    sql = fh.read()
+with open(block, "w", encoding="utf-8") as fh:
+    fh.write(sql.replace('"n": "..."', '"n": "%s"' % base64.urlsafe_b64encode(bytes.fromhex(n)).rstrip(b"=").decode()))
+PY
+  fi
   out=$(quiet -At -d "$DB" -f "$T/blocks/$id" 2>&1) && ok "$page, the SQL on line $line runs on the docs app" || bad "$page, the SQL on line $line" "$out"
   handled "$id"
+  # ... and a token that provider signs with it, naming the key as the set does, signs in
+  if grep -q "authz.set_jwks(" "$T/blocks/$id"; then
+    kid=$(sed -n 's/.*"kid": "\([^"]*\)".*/\1/p' "$T/blocks/$id")
+    issuer=$(psql -X -q -At -d "$DB" -c "SELECT value FROM authz.settings WHERE key = 'jwt_issuer'")
+    token=$(python3 - "$T/provider.pem" "$kid" "$issuer" <<'PY'
+import base64, json, subprocess, sys, time
+pem, kid, issuer = sys.argv[1:]
+part = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+head, claims = {"alg": "RS256", "typ": "JWT", "kid": kid}, {"sub": "1", "iss": issuer, "exp": int(time.time()) + 300}
+msg = part(json.dumps(head).encode()) + "." + part(json.dumps(claims).encode())
+print(msg + "." + part(subprocess.run(["openssl", "dgst", "-sha256", "-sign", pem], input=msg.encode(), check=True, capture_output=True).stdout))
+PY
+)
+    got=$(psql -X -q -At -d "$DB" -c "BEGIN" -c "SET LOCAL ROLE app_user" -c "SELECT authz.login_jwt('$token')" -c "SELECT authz.uid()" -c "COMMIT" 2>&1 | tail -n 1)
+    [ -n "$kid" ] && [ "$got" = 1 ] && ok "the key set identity.md stores: a token signed by that key, naming it, signs in" ||
+      bad "a token for the key set identity.md stores" "$got"
+  fi
   # the settings identity.md says JWT login reads: a token signed with the secret it sets, from its issuer
   if grep -q "'jwt_secret'" "$T/blocks/$id"; then
     secret=$(sed -n "s/.*('jwt_secret', '\([^']*\)').*/\1/p" "$T/blocks/$id")

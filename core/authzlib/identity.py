@@ -614,8 +614,87 @@ BEGIN
                            || sha256(p_msg));
 END $f$;
 
--- Sign in with a JWT (HS256) for this transaction: SELECT authz.login_jwt('eyJ...')
--- Settings (authz.settings): jwt_secret (required), jwt_issuer, jwt_audience, jwt_user_claim (default sub),
+-- Store the keys your identity provider signs its tokens with (RS256): its key set as it serves it (a JWKS, RFC
+-- 7517), which replaces the stored one. For the tables' owner (an administrator, a job that runs when the keys
+-- rotate): whoever writes a key signs in as anyone.
+--   SELECT * FROM authz.set_jwks('{{"keys": [...]}}')
+-- Kept: RSA keys for signatures (use absent or sig, key_ops absent or with verify, alg absent or RS256) of 2048
+-- to 4096 bits with the exponent 65537. A row for each key says what became of it: added, replaced (its kid has
+-- another key now), kept, removed (it left the set), or skipped, and why. A set that leaves no key is refused,
+-- saying why each key was skipped, and the stored keys stay: a fetch that failed must not sign everyone out.
+CREATE FUNCTION authz.set_jwks(p_jwks jsonb) RETURNS TABLE (kid text, change text, why text)
+LANGUAGE plpgsql {DEF} AS $f$
+DECLARE k jsonb; v_n numeric; v_e numeric; v_kids text[] := '{{}}'; v_ns numeric[] := '{{}}'; r record;
+        v_skipped text[] := '{{}}';
+BEGIN
+  FOR k IN SELECT x FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_jwks->'keys') = 'array' THEN p_jwks->'keys'
+                                                   ELSE '[]' END) x LOOP
+    kid := coalesce(k->>'kid', ''); change := 'skipped'; why := NULL; v_n := NULL; v_e := NULL;
+    IF k->>'kty' IS DISTINCT FROM 'RSA' THEN
+      why := 'not an RSA key';
+    ELSIF (k ? 'use' AND k->>'use' IS DISTINCT FROM 'sig')
+          OR (k ? 'key_ops' AND NOT coalesce(k->'key_ops' ? 'verify', false)) THEN
+      why := 'not a key for signatures';
+    ELSIF k ? 'alg' AND k->>'alg' IS DISTINCT FROM 'RS256' THEN
+      why := 'for another algorithm than RS256';
+    ELSIF kid = ANY (v_kids) THEN
+      why := 'the same kid as a key before it';
+    ELSE
+      BEGIN
+        v_n := authz_int.b2n(authz_int.b64url(k->>'n'));
+        v_e := authz_int.b2n(authz_int.b64url(k->>'e'));
+      EXCEPTION WHEN OTHERS THEN
+        v_n := NULL;
+      END;
+      IF v_n IS NULL OR v_e IS NULL THEN
+        why := 'no modulus and exponent in base64url';
+      ELSIF v_e <> 65537 THEN
+        why := 'an exponent other than 65537';
+      ELSIF v_n < authz_int.b2n(decode('80' || repeat('00', 255), 'hex'))
+            OR v_n >= authz_int.b2n(decode('01' || repeat('00', 512), 'hex')) THEN
+        why := 'a modulus under 2048 bits or over 4096';
+      END IF;
+    END IF;
+    IF why IS NULL THEN
+      v_kids := v_kids || kid; v_ns := v_ns || v_n;
+    ELSE
+      v_skipped := v_skipped || (CASE WHEN kid = '' THEN 'a key with no kid' ELSE 'key ' || kid END || ': ' || why);
+      RETURN NEXT;
+    END IF;
+  END LOOP;
+  IF cardinality(v_kids) = 0 THEN
+    RAISE EXCEPTION 'the key set holds no key to check tokens with (an RSA key for signatures, 2048 to 4096 bits, exponent 65537)'
+      USING ERRCODE = 'invalid_parameter_value',
+            DETAIL = CASE WHEN cardinality(v_skipped) = 0 THEN 'it holds no keys at all'
+                          ELSE array_to_string(v_skipped[1:10], '; ') END,
+            HINT = 'the stored keys stay as they were (rowstile help AZ719)';
+  END IF;
+  why := NULL;
+  FOR r IN DELETE FROM authz.jwt_keys j WHERE j.kid <> ALL (v_kids) RETURNING j.kid AS gone LOOP
+    kid := r.gone; change := 'removed';
+    RETURN NEXT;
+  END LOOP;
+  FOR i IN 1..cardinality(v_kids) LOOP
+    kid := v_kids[i];
+    IF EXISTS (SELECT 1 FROM authz.jwt_keys j WHERE j.kid = v_kids[i] AND j.n = v_ns[i] AND j.e = 65537) THEN
+      change := 'kept';
+    ELSIF EXISTS (SELECT 1 FROM authz.jwt_keys j WHERE j.kid = v_kids[i]) THEN
+      UPDATE authz.jwt_keys j SET n = v_ns[i], e = 65537, added_at = now() WHERE j.kid = v_kids[i];
+      change := 'replaced';
+    ELSE
+      INSERT INTO authz.jwt_keys AS j (kid, n, e) VALUES (v_kids[i], v_ns[i], 65537);
+      change := 'added';
+    END IF;
+    RETURN NEXT;
+  END LOOP;
+  PERFORM authz_int.audit('set_jwks', NULL, NULL, NULL, NULL, NULL, NULL, jsonb_build_object('kids', to_jsonb(v_kids)));
+END $f$;
+
+-- Sign in with a JWT for this transaction: SELECT authz.login_jwt('eyJ...'). The token's alg says how it is
+-- checked and nothing else does: HS256 against the secret alone (authz.settings jwt_secret), RS256 against the
+-- keys authz.set_jwks stored alone, the one the token's kid names (a token that names none: the stored key, when
+-- there is one only). So a public key never reaches the HMAC, and a check that isn't set up is never chosen.
+-- Other settings (authz.settings): jwt_issuer, jwt_audience, jwt_user_claim (default sub),
 -- jwt_type_claim (a claim naming the principal's type, for services; absent or 'user': a user).
 -- Tokens must carry exp.
 -- A 'scope' claim (space separated) limits the transaction to those policy scopes.
@@ -623,18 +702,32 @@ CREATE FUNCTION authz.login_jwt(p_token text) RETURNS text
 LANGUAGE plpgsql {DEF} AS $f$
 DECLARE parts text[] := string_to_array(coalesce(p_token, ''), '.'); v_head jsonb; v_claims jsonb; v_secret text;
         v_user text; v_type text; v_scopes text[]; v_now numeric := extract(epoch FROM now()); v_want text;
+        v_key authz.jwt_keys;
 BEGIN
   SELECT value INTO v_secret FROM authz.settings WHERE key = 'jwt_secret';
-  IF v_secret IS NULL THEN RAISE EXCEPTION 'JWT login is not configured (authz.settings jwt_secret)' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703'; END IF;
+  IF v_secret IS NULL AND NOT EXISTS (SELECT 1 FROM authz.jwt_keys) THEN RAISE EXCEPTION 'JWT login is not configured (authz.settings jwt_secret, or keys stored with authz.set_jwks)' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703'; END IF;
   BEGIN
     IF cardinality(parts) <> 3 THEN RAISE EXCEPTION 'bad'; END IF;
     v_head := convert_from(authz_int.b64url(parts[1]), 'UTF8')::jsonb;
     v_claims := convert_from(authz_int.b64url(parts[2]), 'UTF8')::jsonb;
-    -- the signatures compared through their hashes: the time it takes says nothing of how much of the token's is right
-    IF v_head->>'alg' IS DISTINCT FROM 'HS256'
-       OR sha256(authz_int.b64url(parts[3]))
-          IS DISTINCT FROM sha256(authz_int.hmac_sha256(convert_to(v_secret, 'UTF8'),
-                                                        convert_to(parts[1] || '.' || parts[2], 'UTF8'))) THEN
+    IF v_head->>'alg' = 'HS256' AND v_secret IS NOT NULL THEN
+      -- the signatures compared through their hashes: the time it takes says nothing of how much of the token's is right
+      IF sha256(authz_int.b64url(parts[3]))
+         IS DISTINCT FROM sha256(authz_int.hmac_sha256(convert_to(v_secret, 'UTF8'),
+                                                       convert_to(parts[1] || '.' || parts[2], 'UTF8'))) THEN
+        RAISE EXCEPTION 'bad';
+      END IF;
+    ELSIF v_head->>'alg' = 'RS256' THEN
+      IF v_head ? 'kid' THEN
+        SELECT j.* INTO v_key FROM authz.jwt_keys j WHERE j.kid = v_head->>'kid';
+      ELSIF (SELECT count(*) FROM authz.jwt_keys) = 1 THEN
+        SELECT j.* INTO v_key FROM authz.jwt_keys j;
+      END IF;
+      IF v_key.kid IS NULL OR authz_int.rsa_ok(authz_int.b64url(parts[3]), v_key.n, v_key.e,
+                                               convert_to(parts[1] || '.' || parts[2], 'UTF8')) IS NOT TRUE THEN
+        RAISE EXCEPTION 'bad';
+      END IF;
+    ELSE
       RAISE EXCEPTION 'bad';
     END IF;
   EXCEPTION WHEN OTHERS THEN

@@ -162,7 +162,7 @@ expect_code "... nor at the very moment it ends" "28000: invalid API key" -c "RE
   -c "SELECT authz.login_key('$SHORT')"
 
 echo "-- JWT (HS256)"
-expect_code "no secret, no JWT login" "28000: JWT login is not configured (authz.settings jwt_secret)" -c "BEGIN" -c "SELECT authz.login_jwt('a.b.c')"
+expect_code "no secret and no keys, no JWT login" "28000: JWT login is not configured (authz.settings jwt_secret, or keys stored with authz.set_jwks)" -c "BEGIN" -c "SELECT authz.login_jwt('a.b.c')"
 PSQL -c "INSERT INTO authz.settings VALUES ('jwt_secret', 's3cret-for-tests'), ('jwt_issuer', 'https://id.example')" >/dev/null
 jwt() { python3 - "$@" <<'PY'
 import base64, hashlib, hmac, json, sys, time
@@ -296,6 +296,89 @@ check "a key under 2048 bits signs nothing here" "f" "$(rsa_ok "decode('$(hex "$
 EM="decode('0001' || repeat('ff', 202) || '003031300d060960864801650304020105000420', 'hex') || sha256($MSG)"
 check "an exponent other than 65537 is refused" "f|f" \
   "RESET ROLE; SELECT concat_ws('|', authz_int.rsa_ok($EM, $N, 1, $MSG), authz_int.rsa_ok($SIG, $N, 3, $MSG))"
+
+echo "-- JWT (RS256): the provider's keys stored by the owner, a token checked against the key it names"
+jwks() {  # a key set of the keys made above: each argument is bits:kid[:more members, as JSON] (kid -: none)
+python3 - "$T" "$@" <<'PY'
+import base64, json, pathlib, subprocess, sys
+folder, keys = pathlib.Path(sys.argv[1]), []
+for spec in sys.argv[2:]:
+    bits, kid, *more = spec.split(":", 2)
+    n = subprocess.run(["openssl", "rsa", "-in", folder / f"rsa{bits}.pem", "-noout", "-modulus"], check=True, capture_output=True, text=True).stdout.strip().split("=")[1]
+    members = json.loads(more[0]) if more else {}
+    n = bytes.fromhex(("00" if members.pop("_zero_first", False) else "") + n)
+    key = {"kty": "RSA", "n": base64.urlsafe_b64encode(n).rstrip(b"=").decode(), "e": "AQAB"}
+    keys.append(key | ({} if kid == "-" else {"kid": kid}) | members)
+print(json.dumps({"keys": keys}))
+PY
+}
+rs256() {  # a token signed by a key made above: $1 its bits, $2 the kid it names (-: none), $3 sub, $4 seconds it lasts, $5 more claims
+python3 - "$T" "$@" <<'PY'
+import base64, json, pathlib, subprocess, sys, time
+folder, bits, kid, sub, ttl, extra = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]), json.loads(sys.argv[6])
+b = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+j = lambda d: b(json.dumps(d, separators=(",", ":")).encode())
+msg = j({"alg": "RS256", "typ": "JWT"} | ({} if kid == "-" else {"kid": kid})) + "." + j({"sub": sub, "exp": int(time.time()) + ttl, "iss": "https://id.example"} | extra)
+sig = subprocess.run(["openssl", "dgst", "-sha256", "-sign", folder / f"rsa{bits}.pem"], input=msg.encode(), check=True, capture_output=True).stdout
+print(msg + "." + b(sig))
+PY
+}
+set_jwks() { echo "RESET ROLE; SELECT string_agg(concat_ws(':', kid, change, why), ' | ' ORDER BY i) FROM authz.set_jwks('$1') WITH ORDINALITY AS t(kid, change, why, i)"; }
+login() { echo "BEGIN; SELECT authz.login_jwt('$1'); COMMIT;"; }
+refused() { expect_code "$1" "28000: invalid token" -c "BEGIN" -c "SELECT authz.login_jwt('$2')"; }   # $1 label, $2 token
+refused "an RS256 token, with no key stored" "$(rs256 2048 k1 2 300 '{}')"
+SET=$(jwks 2048:k1 '3072:k2:{"use": "sig", "alg": "RS256"}' '4096:ec:{"kty": "EC"}' '4096:enc:{"use": "enc"}' '4096:ops:{"key_ops": ["encrypt"]}' \
+  '4096:rs512:{"alg": "RS512"}' 1024:short '4096:e3:{"e": "Aw"}' 4096:k1 '4096:junk:{"n": "!!"}')
+check "the owner stores the provider's key set: each key added, or skipped and why" \
+  "ec:skipped:not an RSA key | enc:skipped:not a key for signatures | ops:skipped:not a key for signatures | rs512:skipped:for another algorithm than RS256 | short:skipped:a modulus under 2048 bits or over 4096 | e3:skipped:an exponent other than 65537 | k1:skipped:the same kid as a key before it | junk:skipped:no modulus and exponent in base64url | k1:added | k2:added" \
+  "$(set_jwks "$SET")"
+expect_code "the app role cannot store keys" "42501: permission denied for function set_jwks" -c "SELECT authz.set_jwks('$SET')"
+expect_code "... nor read them" "42501: permission denied for table jwt_keys" -c "SELECT count(*) FROM authz.jwt_keys"
+check "a token signed by a stored key signs in as bob, with its scope" "2|read" \
+  "BEGIN; SELECT authz.login_jwt('$(rs256 2048 k1 2 300 '{"scope": "read"}')'); SELECT authz.uid() || '|' || current_setting('authz.scopes'); COMMIT;"
+check "... and one signed by a 3072-bit key" "2" "$(login "$(rs256 3072 k2 2 300 '{}')")"
+refused "a token that names a key nobody stored" "$(rs256 4096 k3 2 300 '{}')"
+refused "another key's signature under a stored kid" "$(rs256 3072 k1 2 300 '{}')"
+refused "an RS256 token that names no key, with two stored" "$(rs256 2048 - 2 300 '{}')"
+refused "alg none, naming a stored key" "$(jwt s3cret-for-tests 2 300 '{"_header": {"alg": "none", "kid": "k1"}}')"
+# the known way in: an HS256 token signed with the public key, which anyone has, as its secret
+refused "an HS256 token signed with the public key as its secret" \
+  "$(jwt "$(openssl rsa -in "$T/rsa2048.pem" -pubout 2>/dev/null)" 2 300 '{"_header": {"alg": "HS256", "kid": "k1"}}')"
+refused "a token that says ES256: neither a secret nor a stored key checks it" "$(jwt s3cret-for-tests 2 300 '{"_header": {"alg": "ES256", "kid": "k1"}}')"
+refused "a token that says RS256, signed with the secret" "$(jwt s3cret-for-tests 2 300 '{"_header": {"alg": "RS256", "kid": "k1"}}')"
+expect_code "an RS256 token that expired" "28000: token expired or not yet valid" -c "BEGIN" -c "SELECT authz.login_jwt('$(rs256 2048 k1 2 -10 '{}')')"
+expect_code "an RS256 token from another issuer" "28000: token from another issuer" -c "BEGIN" \
+  -c "SELECT authz.login_jwt('$(rs256 2048 k1 2 300 '{"iss": "https://evil.example"}')')"
+check "an HS256 token still signs in beside the keys" "2" "$(login "$(jwt s3cret-for-tests 2 300 '{}')")"
+# the keys rotate: the next set replaces the stored one
+check "the next key set replaces the stored one: a key that left is removed, one that stays is kept" "k1:removed | k2:kept" "$(set_jwks "$(jwks 3072:k2)")"
+refused "a token signed by a key that left the set" "$(rs256 2048 k1 2 300 '{}')"
+check "a token that names no key, with one stored: checked against that one" "2" "$(login "$(rs256 3072 - 2 300 '{}')")"
+refused "... and refused when another key signed it" "$(rs256 2048 - 2 300 '{}')"
+check "a kid given another key: replaced" "k2:replaced" "$(set_jwks "$(jwks 4096:k2)")"
+check "... the new key's tokens sign in (4096 bits)" "2" "$(login "$(rs256 4096 k2 2 300 '{}')")"
+refused "... and the old key's no more" "$(rs256 3072 k2 2 300 '{}')"
+check "a key with no kid, its modulus written with a zero byte first" "k2:removed | :added" "$(set_jwks "$(jwks '2048:-:{"_zero_first": true}')")"
+check "... signs for a token that names no key" "2" "$(login "$(rs256 2048 - 2 300 '{}')")"
+refused "... and not for one that names a key" "$(rs256 2048 k1 2 300 '{}')"
+NO_KEYS="22023: the key set holds no key to check tokens with (an RSA key for signatures, 2048 to 4096 bits, exponent 65537)"
+expect_code "a key set that leaves no key is refused" "$NO_KEYS" -c "RESET ROLE" -c "SELECT authz.set_jwks('$(jwks '4096:ec:{"kty": "EC"}')')"
+said=$(psql -X -q -At -d "$DB" -c "SELECT authz.set_jwks('$(jwks '4096:ec:{"kty": "EC"}' 1024:-)')" 2>&1 | grep '^DETAIL:  ')
+[ "$said" = "DETAIL:  key ec: not an RSA key; a key with no kid: a modulus under 2048 bits or over 4096" ] &&
+  echo "ok    ... saying why each key was skipped" || { echo "FAIL  why each key was skipped: $said"; fails=$((fails + 1)); }
+said=$(psql -X -q -At -d "$DB" -c "SELECT authz.set_jwks('{}')" 2>&1 | grep -E '^(DETAIL|HINT):  ' | tr '\n' ' ')
+[ "$said" = "DETAIL:  it holds no keys at all HINT:  the stored keys stay as they were (rowstile help AZ719) " ] &&
+  echo "ok    ... or that it holds none, with its code (AZ719)" || { echo "FAIL  a key set with no keys: $said"; fails=$((fails + 1)); }
+expect_code "... and so is an answer that is no key set" "$NO_KEYS" -c "RESET ROLE" -c "SELECT authz.set_jwks('{\"error\": \"not found\"}')"
+expect_code "... and no answer at all" "$NO_KEYS" -c "RESET ROLE" -c "SELECT authz.set_jwks(NULL)"
+check "... and the stored keys stay as they were" "2" "$(login "$(rs256 2048 - 2 300 '{}')")"
+check "the audit trail says the keys were set, and which" 'set_jwks|[""]' \
+  "RESET ROLE; SELECT action || '|' || (detail->'kids')::text FROM authz.audit WHERE action = 'set_jwks' ORDER BY id DESC LIMIT 1"
+check "keys alone set JWT login up, without a secret" "2" \
+  "RESET ROLE; BEGIN; DELETE FROM authz.settings WHERE key = 'jwt_secret'; SET LOCAL ROLE app_user;
+   SELECT authz.login_jwt('$(rs256 2048 - 2 300 '{}')'); ROLLBACK;"
+expect_code "... and an HS256 token is then refused, whatever signed it" "28000: invalid token" -c "RESET ROLE" -c "BEGIN" \
+  -c "DELETE FROM authz.settings WHERE key = 'jwt_secret'" -c "SET LOCAL ROLE app_user" -c "SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{}')')"
 
 echo "-- view as (support)"
 check "erin (Acme admin) views as carol: carol's files, read-only" "3|3|5|false" \
