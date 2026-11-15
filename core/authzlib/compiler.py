@@ -1814,14 +1814,14 @@ class Core:
         name = f"{t.name}__{perm.name}__has"
         self.point_checks[f"{t.name}__{perm.name}"] = name
         # like every view (add_view): an object failing its type's where holds nothing
-        where = f"\n    AND {self.where_holds(t, 'p_id')}" if t.where else ""
+        where = f"\n    AND {self.where_holds(t, '$1')}" if t.where else ""
         self.view_sql.append(
             f"-- {t.name}.{perm.name} for one object (checks of single rows and authz.can)\n"
             f"CREATE FUNCTION authz_int.{q(name)}(p_id {t.pktype}) RETURNS boolean\n"
             f"LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
             f"BEGIN\n"
             f"  RETURN EXISTS (SELECT 1 FROM authz_int.{q(tree)} c\n"
-            f"    WHERE c.descendant = p_id\n"
+            f"    WHERE c.descendant = $1\n"
             f"      AND EXISTS (SELECT 1 FROM (\n  {self.start_sql(t, perm, flatten)}) s WHERE s.id = c.ancestor)){where};\n"
             f"END $f$;"
         )

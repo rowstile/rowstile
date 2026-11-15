@@ -250,20 +250,22 @@ CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE v_gone text[];
 BEGIN
-  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM {tbl}) THEN   -- the table is empty, and so are those under it
-    DELETE FROM authz.shares WHERE object_type = {name};
-    DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id <> '*';      -- '*' (every one signed in) names no row
-    DELETE FROM authz_int.row_marks WHERE type = {name};
-    PERFORM authz_int.requests_gone({name}, NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a
-    -- row that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
-    v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = {name}
-                                      UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = {name} AND s.subject_id <> '*'
-                                      UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = {name}) g(id)
-                    WHERE NOT EXISTS (SELECT 1 FROM {tbl} x WHERE {self.key_text(t, "x")} = g.id));
-    PERFORM authz_int.forget_marks({name}, v_gone);
-    DELETE FROM authz.shares WHERE object_type = {name} AND object_id = ANY (v_gone);
-    DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id = ANY (v_gone);
+  IF TG_OP = 'TRUNCATE' THEN
+    IF NOT EXISTS (SELECT 1 FROM {tbl}) THEN   -- the table is empty, and so are those under it
+      DELETE FROM authz.shares WHERE object_type = {name};
+      DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id <> '*';      -- '*' (every one signed in) names no row
+      DELETE FROM authz_int.row_marks WHERE type = {name};
+      PERFORM authz_int.requests_gone({name}, NULL);
+    ELSE   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a row that is gone goes
+      -- (the pending requests naming one were cancelled before, while it was there to tell)
+      v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = {name}
+                                        UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = {name} AND s.subject_id <> '*'
+                                        UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = {name}) g(id)
+                      WHERE NOT EXISTS (SELECT 1 FROM {tbl} x WHERE {self.key_text(t, "x")} = g.id));
+      PERFORM authz_int.forget_marks({name}, v_gone);
+      DELETE FROM authz.shares WHERE object_type = {name} AND object_id = ANY (v_gone);
+      DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id = ANY (v_gone);
+    END IF;
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks({name}, ARRAY({gone}));
     DELETE FROM authz.shares WHERE object_type = {name} AND object_id IN ({gone});
@@ -456,6 +458,7 @@ END $f$;
 -- whatever changed). A trigger before the update has asked it of every row already
 CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
+<<authz__>>
 DECLARE v_lines text; v_row {qt(rule.table)}; v_one boolean; v_virtual text;
 BEGIN
   IF NOT pg_catalog.row_security_active({tbl}) THEN RETURN NULL; END IF;
@@ -471,7 +474,7 @@ BEGIN
   FOR v_row IN
     SELECT (pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb(n.*))).* FROM new_rows n
     WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key_o} = {key_n} AND {same})
-      AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key_o} = {key_n})
+      AND NOT (authz__.v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key_o} = {key_n})
                AND EXISTS (SELECT 1 FROM old_rows o WHERE {same}
                            AND NOT EXISTS (SELECT 1 FROM new_rows m WHERE {self.key_text(t, "m")} = {key_o})))
   LOOP
@@ -495,7 +498,7 @@ END $f$;
         for any other row, they would tell what the rules hide (a share of a row the user can't see)."""
         sel = next((r for r in self.rules if r.table == table and r.command == "select" and not r.columns), None)
         shows = (
-            f"\n      OR EXISTS (SELECT 1 FROM {qt(table)} {alias} WHERE {self.key_is(t, alias, 'p_id')}\n"
+            f"\n      OR EXISTS (SELECT 1 FROM {qt(table)} {alias} WHERE {self.key_is(t, alias, '$1')}\n"
             f"        AND (SELECT authz_int.scope_cmd({lit(table)}, 'select')) AND {self.rule_sql(t, alias, sel, point=True)})"
             if sel
             else ""
@@ -504,7 +507,7 @@ END $f$;
             f"-- {table}: no row has the id, or the user may select it (what the rules' explanations answer for)\n"
             f"CREATE FUNCTION authz_int.{q(table + ':seen')}(p_id {t.pktype}) RETURNS boolean\n"
             f"LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
-            f"BEGIN\n  RETURN NOT EXISTS (SELECT 1 FROM {qt(table)} o WHERE {self.key_is(t, 'o', 'p_id')}){shows};\nEND $f$;"
+            f"BEGIN\n  RETURN NOT EXISTS (SELECT 1 FROM {qt(table)} o WHERE {self.key_is(t, 'o', '$1')}){shows};\nEND $f$;"
         )
 
     # --- identity -----------------------------------------------------------
@@ -567,9 +570,9 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
             tbl = qt(t.table)
             order = ", ".join(f"o.{q(c)}" for c, _ in t.key)
             after = (
-                f"({order}) > ({', '.join(f'(p_after::{t.keytype}).{q(c)}' for c, _ in t.key)})"
+                f"({order}) > ({', '.join(f'($3::{t.keytype}).{q(c)}' for c, _ in t.key)})"
                 if t.composite
-                else f"o.{q(self.pk(t))} > p_after::{t.pktype}"
+                else f"o.{q(self.pk(t))} > $3::{t.pktype}"
             )
             for p in self.public_perms(t):
                 cond = self.row_sql(t, "o", Ref(p), t.perms[p].loc)
@@ -584,10 +587,10 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
                     f"      IF p_limit IS NULL AND p_after IS NULL THEN\n"
                     f"        RETURN QUERY {rows}{cond};\n"
                     f"      ELSIF p_after IS NULL THEN\n"
-                    f"        RETURN QUERY {rows}{cond}\n        ORDER BY {order} LIMIT p_limit;\n"
+                    f"        RETURN QUERY {rows}{cond}\n        ORDER BY {order} LIMIT $4;\n"
                     f"      ELSE\n"
                     f"        RETURN QUERY {rows}{after} AND {cond}\n"
-                    f"        ORDER BY {order} LIMIT p_limit;\n"
+                    f"        ORDER BY {order} LIMIT $4;\n"
                     f"      END IF;"
                 )
         return "\n".join(cases), "\n".join(held)
@@ -608,7 +611,7 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
             # key doesn't cover its rows). shown: on a row the user may select (authz.can's answer)
             cases = "\n".join(
                 f"        WHEN {lit(p)} THEN RETURN EXISTS (SELECT 1 FROM {qt(t.table)} o "
-                f"WHERE {self.key_is(t, 'o', 'v_' + t.pktype)} AND ({self.can_sql(t, p)})"
+                f"WHERE {self.key_is(t, 'o', 'authz__.v_' + t.pktype)} AND ({self.can_sql(t, p)})"
                 f"{self.shown_sql(t, p, point=True) if shown else ''});"
                 for p in perms_of[t.name]
             )
@@ -632,6 +635,7 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
 -- object ask (sharing, roles, keys, view_as, break_glass, requests), where authz.can's answer is for rows they may see
 CREATE FUNCTION authz_int.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE {DEFINER_FROM_CURRENT} AS $f$
+<<authz__>>
 DECLARE{self.id_vars()}
 BEGIN
   IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN false; END IF;
@@ -643,6 +647,7 @@ END $f$;
 -- reads as a missing one; plans are cached per session)
 CREATE FUNCTION authz.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE {DEFINER_FROM_CURRENT} AS $f$
+<<authz__>>
 DECLARE v_allowed boolean;{self.id_vars()}
 BEGIN
   IF current_setting('authz_debug.log_decisions', true) = 'on'
@@ -799,8 +804,8 @@ BEGIN
 END $f$;{read_now(list(dict.fromkeys(if_rows)))}"""
         owned = [t for t in self.types.values() if t.roles and t.roles_from]
         role_owned = "\n".join(
-            f"    WHEN {lit(t.name)} THEN RETURN p_owner_type = {lit(self.role_owner_type(t))} AND p_owner_id IN "
-            f"({self.role_owners_sql(t, 'p_id' if t.composite else f'p_id::{t.pktype}')});"
+            f"    WHEN {lit(t.name)} THEN RETURN $3 = {lit(self.role_owner_type(t))} AND $4 IN "
+            f"({self.role_owners_sql(t, '$2' if t.composite else f'$2::{t.pktype}')});"
             for t in owned
         )
         role_owner_types = "\n".join(

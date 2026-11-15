@@ -56,6 +56,15 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   column explained a row of NULLs, or failed; with a column `f` or `n`, a mirror of the sync index was not filled
   with the table's rows. A row handed on whole is now written `n.*`, which is the row whatever the columns are
   called.
+- A governed table may have a column named as a generated function names something of its own (`p_id`,
+  `p_ids`, `ids`, `n1`, `v_bigint`, `tg_op`). In PL/pgSQL, Postgres refuses a bare name that is both a column of
+  a table in scope and a parameter or a variable of the function (`column reference "p_id" is ambiguous`). So on
+  a table that merely had a column `p_id`, `authz.share` and `authz.explain` failed; with a column `v_bigint`,
+  `authz.can` and `authz.who`; with `n1`, any write the change feed follows; with `p_ids`, a write to a table an
+  inheritance follows. Each was an error, never a wrong answer. Where a statement reads the app's tables, a generated
+  function now writes a parameter by position (`$1`) and a variable by its block's label (`authz__.v_bigint`),
+  which no column can be. And `authz.who` called each candidate `x` inside a query on the users table: on a users
+  table with a column `x` it failed, or listed nobody; it calls it `c.id` now.
 - `authz.set_role_permissions` lets the caller add a permission they hold on an object the role is given on, even
   where they may not select its row, as `authz.share` lets them give the role there. It asked `authz.can`, which
   answers only for rows the caller may select, and refused: "you cannot give role reviewer on a folder you cannot

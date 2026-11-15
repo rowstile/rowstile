@@ -74,11 +74,13 @@ class IdentityMixin(Core):
 CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM {tbl}) THEN   -- the table is empty, and so are those under it
-    PERFORM authz_int.keys_gone({name}, NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: the rows still there keep their keys
-    PERFORM authz_int.keys_gone({name}, ARRAY(SELECT k.user_id FROM authz.api_keys k WHERE k.principal_type = {name}
-                                              AND NOT EXISTS (SELECT 1 FROM {tbl} x WHERE {self.key_text(t, "x")} = k.user_id)));
+  IF TG_OP = 'TRUNCATE' THEN
+    IF NOT EXISTS (SELECT 1 FROM {tbl}) THEN   -- the table is empty, and so are those under it
+      PERFORM authz_int.keys_gone({name}, NULL);
+    ELSE   -- TRUNCATE ONLY, or of a table under it: the rows still there keep their keys
+      PERFORM authz_int.keys_gone({name}, ARRAY(SELECT k.user_id FROM authz.api_keys k WHERE k.principal_type = {name}
+                                                AND NOT EXISTS (SELECT 1 FROM {tbl} x WHERE {self.key_text(t, "x")} = k.user_id)));
+    END IF;
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.keys_gone({name}, ARRAY({gone}));
   ELSE
@@ -379,12 +381,10 @@ LANGUAGE sql {DEF} AS $f$
                 obj = src.obj_col
                 tbl, sc = qt(src.table), q(cols(self.source_columns(src))[0])
                 ocs = ", ".join(q(c) for c in cols(obj))
-                vals = (
-                    ", ".join(f"(p_id::{t.keytype}).{q(c)}" for c, _ in t.key) if t.composite else f"p_id::{t.pktype}"
-                )
-                this = self.key_is(t, "s", "p_id", obj) if t.composite else f"s.{q(cols(obj)[0])} = p_id::{t.pktype}"
+                vals = ", ".join(f"($2::{t.keytype}).{q(c)}" for c, _ in t.key) if t.composite else f"$2::{t.pktype}"
+                this = self.key_is(t, "s", "$2", obj) if t.composite else f"s.{q(cols(obj)[0])} = $2::{t.pktype}"
                 sync_cases.append(f"""    WHEN {lit(t.name + "." + r.name)} THEN
-      WITH want AS (SELECT DISTINCT x::{u.pktype} AS m FROM unnest(p_members) x),
+      WITH want AS (SELECT DISTINCT x::{u.pktype} AS m FROM unnest($4) x),
       del AS (DELETE FROM {tbl} s WHERE {this} AND s.{sc} NOT IN (SELECT m FROM want) RETURNING 1),
       ins AS (INSERT INTO {tbl} ({ocs}, {sc}) SELECT {vals}, w.m FROM want w
               WHERE NOT EXISTS (SELECT 1 FROM {tbl} s WHERE {this} AND s.{sc} = w.m) RETURNING 1)

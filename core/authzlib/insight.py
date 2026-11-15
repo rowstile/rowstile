@@ -278,7 +278,7 @@ class InsightMixin(Core):
                 )
             else:
                 cond = f"coalesce(({row_cond(t.where, alias)}), false)" if t.where else "true"
-            find = self.key_is(t, alias, "p_id" if t.composite else f"p_id::{t.pktype}")
+            find = self.key_is(t, alias, "$2" if t.composite else f"$2::{t.pktype}")
             cases.append(
                 f"    WHEN {lit(t.name)} THEN\n      RETURN EXISTS (SELECT 1 FROM {qt(t.table)} {alias} "
                 f"WHERE {find}\n        AND {cond});"
@@ -299,7 +299,7 @@ END $f$;"""
     @staticmethod
     def said(you: str, them: str) -> str:
         """SQL of words said of the user explained: to them (no p_asker), or of them to another who asks."""
-        return lit(you) if you == them else f"CASE WHEN p_asker IS NULL THEN {lit(you)} ELSE {lit(them)} END"
+        return lit(you) if you == them else f"CASE WHEN $4 IS NULL THEN {lit(you)} ELSE {lit(them)} END"
 
     def why_fn(self, t: Type, name: str) -> str:
         return f"authz_int.{q(t.name + '__' + name + '__why')}"
@@ -369,7 +369,7 @@ END $f$;"""
         for t in self.types.values():
             where = (
                 (
-                    f"  IF NOT EXISTS (SELECT 1 FROM {qt(t.table)} w WHERE {self.key_is(t, 'w', 'p_id')} "
+                    f"  IF NOT EXISTS (SELECT 1 FROM {qt(t.table)} w WHERE {self.key_is(t, 'w', '$1')} "
                     f"AND coalesce(({row_cond(t.where, 'w')}), false)) THEN\n"
                     f"    RETURN NEXT pad || 'no   {t.name} ' || p_id || ' fails the type''s where {{' || "
                     f"{lit(t.where)} || '}}';\n    RETURN;\n  END IF;\n"
@@ -381,7 +381,7 @@ END $f$;"""
                 out.append((self.why_fn(t, r.name), self.rel_why_sql(t, r, where)))
             for p in t.perms.values():
                 items = self.top_items(p)
-                body = "".join(self.why_item_sql(t, i, "p_id") for i in items)
+                body = "".join(self.why_item_sql(t, i, "$1") for i in items)
                 out.append(
                     (
                         None,
@@ -408,7 +408,7 @@ END $f$;""",
                     pairs = self.pair_sql(t, r, src, t.name, r.name, "obj", "subj")
                     view = f"{t.name}__{r.name}"
                     lines.append(f"""  FOR v_t IN SELECT e.subj::text AS id FROM ({pairs}) e
-             WHERE e.obj = p_id AND EXISTS (SELECT 1 FROM authz_int.{q(view)} v WHERE v.id = e.subj) LIMIT 1 LOOP
+             WHERE e.obj = $1 AND EXISTS (SELECT 1 FROM authz_int.{q(view)} v WHERE v.id = e.subj) LIMIT 1 LOOP
     IF p_asker IS NOT NULL AND NOT authz_int.asker_sees(p_asker, {lit(t.name)}, v_t.id, false) THEN
       RETURN NEXT pad || {lit("yes  through " + a(t.name) + " you can't see")};
       RETURN;
@@ -430,7 +430,7 @@ END $f$;""",
                 if sr and sr != "*" and st in self.types:
                     s = self.T(st)
                     gids = self.group_ids_sql(t, r, src, st, sr)
-                    lines.append(f"""  IF p_id IN ({part}) THEN
+                    lines.append(f"""  IF $1 IN ({part}) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM ({gids}) x LIMIT 1 LOOP
       IF p_asker IS NOT NULL AND NOT authz_int.asker_sees(p_asker, {lit(st)}, v_t.gid, false) THEN
         RETURN NEXT pad || 'yes  ' || {how} || {lit(" " + a(st) + " you can't see")};
@@ -444,18 +444,19 @@ END $f$;""",
                 else:
                     detail = (
                         # the share's details: to the user it gives the relation, or to one who may list its shares
-                        f"CASE WHEN p_asker IS NULL OR authz_int.asker_sees(p_asker, {lit(t.name)}, p_id::text, true) "
+                        f"CASE WHEN $4 IS NULL OR authz_int.asker_sees($4, {lit(t.name)}, $1::text, true) "
                         f"THEN {self.share_detail_sql(t, r, src, st, sr)} ELSE '' END"
                         if src.kind in ("shared", "roles")
                         else "''"
                     )
-                    lines.append(f"""  IF p_id IN ({part}) THEN
-    RETURN NEXT pad || 'yes  ' || {how} || {detail};
+                    lines.append(f"""  IF $1 IN ({part}) THEN
+    RETURN NEXT authz__.pad || 'yes  ' || {how} || {detail};
     RETURN;
   END IF;""")
         body = "\n".join(lines)
         return f"""CREATE FUNCTION {self.why_fn(t, r.name)}(p_id {t.pktype}, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE {DEFINER_FROM_CURRENT} AS $f$
+<<authz__>>
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
 {where}{body}
@@ -468,20 +469,20 @@ END $f$;"""
         if src.kind == "column":
             col = self.subject_id(src, "r", st)
             return (
-                f"SELECT {col} AS gid FROM {qt(t.table)} r WHERE {self.key_is(t, 'r', 'p_id')} "
+                f"SELECT {col} AS gid FROM {qt(t.table)} r WHERE {self.key_is(t, 'r', '$1')} "
                 f"AND {col} IN (SELECT id FROM authz_int.{q(view)})"
             )
         if src.kind == "table":
             col = self.subject_id(src, "s", st)
             assert src.table is not None
             return (
-                f"SELECT {col} AS gid FROM {qt(src.table)} s WHERE {self.key_is(t, 's', 'p_id', src.obj_col)} "
+                f"SELECT {col} AS gid FROM {qt(src.table)} s WHERE {self.key_is(t, 's', '$1', src.obj_col)} "
                 f"AND {col} IN (SELECT id FROM authz_int.{q(view)})"
             )
-        rel = self.role_rel_sql(t, src, "p_id") if src.kind == "roles" else f"g.relation = {lit(r.name)}"
+        rel = self.role_rel_sql(t, src, "$1") if src.kind == "roles" else f"g.relation = {lit(r.name)}"
         return (
             f"SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = {lit(t.name)} "
-            f"AND g.object_id = p_id::text AND {rel} AND g.subject_type = {lit(st)} AND g.subject_relation = {lit(sr)} "
+            f"AND g.object_id = $1::text AND {rel} AND g.subject_type = {lit(st)} AND g.subject_relation = {lit(sr)} "
             f"AND g.subject_id IN (SELECT id::text FROM authz_int.{q(view)}) AND {self.live()}"
         )
 
@@ -520,7 +521,7 @@ END $f$;"""
         # (a share that can give no one signed in the relation, to a row of a type that doesn't sign in, has no
         # source_sql for them: why_sql skips it before asking for its details)
         assert who is not None, f"no share to {st} gives the relation {r.name}"
-        rel = self.role_rel_sql(t, src, "p_id") if src.kind == "roles" else f"g.relation = {lit(r.name)}"
+        rel = self.role_rel_sql(t, src, "$1") if src.kind == "roles" else f"g.relation = {lit(r.name)}"
         role = (
             " || coalesce(' (role ' || (SELECT ro.name FROM authz.roles ro WHERE 'role:' || ro.id = g.relation) || ')', '')"
             if src.kind == "roles"
@@ -529,7 +530,7 @@ END $f$;"""
         return (
             f"coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), "
             f"coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')'){role} "
-            f"FROM authz.shares g WHERE g.object_type = {lit(t.name)} AND g.object_id = p_id::text AND {rel} "
+            f"FROM authz.shares g WHERE g.object_type = {lit(t.name)} AND g.object_id = $1::text AND {rel} "
             f"AND {who} AND {self.live()} "
             f"ORDER BY g.created_at LIMIT 1), '')"
         )
@@ -540,7 +541,8 @@ END $f$;"""
     def insight_api_sql(self) -> str:
         # a column, a link table or a share may name an id the user table doesn't have: nobody, not a user to list
         u = self.T("user")
-        is_user = f"EXISTS (SELECT 1 FROM {qt(u.table)} u WHERE u.{q(self.pk(u))} = x)"
+        # (the candidate by its query's name, c.id: alone, a name would be the users table's column of that name)
+        is_user = f"EXISTS (SELECT 1 FROM {qt(u.table)} u WHERE u.{q(self.pk(u))} = c.id)"
 
         # a type without permissions is still a type: asked for one, it has no such permission (as authz.list says)
         no_perm = "      RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';"
@@ -550,7 +552,8 @@ END $f$;"""
                 return no_perm
             cases = "\n".join(
                 f"        WHEN {lit(p)} THEN\n"
-                f"          FOR v_c IN SELECT DISTINCT x::text FROM {self.who_fn(t, p)}(v_{t.pktype}) x WHERE {is_user} LOOP\n"
+                f"          FOR v_c IN SELECT DISTINCT c.id::text FROM {self.who_fn(t, p)}(authz__.v_{t.pktype}) c(id) "
+                f"WHERE {is_user} LOOP\n"
                 f"            PERFORM set_config('authz.user_id', v_c, true);\n"
                 f"            PERFORM authz_int.sign();\n"
                 f"            IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;\n"
@@ -610,6 +613,7 @@ END $f$;
 -- Candidates come from the data (a superset); each is checked as that user (the permission itself, authz_int.can).
 CREATE FUNCTION authz.who(p_type text, p_id text, p_perm text) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+<<authz__>>
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_c text;
         v_pt text := coalesce(current_setting('authz.principal_type', true), '');
         v_scopes text := coalesce(current_setting('authz.scopes', true), '');{self.id_vars()}

@@ -477,28 +477,29 @@ CREATE TABLE {f("_reads")} (rel regclass PRIMARY KEY);""")
 -- one made for a few rows would be ruinous for a big move
 CREATE FUNCTION {f("_shift")}(p_ids {pkt}[], p_below {pkt}[]) RETURNS boolean
 LANGUAGE plpgsql {DEFINER} SET plan_cache_mode = force_custom_plan AS $f$
+<<authz__>>
 DECLARE touched {pkt}[];
 BEGIN
-  IF EXISTS (SELECT 1 FROM {f("")} t JOIN unnest(p_below) b(id) ON b.id = t.ancestor
-             WHERE t.descendant = ANY (p_ids) AND t.ancestor <> t.descendant) THEN
+  IF EXISTS (SELECT 1 FROM {f("")} t JOIN unnest($2) b(id) ON b.id = t.ancestor
+             WHERE t.descendant = ANY ($1) AND t.ancestor <> t.descendant) THEN
     RETURN false;
   END IF;
-  IF EXISTS (SELECT 1 FROM unnest(p_ids) b(_y) JOIN {tbl} c ON {self.key_is(t, "c", "b._y")}
+  IF EXISTS (SELECT 1 FROM unnest($1) b(_y) JOIN {tbl} c ON {self.key_is(t, "c", "b._y")}
              CROSS JOIN LATERAL (
                {each_source(links, "_child", "b._y")}) e
-             WHERE ({" OR ".join(allow)}) AND e._parent = ANY (p_below)) THEN
+             WHERE ({" OR ".join(allow)}) AND e._parent = ANY ($2)) THEN
     RETURN false;
   END IF;
   -- the ancestors of p_ids before (stored) and after (through their links now): no others change
   touched := ARRAY(
-    SELECT t.ancestor FROM {f("")} t WHERE t.descendant = ANY (p_ids) AND t.ancestor <> t.descendant
+    SELECT t.ancestor FROM {f("")} t WHERE t.descendant = ANY ($1) AND t.ancestor <> t.descendant
     UNION
-    SELECT u.ancestor FROM unnest(p_ids) b(_y) JOIN {tbl} c ON {self.key_is(t, "c", "b._y")}
+    SELECT u.ancestor FROM unnest($1) b(_y) JOIN {tbl} c ON {self.key_is(t, "c", "b._y")}
     CROSS JOIN LATERAL (
       {each_source(links, "_child", "b._y")}) e
     JOIN {f("")} u ON u.descendant = e._parent
     WHERE ({" OR ".join(allow)}));
-  WITH below AS MATERIALIZED (SELECT x AS _y FROM unnest(p_below) x),
+  WITH below AS MATERIALIZED (SELECT x AS _y FROM unnest($2) x),
   -- links from the part below to outside it, as they are now
   exits AS MATERIALIZED (
     SELECT e._child AS y, e._parent AS p
@@ -510,12 +511,12 @@ BEGIN
   fresh AS MATERIALIZED (
     SELECT DISTINCT d.descendant AS d, u.ancestor AS a
     FROM exits
-    JOIN {f("")} u ON u.descendant = exits.p AND u.ancestor = ANY (touched)
+    JOIN {f("")} u ON u.descendant = exits.p AND u.ancestor = ANY (authz__.touched)
     JOIN {f("")} d ON d.ancestor = exits.y
     WHERE NOT EXISTS (SELECT 1 FROM below b WHERE b._y = exits.p)),
   stale AS (
     DELETE FROM {f("")} t
-    WHERE t.ancestor = ANY (touched) AND t.descendant IN (SELECT _y FROM below)
+    WHERE t.ancestor = ANY (authz__.touched) AND t.descendant IN (SELECT _y FROM below)
       AND NOT EXISTS (SELECT 1 FROM fresh o WHERE o.d = t.descendant AND o.a = t.ancestor))
   INSERT INTO {f("")} (descendant, ancestor) SELECT d, a FROM fresh ON CONFLICT DO NOTHING;
   RETURN true;
@@ -535,7 +536,7 @@ BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   {lock}
   WITH RECURSIVE down(id) AS (
-    SELECT x FROM unnest(p_ids) AS x WHERE x IS NOT NULL
+    SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
     UNION
     SELECT e._child FROM down CROSS JOIN LATERAL (
       {each_source(links, "_parent", "down.id")}) e)
@@ -607,7 +608,7 @@ LANGUAGE plpgsql {DEFINER} AS $f$
 DECLARE bad text;
 BEGIN
   WITH RECURSIVE up(start, id) AS (
-    SELECT e._child, e._parent FROM {f("_parents")} e WHERE e._child = ANY (p_ids)
+    SELECT e._child, e._parent FROM {f("_parents")} e WHERE e._child = ANY ($1)
     UNION
     SELECT up.start, e._parent FROM up CROSS JOIN LATERAL (
       {each_source(parents, "_child", "up.id")}) e)
@@ -621,6 +622,7 @@ END $f$;""")
         sql.append(f"""-- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION {f("_on_rows")}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} AS $f$
+<<authz__>>
 DECLARE ids {pkt}[]; shift boolean := false;{" wrote boolean;" if reads else ""}
 BEGIN
   IF TG_OP = 'INSERT' THEN
@@ -634,7 +636,7 @@ BEGIN
     ids := ARRAY(
       SELECT {key("n")} FROM new_rows n JOIN old_rows o ON {key("o")} = {key("n")}
       WHERE {changed}
-      UNION SELECT unnest(ids));
+      UNION SELECT unnest(authz__.ids));
   ELSE
     ids := ARRAY(SELECT {key("o")} FROM old_rows o);
   END IF;
@@ -982,7 +984,7 @@ BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   {lock}
   WITH RECURSIVE down(_t, _i) AS (
-    SELECT x.t, x.i FROM unnest(p_types, p_ids) AS x(t, i) WHERE x.i IS NOT NULL
+    SELECT x.t, x.i FROM unnest($1, $2) AS x(t, i) WHERE x.i IS NOT NULL
     UNION
     SELECT e.ct, e.c FROM down CROSS JOIN LATERAL (
       {chr(10) + "      UNION ALL ".join(down_steps) if down_steps else "SELECT NULL::text AS ct, NULL::text AS c WHERE false"}) e)
@@ -1068,7 +1070,7 @@ DECLARE bad text;
 BEGIN
   -- a loop means some node reaches itself through at least one link
   WITH RECURSIVE up(_st, _s, _at, _a, _n) AS (
-    SELECT x.t, x.i, x.t, x.i, 0 FROM unnest(p_types, p_ids) AS x(t, i)
+    SELECT x.t, x.i, x.t, x.i, 0 FROM unnest($1, $2) AS x(t, i)
     UNION
     SELECT up._st, up._s, e.pt, e.p, 1 FROM up CROSS JOIN LATERAL (
       {chr(10) + "      UNION ALL ".join(loop_steps)}) e)

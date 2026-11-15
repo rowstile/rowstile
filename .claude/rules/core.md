@@ -211,7 +211,14 @@ For one suite, start a container and run it inside:
   `tests/adversarial.sh` holds a write rule on a link table with a column `p_id`. A row has the same trouble:
   `to_jsonb(n)` is the row `n` only while the table has no column called `n`. A row handed on whole is written
   `n.*` (`to_jsonb(NEW.*)` in a trigger's `WHEN`: the same value, so no ALTER is stopped); the same test finds a
-  row named by its alias alone, and `tests/children.sh`'s jobs have columns `n`, `o`, `new` and `old`.
+  row named by its alias alone, and `tests/children.sh`'s jobs have columns `n`, `o`, `new` and `old`. In PL/pgSQL
+  a bare name that is a column in scope and a name of the function's is refused as ambiguous (42702): where a
+  statement reads a table of the app's, a statement's rows or a row laid out (`(SELECT ($1).*)`), write a
+  parameter by position (`$1`) and a variable by its block's label (`<<authz__>>` before `DECLARE`, then
+  `authz__.v_n`); what a statement puts a value into (`INTO v`, `v :=`, `FOR v IN`) stays bare, and a condition
+  beside a query goes in an `IF` of its own (`IF TG_OP = 'TRUNCATE' THEN IF NOT EXISTS (...)`). The test reads
+  each piece of a body apart, and `tests/hand_answers.sh --kept-names` runs the hand-answered policies again on
+  tables that have a column of every name the generated SQL keeps.
 - Mutating API functions call `authz_int.check_writable()` first (scopes / view-as are read-only).
 - Anything a later function calls must exist before it in `compile()` output order, or be plpgsql (bodies
   resolve at run time); SQL-language functions referencing later objects sit between
