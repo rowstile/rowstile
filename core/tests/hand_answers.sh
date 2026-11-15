@@ -8,9 +8,19 @@
 # pass: one `ok` a check. A check the database answers with an error rather than a refusal (`refused` is a refusal
 # only: 42501, or a write that changes no row) ends with `-- error: ` and the error's words.
 #   PGHOST=... PGUSER=authz_owner tests/hand_answers.sh
+# With --kept-names, the same answers from tables that have more columns: one for every name the policy's generated
+# SQL keeps for itself (tests/kept_names.py: a function's parameter or variable, PL/pgSQL's own found, new, old, and
+# what the SQL calls a row by: n, o, a table's own name), NULL in every row. A table's columns may have any name:
+# SQL that takes one of them for a name of its own, or can't tell which is meant (42702, ambiguous), gives another
+# answer here.
 set -u
 cd "$(dirname "$0")/.."
-DB=authz_hand_answers
+DB=authz_hand_answers WHAT="hand answers" KEPT=0
+case "${1:-}" in
+  --kept-names) DB=authz_hand_names WHAT="hand answers, a column of every kept name" KEPT=1;;
+  "") ;;
+  *) echo "usage: $0 [--kept-names]" >&2; exit 2;;
+esac
 fails=0
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
@@ -21,6 +31,12 @@ for f in tests/hand/*.authz; do
   name=$(basename "$f" .authz)
   dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
   PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f tests/hand/schema.sql >/dev/null || exit 1
+  if [ "$KEPT" = 1 ]; then
+    # the names of the policy's SQL and of its tests' (a column a table has already stays as it is)
+    names=$({ python3 compile_policy.py "$f" && python3 compile_policy.py "$f" --tests; } | python3 tests/kept_names.py) \
+      || { bad "$name: the names its functions keep"; continue; }
+    psql -X -q -v ON_ERROR_STOP=1 -v names="$names" -d "$DB" -f tests/hand/kept_columns.sql >/dev/null || exit 1
+  fi
   out=$(python3 cli/rowstile_cli.py --db "dbname=$DB" apply "$f" 2>&1) || { bad "$name: applying" "$out"; continue; }
   python3 tests/test_rows.py "dbname=$DB" > "$T/rows" 2>&1 || { bad "$name: its tests" "$(cat "$T/rows")"; continue; }
   # the checks the file writes (can/cannot, as ...), each with a row; the invariants' row aside (none here)
@@ -40,4 +56,4 @@ for f in tests/hand/*.authz; do
   done < "$T/rows"
 done
 
-if [ $fails -eq 0 ]; then echo "hand answers: all passed"; else echo "hand answers: $fails failed"; exit 1; fi
+if [ $fails -eq 0 ]; then echo "$WHAT: all passed"; else echo "$WHAT: $fails failed"; exit 1; fi

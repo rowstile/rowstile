@@ -13,7 +13,13 @@ unit_test.py reads the functions here.
 A name too many does no harm (a column more to try); one too few would hide a clash.
 
 A row has the same trouble. `to_jsonb(n)` with `FROM new_rows n` is the row only while the table has no column
-called n: `rows_by_alias` finds, in a statement's code, each row of the app's named by its alias alone.
+called n: `rows_by_alias` finds, in a statement's code, each row of the app's named by its alias alone. What the
+SQL calls a row by is printed with the names the functions keep: `tests/hand_answers.sh --kept-names` gives the
+tables a column of each.
+
+In PL/pgSQL a name is looked up in the piece it is written in (a statement, an IF's condition): `pieces` cuts a
+body into them, `columns_in_scope` says which may read the app's columns, and `bare` whether one writes a name by
+itself. There a function writes a parameter by position and a variable by its block's label (`authz__.v_n`).
 """
 
 import os
@@ -47,9 +53,8 @@ class Function(NamedTuple):
     body: str  # its body's code: strings and comments left out, quoted names kept
 
     def bare(self, name: str) -> bool:
-        """Whether the body writes this name by itself: not after a dot (a column of something), not quoted, not
-        before `=>` (an argument's name in a call) or `(` (a function)."""
-        return re.search(rf"(?<![.\w\"$]){re.escape(name)}(?![\w\"]|\s*(?:=>|\())", self.body, re.I) is not None
+        """Whether the body writes this name by itself somewhere (see `bare`)."""
+        return bare(self.body, name)
 
 
 def code_of(text: str) -> str:
@@ -62,6 +67,84 @@ def code_of(text: str) -> str:
         else:
             out.append(" " if piece.startswith(("--", "/*")) else " '' ")
     return "".join(out)
+
+
+TOKEN = re.compile(rf'"(?:[^"]|"")*"|{NAME}|\S')
+# where a piece ends, outside parentheses and outside a CASE expression
+ENDS = {";", "THEN", "ELSE", "LOOP", "BEGIN", "WHEN", "DECLARE", "EXCEPTION"}
+
+
+def pieces(body: str) -> list[str]:
+    """A PL/pgSQL body's code (a Function's `body`) cut into the pieces PL/pgSQL hands to SQL one by one: a
+    statement, or the expression of an IF, a CASE, a WHILE, a FOR's query. A name is looked up in its piece alone:
+    `IF tg_op = 'DELETE' THEN DELETE FROM "app"."t" ...` is two pieces, and only the second has the table's
+    columns in scope."""
+    out: list[str] = []
+    depth = 0  # parentheses
+    cases = 0  # CASE expressions open: a CASE inside a statement, closed by its END
+    started = False  # the piece has a token already
+    prev = ""
+    pos = 0
+    for m in TOKEN.finditer(body):
+        tok = m.group(0)
+        up = tok.upper()
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth -= 1
+        elif depth == 0:
+            if up == "CASE" and prev != "END":
+                cases += started  # (one that starts a piece is a CASE statement: its WHEN and THEN cut it)
+            elif up == "END" and cases:
+                cases -= 1
+            elif up in ENDS and not cases:
+                if body[pos : m.start()].strip():
+                    out.append(body[pos : m.start()])
+                pos, started, prev = m.end(), False, up
+                continue
+        started, prev = True, up
+    if body[pos:].strip():
+        out.append(body[pos:])
+    return out
+
+
+# a table of the app's ("app"."docs": not one of rowstile's schemas), or the rows a statement changed in one (a
+# trigger's transition table)
+ROW_SOURCE = r'"(?!authz(?:_int|_gen|_sync)?")(?:[^"]|"")+"[.]"(?:[^"]|"")+"|\b(?:new|old|changed|role|new_role)_rows\b'
+# ... or a row of one laid out as its columns: `(SELECT ($1).*)`
+APP_COLUMNS = re.compile(rf"{ROW_SOURCE}|\)\s*[.]\s*[*]")
+READS = re.compile(r"\b(?:FROM|JOIN|UPDATE|INSERT|DELETE|MERGE)\b", re.I)
+
+
+def columns_in_scope(piece: str) -> bool:
+    """Whether a piece may have columns of the app's in scope: it reads or writes something, and names a table of
+    the app's, a transition table or a row's columns. (A cast to a table's type alone, or a variable declared with
+    one, has none.) Said of the whole piece, a query inside it that has none counted too: one name too many written
+    out does no harm."""
+    return READS.search(piece) is not None and APP_COLUMNS.search(piece) is not None
+
+
+# where a statement puts a value into a variable, the name is the variable's whatever the columns: `v :=`, INTO v,
+# FOR v IN, GET DIAGNOSTICS v
+TARGETS = (
+    r"\bINTO\s+(?:STRICT\s+)?(?:[\w.]+\s*,\s*)*{n}\b",
+    r"\bFOR\s+(?:[\w.]+\s*,\s*)*{n}\s*(?:,\s*[\w.]+\s*)*\s+IN\b",
+    r"\bFOREACH\s+{n}\b",
+    r"\bGET\s+(?:CURRENT\s+|STACKED\s+)?DIAGNOSTICS\s+{n}\b",
+    r"(?:^|(?<=\s)){n}\s*:=",
+)
+
+
+def bare(text: str, name: str) -> bool:
+    """Whether the text writes this name by itself, where a column of that name would be meant too: not after a dot
+    (a column of something), not before one (`new.id`: a record's field, a table's column; never the column `new`),
+    not quoted, not before `=>` (an argument's name in a call) or `(` (a function), and not where a statement puts
+    a value into it."""
+    n = re.escape(name)
+    for target in TARGETS:
+        text = re.sub(target.format(n=n), " ", text, flags=re.I)
+    # (the dots of a range, `1..n`, are no qualifier)
+    return re.search(rf"(?<![\w\"$])(?<![^.][.]){n}(?![\w\"]|\s*(?:=>|\(|[.](?![.])))", text, re.I) is not None
 
 
 def top_level(text: str) -> list[str]:
@@ -123,8 +206,6 @@ def functions(sql: str) -> list[Function]:
 # name for a column of a table in scope before it takes it for a row, and says nothing. `to_jsonb(n.*)` is the row
 # whatever the columns are called.
 
-# a table of the app's ("app"."docs": not one of rowstile's schemas), or the rows a statement changed in one
-ROW_SOURCE = r'"(?!authz(?:_int|_gen|_sync)?")(?:[^"]|"")+"[.]"(?:[^"]|"")+"|\b(?:new|old|changed|role|new_role)_rows\b'
 ALIAS = rf'"(?:[^"]|"")+"|{NAME}'
 GIVEN = re.compile(rf"\b(?:FROM|JOIN|UPDATE|INTO|USING)\s+(?:ONLY\s+)?({ROW_SOURCE})(?:\s+(?:AS\s+)?({ALIAS}))?", re.I)
 # what may follow a table that is given no alias
@@ -165,22 +246,30 @@ BEFORE_A_VALUE = {
 }
 
 
+def row_aliases(code: str) -> set[str]:
+    """The names a piece of code calls the app's rows by: the alias it gives a table of the app's or a statement's
+    rows, the table's own name where it gives none, and for a trigger NEW and OLD."""
+    aliases: set[str] = set()
+    made = MADE_ON.match(code)
+    if made:
+        aliases.add(own_name(made.group(2)))
+        aliases.update(("new", "old") if made.group(1).upper() == "TRIGGER" else ())
+    for m in GIVEN.finditer(code):
+        alias = m.group(2)
+        aliases.add(own_name(m.group(1)) if alias is None or alias.lower() in NO_ALIAS else alias)
+    return aliases
+
+
 def rows_by_alias(code: str) -> list[tuple[str, str]]:
     """Where a piece of code (one statement: code_of's) writes the alias of a row of the app's by itself, so that the
     row is meant and a column of that name would be taken: (the alias, the code around it). Not before a dot (`n.id`,
     `n.*`) or a parenthesis, and not where an alias is given (after a table, a query or AS). A policy's and a
     trigger's table is called by its name, and the rows of a trigger's WHEN are NEW and OLD."""
-    aliases: set[str] = set()
+    aliases = row_aliases(code)
     made = MADE_ON.match(code)
-    if made:
-        aliases.add(own_name(made.group(2)))
-        if made.group(1).upper() == "TRIGGER":
-            aliases.update(("new", "old"))
-            when = re.search(r"\bWHEN\b(.*)\bEXECUTE\b", code, re.I | re.S)
-            code = when.group(1) if when else ""  # (REFERENCING OLD TABLE AS ... names no row)
-    for m in GIVEN.finditer(code):
-        alias = m.group(2)
-        aliases.add(own_name(m.group(1)) if alias is None or alias.lower() in NO_ALIAS else alias)
+    if made and made.group(1).upper() == "TRIGGER":
+        when = re.search(r"\bWHEN\b(.*)\bEXECUTE\b", code, re.I | re.S)
+        code = when.group(1) if when else ""  # (REFERENCING OLD TABLE AS ... names no row)
     # "docs" is docs too, written without its quotes; a name without quotes in any case
     forms = {a if a.startswith('"') else a.lower(): a for a in aliases}
     forms.update({a[1:-1]: a for a in aliases if re.fullmatch(r'"[a-z_][a-z0-9_]*"', a)})
@@ -212,11 +301,23 @@ def kept(sql: str) -> dict[str, set[str]]:
     return out
 
 
+def given(sql: str) -> set[str]:
+    """Every name the SQL calls a row of the app's by, without its quotes."""
+    out: set[str] = set()
+    for _, statement in statements.split(sql):
+        for part in read_apart(statement):
+            out.update(a[1:-1].replace('""', '"') if a.startswith('"') else a.lower() for a in row_aliases(part))
+    return out
+
+
 def main() -> int:
-    names = kept(sys.stdin.read())
+    sql = sys.stdin.read()
+    names = kept(sql)
     if not names:
         print("kept_names.py: no function in what was read", file=sys.stderr)
         return 1
+    for alias in given(sql):
+        names.setdefault(alias, set()).add("(a row is called so)")
     for name in sorted(names):
         print(name + (": " + ", ".join(sorted(names[name])) if "--by" in sys.argv else ""))
     return 0

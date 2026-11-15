@@ -483,15 +483,15 @@ CREATE TRIGGER authz_role_perm_feed_upd AFTER UPDATE ON authz.role_permissions
                 news.append(f"    n{i} := '{{}}';")
                 continue
             union = "\n          UNION ALL ".join(
-                f"{sql.replace('$ids', f'n{j}')} AND cardinality(n{j}) > 0" for j, sql in srcs
+                f"{sql.replace('$ids', f'authz__.n{j}')} AND cardinality(authz__.n{j}) > 0" for j, sql in srcs
             )
             lookups.append(
                 f"    IF NOT a{i} AND ({' OR '.join(f'cardinality(n{j}) > 0' for j in dict.fromkeys(j for j, _ in srcs))}) THEN\n"
                 f"      v_most := cardinality(s{i}) + {DEPENDENTS_MAX + 1};\n"
                 f"      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL "
-                f"AND NOT d.v = ANY (s{i})), '{{}}')\n"
+                f"AND NOT d.v = ANY (authz__.s{i})), '{{}}')\n"
                 f"        INTO v_rows, x{i}\n"
-                f"        FROM ({union}\n          LIMIT v_most) d(v);\n"
+                f"        FROM ({union}\n          LIMIT authz__.v_most) d(v);\n"
                 f"      a{i} := v_rows >= v_most;\n"
                 f"    ELSE\n      x{i} := '{{}}';\n    END IF;"
             )
@@ -527,6 +527,7 @@ CREATE TRIGGER authz_role_perm_feed_upd AFTER UPDATE ON authz.role_permissions
         return f"""{head}
 CREATE FUNCTION authz_int.dependents(p_type text, p_ids text[]) RETURNS void
 LANGUAGE plpgsql {DEF} AS $f$
+<<authz__>>
 DECLARE
   v_all boolean := '*' = ANY (p_ids);
   v_rows bigint; v_most int;

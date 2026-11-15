@@ -833,7 +833,7 @@ END $f$;
 CREATE CONSTRAINT TRIGGER authz_sync_commit AFTER INSERT ON authz_int.sync_queued
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION authz_int.sync_commit();"""
 
-    def todo_ids(self, t: Type, every: str, var: str = "v_tx") -> str:
+    def todo_ids(self, t: Type, every: str, var: str = "authz__.v_tx") -> str:
         """text[]: the ids of t a transaction changed (or what it reached), or every one (every: a query of them)
         when it changed them all ('*', a TRUNCATE)."""
         return (
@@ -1009,17 +1009,18 @@ $f$;"""
         for e in st.edges:
             s = self.T(e.src)
             text = (
-                f"ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.type = {lit(e.src)} "
-                f"AND x.round = r AND x.id <> '*')"
+                f"ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = {lit(e.src)} "
+                f"AND x.round = authz__.r AND x.id <> '*')"
             )
             sql = e.sql.replace("$ids", self.typed(s, text)).replace("$text", text)
             parts.append(f"SELECT {lit(e.dst)}::text AS t, v.id::text AS i FROM ({sql}) v(id)")
             parts.append(
                 f"SELECT {lit(e.dst)}::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x "
-                f"WHERE x.txid = p_tx AND x.type = {lit(e.src)} AND x.round = r AND x.id = '*')"
+                f"WHERE x.txid = $1 AND x.type = {lit(e.src)} AND x.round = authz__.r AND x.id = '*')"
             )
         insert = (
-            "INSERT INTO authz_int.sync_todo (txid, type, id, round)\n    SELECT p_tx, d.t, d.i, r + 1 FROM (\n      "
+            "INSERT INTO authz_int.sync_todo (txid, type, id, round)\n"
+            "    SELECT $1, d.t, d.i, authz__.r + 1 FROM (\n      "
             + "\n      UNION ALL ".join(parts)
             + ") d WHERE d.i IS NOT NULL\n    ON CONFLICT DO NOTHING;"
             if parts
@@ -1028,6 +1029,7 @@ $f$;"""
         return f"""-- what reads the objects a transaction changed, and what reads those, to the end (no limit: each is worked out again)
 CREATE FUNCTION authz_int.sync_spread(p_tx bigint, p_round int) RETURNS int
 LANGUAGE plpgsql {DEF_CURRENT} AS $f$
+<<authz__>>
 DECLARE r int := p_round; n bigint;
 BEGIN
   LOOP
@@ -1047,7 +1049,7 @@ END $f$;"""
         for e in st.edges:
             d = self.T(e.dst)
             text = (
-                f"ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = {lit(e.dst)} "
+                f"ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = authz__.v_tx AND x.type = {lit(e.dst)} "
                 f"AND x.id <> '*')"
             )
             sql = e.back.replace("$ids", self.typed(d, text)).replace("$text", text)
@@ -1184,7 +1186,7 @@ END $f$;"""
     ELSE
       v_ids := ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = {lit(t.name)});
       IF cardinality(v_ids) > 0 THEN
-        v_now := ARRAY(SELECT x.{pk}::text FROM {qt(t.table)} x WHERE x.{pk} IN (SELECT unnest({self.typed(t, "v_ids")})){where});
+        v_now := ARRAY(SELECT x.{pk}::text FROM {qt(t.table)} x WHERE x.{pk} IN (SELECT unnest({self.typed(t, "authz__.v_ids")})){where});
         WITH gone AS (DELETE FROM authz_sync.keys k WHERE k.principal_type = {lit(t.name)} AND k.principal_id = ANY (v_ids)
                       AND k.principal_id <> ALL (v_now) RETURNING k.key)
         SELECT v_keys || coalesce(array_agg(DISTINCT z.key), '{{}}') INTO v_keys FROM gone z;
@@ -1248,6 +1250,7 @@ END $f$;"""
 -- merge joins: its sets of keys, which the planner can't count, are joined by hash, not sorted as text)
 CREATE FUNCTION authz_int.sync_process() RETURNS void
 LANGUAGE plpgsql {DEF_CURRENT} SET jit = off SET enable_mergejoin = off AS $f$
+<<authz__>>
 DECLARE
   v_tx bigint := txid_current();
   v_round int;

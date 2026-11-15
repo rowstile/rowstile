@@ -1140,6 +1140,108 @@ class OwnNames(unittest.TestCase):
         self.assertTrue(any(kind.startswith("check_") for kind in kinds), sorted(kinds))
         self.assertTrue(any(n.startswith('authz_int."sync:') for n in names), sorted(names)[:20])
 
+    def test_a_plpgsql_body_is_read_in_the_pieces_its_names_are_looked_up_in(self) -> None:
+        body = kept_names.code_of(
+            "<<authz__>>\nDECLARE v_n int; r record;\nBEGIN\n"
+            "  IF tg_op = 'DELETE' AND v_n > 0 THEN  -- v_n; here\n"
+            '    DELETE FROM "app"."t" x WHERE x.id = $1 AND x.n = authz__.v_n;\n'
+            '  ELSIF NOT EXISTS (SELECT 1 FROM "app"."t") THEN\n'
+            '    v_n := (SELECT count(*) FROM "app"."t" x WHERE x.n = v_n);\n'
+            "  END IF;\n"
+            '  FOR r IN SELECT x.id, CASE WHEN x.id = p_id THEN 1 ELSE 2 END AS k FROM "app"."t" x LOOP\n'
+            "    RETURN NEXT r.id;\n"
+            "  END LOOP;\n"
+            "  CASE p_type WHEN 'a' THEN RETURN; ELSE v_n := 1..v_n; END CASE;\n"
+            "END"
+        )
+        pieces = [" ".join(p.split()) for p in kept_names.pieces(body)]
+        self.assertEqual(
+            pieces,
+            [
+                "<<authz__>>",
+                "v_n int",
+                "r record",
+                "IF tg_op = '' AND v_n > 0",
+                'DELETE FROM "app"."t" x WHERE x.id = $1 AND x.n = authz__.v_n',
+                'ELSIF NOT EXISTS (SELECT 1 FROM "app"."t")',
+                'v_n := (SELECT count(*) FROM "app"."t" x WHERE x.n = v_n)',
+                "END IF",
+                # (a CASE inside a statement is its expression: it cuts nothing)
+                'FOR r IN SELECT x.id, CASE WHEN x.id = p_id THEN 1 ELSE 2 END AS k FROM "app"."t" x',
+                "RETURN NEXT r.id",
+                "END",
+                "CASE p_type",
+                "''",
+                "RETURN",
+                "v_n := 1..v_n",
+                "END CASE",
+                "END",
+            ],
+        )
+        # the app's columns are in scope where a piece reads a table of the app's, a statement's rows, a row laid out
+        self.assertEqual([i for i, p in enumerate(pieces) if kept_names.columns_in_scope(p)], [4, 5, 6, 8])
+        self.assertTrue(kept_names.columns_in_scope("PERFORM f(n.id) FROM new_rows n"))
+        self.assertTrue(kept_names.columns_in_scope('RETURN QUERY SELECT x.id FROM (SELECT ($1).*) AS "docs"'))
+        self.assertFalse(kept_names.columns_in_scope('v_row := jsonb_populate_record(NULL::"app"."t", to_jsonb(NEW))'))
+        self.assertFalse(kept_names.columns_in_scope('v_row "app"."t"'))
+        self.assertFalse(kept_names.columns_in_scope("DELETE FROM authz.shares WHERE object_id = v_n"))
+
+        # a name is bare where a column of that name would be meant too: not by its block's label, not a record's
+        # field, not where the statement puts a value into it
+        def bare(piece: int, *names: str) -> list[str]:
+            return [n for n in names if kept_names.bare(pieces[piece], n)]
+
+        self.assertEqual(bare(3, "tg_op", "v_n"), ["tg_op", "v_n"])
+        self.assertEqual(bare(4, "v_n", "n", "id"), [])
+        self.assertEqual(bare(6, "v_n"), ["v_n"])  # (the one it reads, not the one it writes)
+        self.assertEqual(bare(8, "r", "p_id", "k"), ["p_id", "k"])
+        self.assertEqual(bare(9, "r"), [])
+        self.assertEqual(bare(14, "v_n"), ["v_n"])
+        for target in (
+            "SELECT 1, 2 INTO v_a, v_n FROM t",
+            "FOR v_a, v_n IN SELECT 1, 2",
+            "GET DIAGNOSTICS v_n = ROW_COUNT",
+        ):
+            self.assertFalse(kept_names.bare(target, "v_n"), target)
+        self.assertTrue(kept_names.bare("SELECT v_n INTO v_a FROM t", "v_n"))
+        self.assertFalse(kept_names.bare("PERFORM f(v_n => 1, new.id, authz__.v_n)", "v_n"))
+        self.assertFalse(kept_names.bare("PERFORM f(new.id, NEW.*)", "new"))
+        self.assertTrue(kept_names.bare("PERFORM f(to_jsonb(NEW))", "new"))
+
+    def test_a_function_written_in_plpgsql_writes_no_name_of_its_own_where_a_column_could_be_meant(self) -> None:
+        """In PL/pgSQL a bare name that is a column in scope and a name of the function's is refused as ambiguous
+        (42702), and with `#variable_conflict use_column` it is the column. So where a statement has the app's
+        columns in scope, the function writes a parameter by position (`$1`) and a variable by its block's label
+        (`<<authz__>>`, then `authz__.v_n`); what a statement puts a value into is the variable either way."""
+        met: set[str] = set()
+        for name, sql in self.texts().items():
+            for f in kept_names.functions(sql):
+                # what is written in a name's place is there: the label and the variable, the parameter
+                labelled = set(re.findall(r"\bauthz__[.](\w+)", f.body))
+                if labelled:
+                    self.assertIn("<<authz__>>", f.body, f"{name}: {f.name}")
+                    self.assertLessEqual(labelled, f.names, f"{name}: {f.name}")
+                head = search(kept_names.HEAD.pattern, f.statement, re.I)
+                listed = kept_names.parameters(f.statement, head.end() - 1)
+                arity = len(kept_names.top_level(kept_names.code_of(listed))) if listed.strip() else 0
+                positions = [int(n) for n in re.findall(r"(?<![\w$\"])[$](\d+)", f.body)]
+                self.assertLessEqual(max(positions, default=0), arity, f"{name}: {f.name}")
+                if not f.plpgsql:
+                    continue
+                for piece in kept_names.pieces(f.body):
+                    if not kept_names.columns_in_scope(piece):
+                        continue
+                    met.add(re.sub(r"\d+", "N", re.sub(r'^.*(?:__|:)(\w+)"$', r"\1", f.name)))
+                    mine = sorted(n for n in f.names if kept_names.bare(piece, n))
+                    self.assertEqual(mine, [], f"{name}: {f.name}: {' '.join(piece.split())[:300]}")
+        # the kinds of function this is about are all met: the checks and lists of the API, the explanations, a
+        # tree's triggers and its moves, a rule asked again of moved rows, what reads a changed object
+        for kind in ("authz.can", "authz.list", "authz.who", "authz.sync_members", "authz_int.visible"):
+            self.assertIn(kind, met)
+        for kind in ("has", "why", "seen", "explain", "moved", "forget", "tree_shift", "tree_refresh", "tree_on_rows"):
+            self.assertIn(kind, met)
+        self.assertIn("authz_int.dependents", met)
+
     def test_a_row_named_by_its_alias_alone_is_found(self) -> None:
         def found(sql: str) -> list[str]:
             return [alias for part in kept_names.read_apart(sql) for alias, _ in kept_names.rows_by_alias(part)]

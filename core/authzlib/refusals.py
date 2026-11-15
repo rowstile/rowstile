@@ -86,8 +86,7 @@ class RefusalMixin(Core):
                     out.append(
                         (
                             st,
-                            f"SELECT ({self.subject_id(src, alias, st)})::text AS id "
-                            f"FROM (SELECT (p_row).*) AS {alias}",
+                            f"SELECT ({self.subject_id(src, alias, st)})::text AS id FROM (SELECT ($1).*) AS {alias}",
                         )
                     )
                 elif src.kind == "table":
@@ -96,7 +95,7 @@ class RefusalMixin(Core):
                         (
                             st,
                             f"SELECT ({self.subject_id(src, 's', st)})::text AS id "
-                            f"FROM (SELECT (p_row).*) AS {alias} JOIN {qt(src.table)} s "
+                            f"FROM (SELECT ($1).*) AS {alias} JOIN {qt(src.table)} s "
                             f"ON {self.key_is(t, 's', self.key(t, alias), src.obj_col)}{where}",
                         )
                     )
@@ -240,7 +239,7 @@ END $f$;"""
             )
 
         insert = (
-            why("insert", f"jsonb_populate_record(NULL::{qt(table)}, coalesce(p_row, '{{}}'))")
+            why("insert", f"jsonb_populate_record(NULL::{qt(table)}, coalesce($3, '{{}}'))")
             if "insert" in by_cmd
             else none("insert")
         )
@@ -256,7 +255,7 @@ END $f$;"""
             )
         else:
             update = none("update")
-        find = self.key_is(t, "x", "p_id" if t.composite else f"p_id::{t.pktype}")
+        find = self.key_is(t, "x", "$2" if t.composite else f"$2::{t.pktype}")
         fetch = f"SELECT x.* INTO r_old FROM {qt(table)} x WHERE {find};"
         if any(r.table == table and r.command == "mask" for r in self.rules):
             # the app role can't read a masked column from the table: the row as the masked view gives it (the

@@ -70,6 +70,7 @@ PLACES: dict[tuple[str, frozenset[str]], tuple[str, ...]] = {
         "cookbook",
         "reference",
         "hand answers",
+        "hand answers, kept names",
     ),
     ("policy", frozenset({"quick", "short"})): (
         "interleavings (read committed, docs)",

@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', '6f7bade2903c8d12a52b2b42e5330ef6', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', 'f6aecb6111dac9df17f153c294b78b08', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'domain_email_org_setting__domain_email_org_settings__tree')) n(name, hash, oids, rel)
@@ -747,7 +747,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('domain_email_org_setting__domain_email_org_settings__tree', '6f7bade2903c8d12a52b2b42e5330ef6', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('domain_email_org_setting__domain_email_org_settings__tree', 'f6aecb6111dac9df17f153c294b78b08', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -963,6 +963,7 @@ END $f$;
 -- announced with the cause 'dependent'.
 CREATE FUNCTION authz_int.dependents(p_type text, p_ids text[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+<<authz__>>
 DECLARE
   v_all boolean := '*' = ANY (p_ids);
   v_rows bigint; v_most int;
@@ -1001,40 +1002,40 @@ BEGIN
     EXIT WHEN (a1 OR cardinality(n1) = 0) AND (a2 OR cardinality(n2) = 0) AND (a3 OR cardinality(n3) = 0) AND (a4 OR cardinality(n4) = 0);
     IF NOT a1 AND (cardinality(n3) > 0) THEN
       v_most := cardinality(s1) + 1001;
-      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (s1)), '{}')
+      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (authz__.s1)), '{}')
         INTO v_rows, x1
-        FROM (SELECT x."id" FROM "lp"."domains" x WHERE x."org_id" = ANY (n3) AND cardinality(n3) > 0
-          LIMIT v_most) d(v);
+        FROM (SELECT x."id" FROM "lp"."domains" x WHERE x."org_id" = ANY (authz__.n3) AND cardinality(authz__.n3) > 0
+          LIMIT authz__.v_most) d(v);
       a1 := v_rows >= v_most;
     ELSE
       x1 := '{}';
     END IF;
     IF NOT a2 AND (cardinality(n1) > 0) THEN
       v_most := cardinality(s2) + 1001;
-      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (s2)), '{}')
+      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (authz__.s2)), '{}')
         INTO v_rows, x2
-        FROM (SELECT x."id" FROM "lp"."emails" x WHERE x."domain_id" = ANY (n1) AND cardinality(n1) > 0
-          LIMIT v_most) d(v);
+        FROM (SELECT x."id" FROM "lp"."emails" x WHERE x."domain_id" = ANY (authz__.n1) AND cardinality(authz__.n1) > 0
+          LIMIT authz__.v_most) d(v);
       a2 := v_rows >= v_most;
     ELSE
       x2 := '{}';
     END IF;
     IF NOT a3 AND (cardinality(n4) > 0) THEN
       v_most := cardinality(s3) + 1001;
-      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (s3)), '{}')
+      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (authz__.s3)), '{}')
         INTO v_rows, x3
-        FROM (SELECT x."id" FROM "lp"."orgs" x WHERE x."settings_id" = ANY (n4) AND cardinality(n4) > 0
-          LIMIT v_most) d(v);
+        FROM (SELECT x."id" FROM "lp"."orgs" x WHERE x."settings_id" = ANY (authz__.n4) AND cardinality(authz__.n4) > 0
+          LIMIT authz__.v_most) d(v);
       a3 := v_rows >= v_most;
     ELSE
       x3 := '{}';
     END IF;
     IF NOT a4 AND (cardinality(n2) > 0) THEN
       v_most := cardinality(s4) + 1001;
-      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (s4)), '{}')
+      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (authz__.s4)), '{}')
         INTO v_rows, x4
-        FROM (SELECT x."id" FROM "lp"."settings" x WHERE x."email_id" = ANY (n2) AND cardinality(n2) > 0
-          LIMIT v_most) d(v);
+        FROM (SELECT x."id" FROM "lp"."settings" x WHERE x."email_id" = ANY (authz__.n2) AND cardinality(authz__.n2) > 0
+          LIMIT authz__.v_most) d(v);
       a4 := v_rows >= v_most;
     ELSE
       x4 := '{}';
@@ -1486,7 +1487,7 @@ BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('domain', 'email', 'org', 'setting');
   WITH RECURSIVE down(_t, _i) AS (
-    SELECT x.t, x.i FROM unnest(p_types, p_ids) AS x(t, i) WHERE x.i IS NOT NULL
+    SELECT x.t, x.i FROM unnest($1, $2) AS x(t, i) WHERE x.i IS NOT NULL
     UNION
     SELECT e.ct, e.c FROM down CROSS JOIN LATERAL (
       
@@ -1550,7 +1551,7 @@ DECLARE bad text;
 BEGIN
   -- a loop means some node reaches itself through at least one link
   WITH RECURSIVE up(_st, _s, _at, _a, _n) AS (
-    SELECT x.t, x.i, x.t, x.i, 0 FROM unnest(p_types, p_ids) AS x(t, i)
+    SELECT x.t, x.i, x.t, x.i, 0 FROM unnest($1, $2) AS x(t, i)
     UNION
     SELECT up._st, up._s, e.pt, e.p, 1 FROM up CROSS JOIN LATERAL (
       
@@ -1710,20 +1711,22 @@ CREATE FUNCTION authz_int."user__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE v_gone text[];
 BEGIN
-  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "lp"."users") THEN   -- the table is empty, and so are those under it
-    DELETE FROM authz.shares WHERE object_type = 'user';
-    DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id <> '*';      -- '*' (every one signed in) names no row
-    DELETE FROM authz_int.row_marks WHERE type = 'user';
-    PERFORM authz_int.requests_gone('user', NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a
-    -- row that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
-    v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'user'
-                                      UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'user' AND s.subject_id <> '*'
-                                      UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'user') g(id)
-                    WHERE NOT EXISTS (SELECT 1 FROM "lp"."users" x WHERE x."id"::text = g.id));
-    PERFORM authz_int.forget_marks('user', v_gone);
-    DELETE FROM authz.shares WHERE object_type = 'user' AND object_id = ANY (v_gone);
-    DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id = ANY (v_gone);
+  IF TG_OP = 'TRUNCATE' THEN
+    IF NOT EXISTS (SELECT 1 FROM "lp"."users") THEN   -- the table is empty, and so are those under it
+      DELETE FROM authz.shares WHERE object_type = 'user';
+      DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id <> '*';      -- '*' (every one signed in) names no row
+      DELETE FROM authz_int.row_marks WHERE type = 'user';
+      PERFORM authz_int.requests_gone('user', NULL);
+    ELSE   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a row that is gone goes
+      -- (the pending requests naming one were cancelled before, while it was there to tell)
+      v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'user'
+                                        UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'user' AND s.subject_id <> '*'
+                                        UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'user') g(id)
+                      WHERE NOT EXISTS (SELECT 1 FROM "lp"."users" x WHERE x."id"::text = g.id));
+      PERFORM authz_int.forget_marks('user', v_gone);
+      DELETE FROM authz.shares WHERE object_type = 'user' AND object_id = ANY (v_gone);
+      DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id = ANY (v_gone);
+    END IF;
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks('user', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'user' AND object_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
@@ -1795,20 +1798,22 @@ CREATE FUNCTION authz_int."setting__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE v_gone text[];
 BEGIN
-  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "lp"."settings") THEN   -- the table is empty, and so are those under it
-    DELETE FROM authz.shares WHERE object_type = 'setting';
-    DELETE FROM authz.shares WHERE subject_type = 'setting' AND subject_id <> '*';      -- '*' (every one signed in) names no row
-    DELETE FROM authz_int.row_marks WHERE type = 'setting';
-    PERFORM authz_int.requests_gone('setting', NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a
-    -- row that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
-    v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'setting'
-                                      UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'setting' AND s.subject_id <> '*'
-                                      UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'setting') g(id)
-                    WHERE NOT EXISTS (SELECT 1 FROM "lp"."settings" x WHERE x."id"::text = g.id));
-    PERFORM authz_int.forget_marks('setting', v_gone);
-    DELETE FROM authz.shares WHERE object_type = 'setting' AND object_id = ANY (v_gone);
-    DELETE FROM authz.shares WHERE subject_type = 'setting' AND subject_id = ANY (v_gone);
+  IF TG_OP = 'TRUNCATE' THEN
+    IF NOT EXISTS (SELECT 1 FROM "lp"."settings") THEN   -- the table is empty, and so are those under it
+      DELETE FROM authz.shares WHERE object_type = 'setting';
+      DELETE FROM authz.shares WHERE subject_type = 'setting' AND subject_id <> '*';      -- '*' (every one signed in) names no row
+      DELETE FROM authz_int.row_marks WHERE type = 'setting';
+      PERFORM authz_int.requests_gone('setting', NULL);
+    ELSE   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a row that is gone goes
+      -- (the pending requests naming one were cancelled before, while it was there to tell)
+      v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'setting'
+                                        UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'setting' AND s.subject_id <> '*'
+                                        UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'setting') g(id)
+                      WHERE NOT EXISTS (SELECT 1 FROM "lp"."settings" x WHERE x."id"::text = g.id));
+      PERFORM authz_int.forget_marks('setting', v_gone);
+      DELETE FROM authz.shares WHERE object_type = 'setting' AND object_id = ANY (v_gone);
+      DELETE FROM authz.shares WHERE subject_type = 'setting' AND subject_id = ANY (v_gone);
+    END IF;
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks('setting', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'setting' AND object_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
@@ -2498,8 +2503,8 @@ ALTER TABLE "lp"."orgs" ENABLE ROW LEVEL SECURITY;
 CREATE FUNCTION authz_int."lp.orgs:seen"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  RETURN NOT EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = p_id)
-      OR EXISTS (SELECT 1 FROM "lp"."orgs" "orgs" WHERE "orgs"."id" = p_id
+  RETURN NOT EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = $1)
+      OR EXISTS (SELECT 1 FROM "lp"."orgs" "orgs" WHERE "orgs"."id" = $1
         AND (SELECT authz_int.scope_cmd('lp.orgs', 'select')) AND (coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")));
 END $f$;
@@ -2557,7 +2562,7 @@ BEGIN
   IF p_id IS NULL THEN
     RAISE EXCEPTION 'which row? authz.explain_rule(%, %, id)', 'lp.orgs', p_command USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
   END IF;
-  SELECT x.* INTO r_old FROM "lp"."orgs" x WHERE x."id" = p_id::bigint;
+  SELECT x.* INTO r_old FROM "lp"."orgs" x WHERE x."id" = $2::bigint;
   IF NOT FOUND THEN
     RETURN NULL;          -- not there, or the signed-in user can't see it
   END IF;
@@ -2591,8 +2596,8 @@ ALTER TABLE "lp"."settings" ENABLE ROW LEVEL SECURITY;
 CREATE FUNCTION authz_int."lp.settings:seen"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  RETURN NOT EXISTS (SELECT 1 FROM "lp"."settings" o WHERE o."id" = p_id)
-      OR EXISTS (SELECT 1 FROM "lp"."settings" "settings" WHERE "settings"."id" = p_id
+  RETURN NOT EXISTS (SELECT 1 FROM "lp"."settings" o WHERE o."id" = $1)
+      OR EXISTS (SELECT 1 FROM "lp"."settings" "settings" WHERE "settings"."id" = $1
         AND (SELECT authz_int.scope_cmd('lp.settings', 'select')) AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")));
 END $f$;
@@ -2650,7 +2655,7 @@ BEGIN
   IF p_id IS NULL THEN
     RAISE EXCEPTION 'which row? authz.explain_rule(%, %, id)', 'lp.settings', p_command USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
   END IF;
-  SELECT x.* INTO r_old FROM "lp"."settings" x WHERE x."id" = p_id::bigint;
+  SELECT x.* INTO r_old FROM "lp"."settings" x WHERE x."id" = $2::bigint;
   IF NOT FOUND THEN
     RETURN NULL;          -- not there, or the signed-in user can't see it
   END IF;
@@ -2690,7 +2695,7 @@ BEGIN
   IF p_id IS NULL THEN
     RAISE EXCEPTION 'which row? authz.explain_rule(%, %, id)', 'lp.emails', p_command USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
   END IF;
-  SELECT x.* INTO r_old FROM "lp"."emails" x WHERE x."id" = p_id::bigint;
+  SELECT x.* INTO r_old FROM "lp"."emails" x WHERE x."id" = $2::bigint;
   IF NOT FOUND THEN
     RETURN NULL;          -- not there, or the signed-in user can't see it
   END IF;
@@ -2714,8 +2719,8 @@ ALTER TABLE "lp"."domains" ENABLE ROW LEVEL SECURITY;
 CREATE FUNCTION authz_int."lp.domains:seen"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  RETURN NOT EXISTS (SELECT 1 FROM "lp"."domains" o WHERE o."id" = p_id)
-      OR EXISTS (SELECT 1 FROM "lp"."domains" "domains" WHERE "domains"."id" = p_id
+  RETURN NOT EXISTS (SELECT 1 FROM "lp"."domains" o WHERE o."id" = $1)
+      OR EXISTS (SELECT 1 FROM "lp"."domains" "domains" WHERE "domains"."id" = $1
         AND (SELECT authz_int.scope_cmd('lp.domains', 'select')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"));
 END $f$;
 
@@ -2770,7 +2775,7 @@ BEGIN
   IF p_id IS NULL THEN
     RAISE EXCEPTION 'which row? authz.explain_rule(%, %, id)', 'lp.domains', p_command USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
   END IF;
-  SELECT x.* INTO r_old FROM "lp"."domains" x WHERE x."id" = p_id::bigint;
+  SELECT x.* INTO r_old FROM "lp"."domains" x WHERE x."id" = $2::bigint;
   IF NOT FOUND THEN
     RETURN NULL;          -- not there, or the signed-in user can't see it
   END IF;
@@ -2817,7 +2822,7 @@ BEGIN
     ELSE '  no   the sign-in''s scopes do not allow update on lp.domains' END; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'org.edit';
   IF NOT v[4] THEN
-    FOR v_t IN SELECT DISTINCT x.id FROM (SELECT ("domains"."org_id")::text AS id FROM (SELECT (p_row).*) AS "domains") x WHERE x.id IS NOT NULL ORDER BY 1 LIMIT 3 LOOP
+    FOR v_t IN SELECT DISTINCT x.id FROM (SELECT ("domains"."org_id")::text AS id FROM (SELECT ($1).*) AS "domains") x WHERE x.id IS NOT NULL ORDER BY 1 LIMIT 3 LOOP
       RETURN QUERY SELECT '    ' || l FROM authz.explain('org', v_t.id, 'edit') l LIMIT 20;
     END LOOP;
   END IF;
@@ -2883,6 +2888,7 @@ END $tr$;
 -- whatever changed). A trigger before the update has asked it of every row already
 CREATE FUNCTION authz_int."lp.domains:column org_id after:moved"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
+<<authz__>>
 DECLARE v_lines text; v_row "lp"."domains"; v_one boolean; v_virtual text;
 BEGIN
   IF NOT pg_catalog.row_security_active('"lp"."domains"'::pg_catalog.regclass) THEN RETURN NULL; END IF;
@@ -2901,7 +2907,7 @@ BEGIN
   FOR v_row IN
     SELECT (pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(n.*))).* FROM new_rows n
     WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text AND o."org_id" IS NOT DISTINCT FROM n."org_id")
-      AND NOT (v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
+      AND NOT (authz__.v_one AND NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
                AND EXISTS (SELECT 1 FROM old_rows o WHERE o."org_id" IS NOT DISTINCT FROM n."org_id"
                            AND NOT EXISTS (SELECT 1 FROM new_rows m WHERE m."id"::text = o."id"::text)))
   LOOP
@@ -3029,6 +3035,7 @@ END $ac$;
 -- object ask (sharing, roles, keys, view_as, break_glass, requests), where authz.can's answer is for rows they may see
 CREATE FUNCTION authz_int.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+<<authz__>>
 DECLARE v_bigint bigint;
 BEGIN
   IF NOT authz_int.scope_perm(p_type, p_perm) THEN RETURN false; END IF;
@@ -3041,9 +3048,9 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = authz__.v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))));
-        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = authz__.v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -3051,7 +3058,7 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."settings" o WHERE o."id" = v_bigint AND ((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."settings" o WHERE o."id" = authz__.v_bigint AND ((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = o."email_id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -3059,7 +3066,7 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."emails" o WHERE o."id" = v_bigint AND ((coalesce((verified), false)
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."emails" o WHERE o."id" = authz__.v_bigint AND ((coalesce((verified), false)
     AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = o."domain_id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -3067,7 +3074,7 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."domains" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")));
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."domains" o WHERE o."id" = authz__.v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     ELSE
@@ -3080,6 +3087,7 @@ END $f$;
 -- reads as a missing one; plans are cached per session)
 CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text, p_perm text) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+<<authz__>>
 DECLARE v_allowed boolean; v_bigint bigint;
 BEGIN
   IF current_setting('authz_debug.log_decisions', true) = 'on'
@@ -3105,9 +3113,9 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = authz__.v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))));
-        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
+        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = authz__.v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -3115,7 +3123,7 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."settings" o WHERE o."id" = v_bigint AND ((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."settings" o WHERE o."id" = authz__.v_bigint AND ((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = o."email_id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -3123,7 +3131,7 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."emails" o WHERE o."id" = v_bigint AND ((coalesce((verified), false)
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."emails" o WHERE o."id" = authz__.v_bigint AND ((coalesce((verified), false)
     AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = o."domain_id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -3131,7 +3139,7 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."domains" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")));
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."domains" o WHERE o."id" = authz__.v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     ELSE
@@ -3166,12 +3174,12 @@ BEGIN
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))
-        ORDER BY o."id" LIMIT p_limit;
+        ORDER BY o."id" LIMIT $4;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
-        WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
+        WHERE o."id" > $3::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))
-        ORDER BY o."id" LIMIT p_limit;
+        ORDER BY o."id" LIMIT $4;
       END IF;
     WHEN 'org.view' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
@@ -3182,12 +3190,12 @@ BEGIN
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))
-        ORDER BY o."id" LIMIT p_limit;
+        ORDER BY o."id" LIMIT $4;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
-        WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
+        WHERE o."id" > $3::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))
-        ORDER BY o."id" LIMIT p_limit;
+        ORDER BY o."id" LIMIT $4;
       END IF;
     WHEN 'setting.edit' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
@@ -3198,12 +3206,12 @@ BEGIN
         RETURN QUERY SELECT o."id"::text FROM "lp"."settings" o
         WHERE (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = o."email_id"))
-        ORDER BY o."id" LIMIT p_limit;
+        ORDER BY o."id" LIMIT $4;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."settings" o
-        WHERE o."id" > p_after::bigint AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
+        WHERE o."id" > $3::bigint AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = o."email_id"))
-        ORDER BY o."id" LIMIT p_limit;
+        ORDER BY o."id" LIMIT $4;
       END IF;
     WHEN 'email.edit' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
@@ -3214,12 +3222,12 @@ BEGIN
         RETURN QUERY SELECT o."id"::text FROM "lp"."emails" o
         WHERE (coalesce((verified), false)
     AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = o."domain_id"))
-        ORDER BY o."id" LIMIT p_limit;
+        ORDER BY o."id" LIMIT $4;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."emails" o
-        WHERE o."id" > p_after::bigint AND (coalesce((verified), false)
+        WHERE o."id" > $3::bigint AND (coalesce((verified), false)
     AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = o."domain_id"))
-        ORDER BY o."id" LIMIT p_limit;
+        ORDER BY o."id" LIMIT $4;
       END IF;
     WHEN 'domain.edit' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
@@ -3228,11 +3236,11 @@ BEGIN
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."domains" o
         WHERE EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")
-        ORDER BY o."id" LIMIT p_limit;
+        ORDER BY o."id" LIMIT $4;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."domains" o
-        WHERE o."id" > p_after::bigint AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")
-        ORDER BY o."id" LIMIT p_limit;
+        WHERE o."id" > $3::bigint AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")
+        ORDER BY o."id" LIMIT $4;
       END IF;
     ELSE
       RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
@@ -3781,13 +3789,14 @@ $f$;
 
 CREATE FUNCTION authz_int."org__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+<<authz__>>
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
-  IF p_id IN (SELECT r."id" AS id FROM "lp"."orgs" r WHERE r."owner_id" = (SELECT authz.uid())) THEN
-    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'owner: owner_id is you' ELSE 'owner: owner_id is them' END || '';
+  IF $1 IN (SELECT r."id" AS id FROM "lp"."orgs" r WHERE r."owner_id" = (SELECT authz.uid())) THEN
+    RETURN NEXT authz__.pad || 'yes  ' || CASE WHEN $4 IS NULL THEN 'owner: owner_id is you' ELSE 'owner: owner_id is them' END || '';
     RETURN;
   END IF;
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'org.owner';
+  RETURN NEXT pad || CASE WHEN $4 IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'org.owner';
 END $f$;
 
 CREATE FUNCTION authz_int."org__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
@@ -3798,13 +3807,13 @@ BEGIN
   IF p_depth > 60 THEN RETURN NEXT pad || '...'; RETURN; END IF;
   RETURN NEXT pad || 'org.edit = owner or settings.edit';
   BEGIN
-    v_ok := (p_id) IN (SELECT id FROM authz_int."org__owner");
+    v_ok := ($1) IN (SELECT id FROM authz_int."org__owner");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'owner';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."org__owner__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
-    v_ok := (p_id) IN (SELECT id FROM authz_int."org__settings__edit");
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."org__owner__why"($1, p_depth + 1, p_seen, p_asker); END IF;
+    v_ok := ($1) IN (SELECT id FROM authz_int."org__settings__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'settings.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = tg.id) AS ok
-               FROM (SELECT r."settings_id" AS id FROM "lp"."orgs" r WHERE r."id" = p_id AND r."settings_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
+               FROM (SELECT r."settings_id" AS id FROM "lp"."orgs" r WHERE r."id" = $1 AND r."settings_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
       -- the walk stops at an object the one asking can't see: nothing about it, or above it
       IF NOT authz_int.asker_sees(p_asker, 'setting', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'settings is a setting you can''t see';
@@ -3827,21 +3836,22 @@ BEGIN
   IF p_depth > 60 THEN RETURN NEXT pad || '...'; RETURN; END IF;
   RETURN NEXT pad || 'org.view = edit';
   BEGIN
-    v_ok := (p_id) IN (SELECT id FROM authz_int."org__edit");
+    v_ok := ($1) IN (SELECT id FROM authz_int."org__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'edit';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."org__edit__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."org__edit__why"($1, p_depth + 1, p_seen, p_asker); END IF;
   END;
 END $f$;
 
 CREATE FUNCTION authz_int."setting__admin__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+<<authz__>>
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'setting' AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
-    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'admin: shared with you' ELSE 'admin: shared with them' END || CASE WHEN p_asker IS NULL OR authz_int.asker_sees(p_asker, 'setting', p_id::text, true) THEN coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'setting' AND g.object_id = p_id::text AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '') ELSE '' END;
+  IF $1 IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'setting' AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
+    RETURN NEXT authz__.pad || 'yes  ' || CASE WHEN $4 IS NULL THEN 'admin: shared with you' ELSE 'admin: shared with them' END || CASE WHEN $4 IS NULL OR authz_int.asker_sees($4, 'setting', $1::text, true) THEN coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'setting' AND g.object_id = $1::text AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '') ELSE '' END;
     RETURN;
   END IF;
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'setting.admin';
+  RETURN NEXT pad || CASE WHEN $4 IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'setting.admin';
 END $f$;
 
 CREATE FUNCTION authz_int."setting__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
@@ -3852,13 +3862,13 @@ BEGIN
   IF p_depth > 60 THEN RETURN NEXT pad || '...'; RETURN; END IF;
   RETURN NEXT pad || 'setting.edit = admin or email.edit';
   BEGIN
-    v_ok := (p_id) IN (SELECT id FROM authz_int."setting__admin");
+    v_ok := ($1) IN (SELECT id FROM authz_int."setting__admin");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'admin';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."setting__admin__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
-    v_ok := (p_id) IN (SELECT id FROM authz_int."setting__email__edit");
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."setting__admin__why"($1, p_depth + 1, p_seen, p_asker); END IF;
+    v_ok := ($1) IN (SELECT id FROM authz_int."setting__email__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'email.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = tg.id) AS ok
-               FROM (SELECT r."email_id" AS id FROM "lp"."settings" r WHERE r."id" = p_id AND r."email_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
+               FROM (SELECT r."email_id" AS id FROM "lp"."settings" r WHERE r."id" = $1 AND r."email_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
       -- the walk stops at an object the one asking can't see: nothing about it, or above it
       IF NOT authz_int.asker_sees(p_asker, 'email', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'email is an email you can''t see';
@@ -3881,14 +3891,14 @@ BEGIN
   IF p_depth > 60 THEN RETURN NEXT pad || '...'; RETURN; END IF;
   RETURN NEXT pad || 'email.edit = domain.edit and {verified}';
   BEGIN
-    v_ok := (p_id) IN (SELECT r."id" AS id FROM "lp"."emails" r
+    v_ok := ($1) IN (SELECT r."id" AS id FROM "lp"."emails" r
   WHERE r."id" IN (SELECT id FROM authz_int."email__domain__edit")
     AND coalesce((verified), false));
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || '(domain.edit and {verified})';
-    v_ok := (p_id) IN (SELECT id FROM authz_int."email__domain__edit");
+    v_ok := ($1) IN (SELECT id FROM authz_int."email__domain__edit");
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'domain.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = tg.id) AS ok
-               FROM (SELECT r."domain_id" AS id FROM "lp"."emails" r WHERE r."id" = p_id AND r."domain_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
+               FROM (SELECT r."domain_id" AS id FROM "lp"."emails" r WHERE r."id" = $1 AND r."domain_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
       -- the walk stops at an object the one asking can't see: nothing about it, or above it
       IF NOT authz_int.asker_sees(p_asker, 'domain', v_t.id, false) THEN
         RETURN NEXT pad || '  ' || '       ' || 'domain is a domain you can''t see';
@@ -3900,7 +3910,7 @@ BEGIN
         RETURN QUERY SELECT * FROM authz_int."domain__edit__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('domain:edit:' || v_t.id), p_asker);
       END IF;
     END LOOP;
-    v_ok := (p_id) IN (SELECT r."id" AS id FROM "lp"."emails" r WHERE coalesce((verified), false));
+    v_ok := ($1) IN (SELECT r."id" AS id FROM "lp"."emails" r WHERE coalesce((verified), false));
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || '{verified}';
   END;
 END $f$;
@@ -3913,10 +3923,10 @@ BEGIN
   IF p_depth > 60 THEN RETURN NEXT pad || '...'; RETURN; END IF;
   RETURN NEXT pad || 'domain.edit = org.edit';
   BEGIN
-    v_ok := (p_id) IN (SELECT id FROM authz_int."domain__org__edit");
+    v_ok := ($1) IN (SELECT id FROM authz_int."domain__org__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'org.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = tg.id) AS ok
-               FROM (SELECT r."org_id" AS id FROM "lp"."domains" r WHERE r."id" = p_id AND r."org_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
+               FROM (SELECT r."org_id" AS id FROM "lp"."domains" r WHERE r."id" = $1 AND r."org_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
       -- the walk stops at an object the one asking can't see: nothing about it, or above it
       IF NOT authz_int.asker_sees(p_asker, 'org', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'org is an org you can''t see';
@@ -3940,22 +3950,22 @@ BEGIN
   END IF;
   CASE p_type
     WHEN 'user' THEN
-      RETURN EXISTS (SELECT 1 FROM "lp"."users" "users" WHERE "users"."id" = p_id::bigint
+      RETURN EXISTS (SELECT 1 FROM "lp"."users" "users" WHERE "users"."id" = $2::bigint
         AND true);
     WHEN 'org' THEN
-      RETURN EXISTS (SELECT 1 FROM "lp"."orgs" "orgs" WHERE "orgs"."id" = p_id::bigint
+      RETURN EXISTS (SELECT 1 FROM "lp"."orgs" "orgs" WHERE "orgs"."id" = $2::bigint
         AND (SELECT authz_int.scope_cmd('lp.orgs', 'select')) AND (coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")));
     WHEN 'setting' THEN
-      RETURN EXISTS (SELECT 1 FROM "lp"."settings" "settings" WHERE "settings"."id" = p_id::bigint
+      RETURN EXISTS (SELECT 1 FROM "lp"."settings" "settings" WHERE "settings"."id" = $2::bigint
         AND (SELECT authz_int.scope_cmd('lp.settings', 'select')) AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")));
     WHEN 'email' THEN
-      RETURN EXISTS (SELECT 1 FROM "lp"."emails" "emails" WHERE "emails"."id" = p_id::bigint
+      RETURN EXISTS (SELECT 1 FROM "lp"."emails" "emails" WHERE "emails"."id" = $2::bigint
         AND (SELECT authz_int.scope_cmd('lp.emails', 'select')) AND (coalesce((verified), false)
     AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = "emails"."domain_id")));
     WHEN 'domain' THEN
-      RETURN EXISTS (SELECT 1 FROM "lp"."domains" "domains" WHERE "domains"."id" = p_id::bigint
+      RETURN EXISTS (SELECT 1 FROM "lp"."domains" "domains" WHERE "domains"."id" = $2::bigint
         AND (SELECT authz_int.scope_cmd('lp.domains', 'select')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"));
     ELSE RETURN false;
   END CASE;
@@ -3998,6 +4008,7 @@ END $f$;
 -- Candidates come from the data (a superset); each is checked as that user (the permission itself, authz_int.can).
 CREATE OR REPLACE FUNCTION authz.who(p_type text, p_id text, p_perm text) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+<<authz__>>
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_c text;
         v_pt text := coalesce(current_setting('authz.principal_type', true), '');
         v_scopes text := coalesce(current_setting('authz.scopes', true), ''); v_bigint bigint;
@@ -4020,13 +4031,13 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'edit' THEN
-          FOR v_c IN SELECT DISTINCT x::text FROM authz_int."org__edit__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = x) LOOP
+          FOR v_c IN SELECT DISTINCT c.id::text FROM authz_int."org__edit__who"(authz__.v_bigint) c(id) WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = c.id) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
             IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
           END LOOP;
         WHEN 'view' THEN
-          FOR v_c IN SELECT DISTINCT x::text FROM authz_int."org__view__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = x) LOOP
+          FOR v_c IN SELECT DISTINCT c.id::text FROM authz_int."org__view__who"(authz__.v_bigint) c(id) WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = c.id) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
             IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
@@ -4038,7 +4049,7 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'edit' THEN
-          FOR v_c IN SELECT DISTINCT x::text FROM authz_int."setting__edit__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = x) LOOP
+          FOR v_c IN SELECT DISTINCT c.id::text FROM authz_int."setting__edit__who"(authz__.v_bigint) c(id) WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = c.id) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
             IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
@@ -4050,7 +4061,7 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'edit' THEN
-          FOR v_c IN SELECT DISTINCT x::text FROM authz_int."email__edit__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = x) LOOP
+          FOR v_c IN SELECT DISTINCT c.id::text FROM authz_int."email__edit__who"(authz__.v_bigint) c(id) WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = c.id) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
             IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
@@ -4062,7 +4073,7 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'edit' THEN
-          FOR v_c IN SELECT DISTINCT x::text FROM authz_int."domain__edit__who"(v_bigint) x WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = x) LOOP
+          FOR v_c IN SELECT DISTINCT c.id::text FROM authz_int."domain__edit__who"(authz__.v_bigint) c(id) WHERE EXISTS (SELECT 1 FROM "lp"."users" u WHERE u."id" = c.id) LOOP
             PERFORM set_config('authz.user_id', v_c, true);
             PERFORM authz_int.sign();
             IF authz_int.can(p_type, p_id, p_perm) THEN RETURN NEXT v_c; END IF;
@@ -4695,11 +4706,13 @@ END $f$;
 CREATE FUNCTION authz_int."user__keys_gone"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "lp"."users") THEN   -- the table is empty, and so are those under it
-    PERFORM authz_int.keys_gone('user', NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: the rows still there keep their keys
-    PERFORM authz_int.keys_gone('user', ARRAY(SELECT k.user_id FROM authz.api_keys k WHERE k.principal_type = 'user'
-                                              AND NOT EXISTS (SELECT 1 FROM "lp"."users" x WHERE x."id"::text = k.user_id)));
+  IF TG_OP = 'TRUNCATE' THEN
+    IF NOT EXISTS (SELECT 1 FROM "lp"."users") THEN   -- the table is empty, and so are those under it
+      PERFORM authz_int.keys_gone('user', NULL);
+    ELSE   -- TRUNCATE ONLY, or of a table under it: the rows still there keep their keys
+      PERFORM authz_int.keys_gone('user', ARRAY(SELECT k.user_id FROM authz.api_keys k WHERE k.principal_type = 'user'
+                                                AND NOT EXISTS (SELECT 1 FROM "lp"."users" x WHERE x."id"::text = k.user_id)));
+    END IF;
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.keys_gone('user', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
   ELSE
