@@ -7,10 +7,12 @@ One row per measure both builds have: each round's figure, and the mean of `here
 the times of loading and applying, each read's p50 alone (step 1) and in the gate (step 3), the tree writes a
 second as clients grow (step 2), the gate's writes' p50, the big move, each listing (step 5) and each reader's p50
 by what they hold (step 6). A p50, not a p95: the question is what the code costs, and a p95 on a shared machine
-says more of the machine.
-A difference is called (faster, slower) only when every round of one build is beyond every round of the other;
-where the rounds overlap, nothing is said: the machine's own spread is as large. Nothing is judged: the exit code
-is 0 whatever the table says, and 2 when a build's results are missing.
+says more of the machine. The reads' "all" rows are left out: members and admins together have two speeds, and
+the middle of the two moves with how many of each a run drew.
+A difference is called (faster, slower) only when every round of one build is beyond every round of the other
+and the means differ by more than one build's own runs do on a runner (FLOOR; the same build against itself on
+2026-11-15: a read's p50 by up to 2%, tree writes a second by up to 7%). Otherwise nothing is said. Nothing is
+judged: the exit code is 0 whatever the table says, and 2 when a build's results are missing.
 """
 
 import glob
@@ -19,6 +21,8 @@ import re
 import sys
 
 MORE_IS_BETTER = "writes/s"
+# a difference of the means that is called: over 3% for a time, over 10% for writes a second
+FLOOR, FLOOR_WRITES = 0.03, 0.10
 
 
 def numbers(path: str) -> tuple[str, dict[str, float]]:
@@ -45,6 +49,8 @@ def numbers(path: str) -> tuple[str, dict[str, float]]:
             elif section == "3" and f[0] in ("writes:", "reads:"):
                 table = f[0][:-1]
             elif section in ("1", "3") and len(f) >= 7 and f[1].isdigit() and f[2].isdigit():
+                if f[0] == "all" and table != "writes":
+                    continue
                 if section == "1":
                     out[f"1. {f[0]}, p50 ms"] = float(f[3])
                 elif table == "writes" and f[0] == "all":
@@ -72,9 +78,13 @@ def round_of(path: str) -> int:
 
 
 def called(base: list[float], here: list[float], more_is_better: bool) -> str:
-    """faster or slower when every round of one build is beyond every round of the other, and two rounds or more
-    of each say so; nothing otherwise."""
+    """faster or slower when every round of one build is beyond every round of the other, two rounds or more of
+    each say so, and the means differ by more than a build's own runs do (FLOOR); nothing otherwise."""
     if min(len(base), len(here)) < 2:
+        return ""
+    b, h = sum(base) / len(base), sum(here) / len(here)
+    # (figures are written to a hundredth: two of them apart or less is how they are rounded)
+    if abs(h / b - 1) <= (FLOOR_WRITES if more_is_better else FLOOR) or abs(h - b) <= 0.02:
         return ""
     if max(here) < min(base):
         return "slower" if more_is_better else "faster"
@@ -110,7 +120,10 @@ def main() -> int:
         said = called(b, h, key.endswith(MORE_IS_BETTER))
         cells = "  ".join(f"{''.join(f'{x:9.2f}' for x in xs):>{wide}}" for xs in (b, h))
         print(f"{key:<58}{cells}{ratio:11.2f}{'  ' + said if said else ''}")
-    print("# faster, slower: every round of one build is beyond every round of the other; nothing said: they overlap")
+    print(
+        "# faster, slower: every round of one build is beyond every round of the other, and the means differ by more "
+        f"than {FLOOR:.0%} ({FLOOR_WRITES:.0%} for writes a second); nothing said otherwise"
+    )
     return 0
 
 
