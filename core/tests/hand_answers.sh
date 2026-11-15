@@ -9,15 +9,16 @@
 # only: 42501, or a write that changes no row) ends with `-- error: ` and the error's words.
 #   PGHOST=... PGUSER=authz_owner tests/hand_answers.sh
 # With --kept-names, the same answers from tables that have more columns: one for every name the policy's generated
-# SQL keeps for itself (tests/kept_names.py: a function's parameter or variable, PL/pgSQL's own found, new, old, and
-# what the SQL calls a row by: n, o, a table's own name), NULL in every row. A table's columns may have any name:
-# SQL that takes one of them for a name of its own, or can't tell which is meant (42702, ambiguous), gives another
-# answer here.
+# SQL keeps for itself (tests/kept_names.py: a function's parameter or variable, PL/pgSQL's own found, new, old,
+# what the SQL calls a row by: n, o, a table's own name) and for every word it writes by itself (a query's column,
+# x, id; a column of rowstile's own tables), some 500 a table, NULL in every row. A table's columns may have any
+# name: SQL that takes one of them for a name of its own, or can't tell which is meant (42702, ambiguous), gives
+# another answer here.
 set -u
 cd "$(dirname "$0")/.."
 DB=authz_hand_answers WHAT="hand answers" KEPT=0
 case "${1:-}" in
-  --kept-names) DB=authz_hand_names WHAT="hand answers, a column of every kept name" KEPT=1;;
+  --kept-names) DB=authz_hand_names WHAT="hand answers, a column of every name the SQL writes" KEPT=1;;
   "") ;;
   *) echo "usage: $0 [--kept-names]" >&2; exit 2;;
 esac

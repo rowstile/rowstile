@@ -437,11 +437,11 @@ record "${PIPESTATUS[0]}" "hand answers"
 }
 unit policy 45 hand_answers
 hand_answers_kept_names() {
-step "the same answers held against the database on tables that have a column of every name the generated SQL keeps"
+step "the same answers held against the database on tables that have a column of every name the generated SQL writes"
 tests/hand_answers.sh --kept-names | quiet_ok
 record "${PIPESTATUS[0]}" "hand answers, kept names"
 }
-unit policy 60 hand_answers_kept_names
+unit policy 90 hand_answers_kept_names
 
 fi
 difftest() {
