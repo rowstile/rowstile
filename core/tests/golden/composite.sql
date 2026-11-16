@@ -102,13 +102,13 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('user__manager__tree', '850936bfffd52b4aa52d3b429327c18e', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('user__manager__tree', 'f13b0983772ae2f62c832e48c714c11a', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."users"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'user__manager__tree'), ('folder_project__folder_parent__tree', '541122641e4ba4f1ef4b7c8dd5511877', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__folder_parent__tree'), ('folder__parent__tree', '02393c685d6d8493ae7e689dc519aaad', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__folder_parent__tree'), ('folder__parent__tree', 'b7d337f02764f81f738fdc98765e528f', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree')) n(name, hash, oids, rel)
@@ -1195,31 +1195,38 @@ END $f$;
 -- updated; for each row it hangs under, that one's stripe shared and one of the stripe's other rows updated; at a
 -- stricter level the type's row and the other rows of its own stripe, shared), each by a small statement. A lock
 -- row costs a few microseconds; the one statement that takes any number of them costs a hundred times that to
--- start. o_stripes false: the type takes its own row for every write, and the caller does. p_under and p_hung,
--- side by side: the rows it hangs under, and itself beside each
-CREATE FUNCTION authz_int.tree_lock_one(p_type text, p_id text, p_under text[], p_hung text[],
-                                        OUT o_held int[], OUT o_stripes boolean)
+-- start. For a type that has stripes (the caller has read that). p_under and p_hung, side by side: the rows it
+-- hangs under, and itself beside each. Answers what it holds, as authz_int.tree_lock does
+CREATE FUNCTION authz_int.tree_lock_one(p_type text, p_id text, p_under text[], p_hung text[]) RETURNS int[]
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE
   v_strict boolean := pg_catalog.current_setting('transaction_isolation') <> 'read committed';
   v_own int := (pg_catalog.hashtext(p_id) & 1023) * 5;
-  v_keys int[]; v_key int;
+  v_above int; v_born int; v_keys int[]; v_key int;
 BEGIN
-  o_stripes := coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = p_type), false);
-  IF NOT o_stripes THEN RETURN; END IF;
   -- each lock row as its slot twice, plus one when it is updated (the type's row: -2), in the slots' order
-  v_keys := ARRAY[v_own * 2 + 1];
-  FOR i IN 1..coalesce(cardinality(p_under), 0) LOOP
-    IF p_under[i] IS NOT NULL THEN
-      v_keys := v_keys || ARRAY[(pg_catalog.hashtext(p_under[i]) & 1023) * 5 * 2,
-                                ((pg_catalog.hashtext(p_under[i]) & 1023) * 5 + 1 + ((pg_catalog.hashtext(p_hung[i]) >> 12) & 3)) * 2 + 1];
+  IF NOT v_strict AND cardinality(p_under) = 1 AND p_under[1] IS NOT NULL THEN
+    -- (the usual write, under one row: three lock rows, put in order here, without a statement to sort them. A
+    -- stripe's other rows come right after its own, and before the next stripe's)
+    v_above := (pg_catalog.hashtext(p_under[1]) & 1023) * 5;
+    v_born := v_above + 1 + ((pg_catalog.hashtext(p_hung[1]) >> 12) & 3);
+    v_keys := CASE WHEN v_own < v_above THEN ARRAY[v_own * 2 + 1, v_above * 2, v_born * 2 + 1]
+                   WHEN v_own > v_above THEN ARRAY[v_above * 2, v_born * 2 + 1, v_own * 2 + 1]
+                   ELSE ARRAY[v_own * 2 + 1, v_born * 2 + 1] END;
+  ELSE
+    v_keys := ARRAY[v_own * 2 + 1];
+    FOR i IN 1..coalesce(cardinality(p_under), 0) LOOP
+      IF p_under[i] IS NOT NULL THEN
+        v_keys := v_keys || ARRAY[(pg_catalog.hashtext(p_under[i]) & 1023) * 5 * 2,
+                                  ((pg_catalog.hashtext(p_under[i]) & 1023) * 5 + 1 + ((pg_catalog.hashtext(p_hung[i]) >> 12) & 3)) * 2 + 1];
+      END IF;
+    END LOOP;
+    IF v_strict THEN
+      v_keys := v_keys || -2 || ARRAY(SELECT (v_own + g.sub) * 2 FROM generate_series(1, 4) g(sub));
     END IF;
-  END LOOP;
-  IF v_strict THEN
-    v_keys := v_keys || -2 || ARRAY(SELECT (v_own + g.sub) * 2 FROM generate_series(1, 4) g(sub));
-  END IF;
-  IF cardinality(v_keys) > 1 THEN
-    v_keys := ARRAY(SELECT DISTINCT k.key FROM unnest(v_keys) k(key) ORDER BY k.key);
+    IF cardinality(v_keys) > 1 THEN
+      v_keys := ARRAY(SELECT DISTINCT k.key FROM unnest(v_keys) k(key) ORDER BY k.key);
+    END IF;
   END IF;
   FOREACH v_key IN ARRAY v_keys LOOP
     IF v_key = -2 THEN
@@ -1235,7 +1242,7 @@ BEGIN
       PERFORM authz_int.tree_locks_gone();
     END IF;
   END LOOP;
-  o_held := v_keys;
+  RETURN v_keys;
 END $f$;
 
 -- a row for each row a share, a key or a request named (authz_int.mark_row), until that row is gone
@@ -1245,7 +1252,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('user__manager__tree', '850936bfffd52b4aa52d3b429327c18e', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('user__manager__tree', 'f13b0983772ae2f62c832e48c714c11a', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."users"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
@@ -1253,7 +1260,7 @@ INSERT INTO authz_int.trees VALUES
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__parent__tree', '02393c685d6d8493ae7e689dc519aaad', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', 'b7d337f02764f81f738fdc98765e528f', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -2078,15 +2085,17 @@ BEGIN
   IF p_plain THEN
     IF cardinality(p_ids) = 1 AND p_ids[1] IS NOT NULL THEN
       -- (one row, nothing hanging under it: the short way to the same lock rows)
-      SELECT h._under, h._hung INTO under, hung
+      SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'user'), false)
+      INTO under, hung, stripes
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                  array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
           FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
             (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."manager_id" AS _parent FROM "cx"."users" r WHERE r."manager_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
           WHERE e._parent IS NOT NULL) h;
       affected := p_ids;
-      SELECT l.o_held, l.o_stripes INTO held, stripes
-      FROM authz_int.tree_lock_one('user', authz__.affected[1]::text, authz__.under, authz__.hung) l;
+      IF authz__.stripes THEN
+        held := authz_int.tree_lock_one('user', authz__.affected[1]::text, authz__.under, authz__.hung);
+      END IF;
       asked := 0;
       taken := 0;
     ELSE
@@ -2735,7 +2744,8 @@ BEGIN
   IF p_plain THEN
     IF cardinality(p_ids) = 1 AND p_ids[1] IS NOT NULL THEN
       -- (one row, nothing hanging under it: the short way to the same lock rows)
-      SELECT h._under, h._hung INTO under, hung
+      SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false)
+      INTO under, hung, stripes
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                  array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
           FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
@@ -2743,8 +2753,9 @@ BEGIN
       UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, (CASE WHEN (s."org_id", s."child_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."child_id"::bigint)::text END) AS _child, (CASE WHEN (s."org_id", s."parent_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."parent_id"::bigint)::text END) AS _parent FROM "cx"."folder_links" s WHERE (CASE WHEN (s."org_id", s."parent_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."parent_id"::bigint)::text END) IS NOT NULL AND (CASE WHEN (s."org_id", s."child_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."child_id"::bigint)::text END) IS NOT NULL AND (s."org_id", s."child_id") = (((b._y)::authz_gen."folder__key")."org_id", ((b._y)::authz_gen."folder__key")."id")) x OFFSET 0)) e
           WHERE e._parent IS NOT NULL) h;
       affected := p_ids;
-      SELECT l.o_held, l.o_stripes INTO held, stripes
-      FROM authz_int.tree_lock_one('folder', authz__.affected[1]::text, authz__.under, authz__.hung) l;
+      IF authz__.stripes THEN
+        held := authz_int.tree_lock_one('folder', authz__.affected[1]::text, authz__.under, authz__.hung);
+      END IF;
       asked := 0;
       taken := 0;
     ELSE
