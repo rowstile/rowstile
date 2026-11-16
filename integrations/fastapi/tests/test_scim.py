@@ -28,13 +28,23 @@ from .conftest import OWNER, libpq
 pytestmark = pytest.mark.anyio
 APP = os.environ.get("ROWSTILE_APP_URL", "")
 Answer = Any
-SETTINGS = {
-    "principal": "user:9",
-    "group": "project.member",
-    "group_name": "name",
-    "user_name": "name",
-    "user_function": "app.scim_user",
-}
+# What the tables' owner says once, in psql or a migration (docs/stacks/fastapi.md shows these lines): the provider is
+# user 9, a user the app keeps for it; its groups are the projects' members; and what the endpoint reads of a user
+SET_UP = """
+SELECT authz.set_scim('{
+  "principal": "user:9",
+  "group": "project.member", "group_name": "name",
+  "user_name": "name", "user_active": "active", "user_resource": "scim",
+  "user_function": "app.scim_user"
+}');
+"""
+# ... and the provider's key, made once as that user
+MAKE_KEY = """
+BEGIN;
+SELECT authz.act_as('user', '9');
+SELECT authz.create_api_key('the identity provider');   -- shown this once: the provider's bearer token
+COMMIT;
+"""
 ERROR = "urn:ietf:params:scim:api:messages:2.0:Error"
 PATCH = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 USER = "urn:ietf:params:scim:schemas:core:2.0:User"
@@ -90,12 +100,12 @@ def provider() -> Iterator[str]:
     off again, and the users and the members are the ones every other test counts on."""
     with psycopg.connect(libpq(OWNER), autocommit=True) as owner:
         owner.execute("INSERT INTO app.users VALUES (9, 'provisioning')")
-        with owner.transaction():
-            owner.execute("SELECT authz.act_as('user', '9')")
-            key = owner.execute("SELECT authz.create_api_key('the identity provider')").fetchone()
+        made = owner.execute(MAKE_KEY)
+        assert made.nextset() and made.nextset()  # (the third statement's row)
+        key = made.fetchone()
         assert key is not None
         owner.execute("SELECT setval(pg_get_serial_sequence('app.users', 'id'), 100)")
-        owner.execute("SELECT authz.set_scim(%s::jsonb)", [json.dumps(SETTINGS)])
+        owner.execute(SET_UP)
         try:
             yield key[0]
         finally:
@@ -103,6 +113,7 @@ def provider() -> Iterator[str]:
             owner.execute("DELETE FROM app.members")
             owner.execute("INSERT INTO app.members VALUES (1, 3)")
             owner.execute("DELETE FROM app.users WHERE id > 3")
+            owner.execute("UPDATE app.users SET email = NULL, active = true, scim = NULL")
 
 
 async def test_scim_only_the_providers_key_is_answered(app: FastAPI, provider: str) -> None:
@@ -215,6 +226,51 @@ async def test_scim_a_user_made_is_answered_with_where_it_is(app: FastAPI, provi
     assert row == ("dee.user",)
     assert deleted.status_code == 204 and deleted.content == b"" and "content-type" not in deleted.headers
     assert gone.status_code == 404 and gone.json()["schemas"] == [ERROR], gone.text
+
+
+async def test_scim_the_apps_function_keeps_what_the_provider_says_nothing_of(app: FastAPI, provider: str) -> None:
+    def row(user: int) -> Answer:
+        with psycopg.connect(libpq(OWNER), autocommit=True) as owner:
+            return owner.execute(
+                "SELECT name, email, active, scim->>'displayName', scim ? 'password' FROM app.users WHERE id = %s",
+                [user],
+            ).fetchone()
+
+    async with client(app) as c:
+        made = await c.post("/scim/v2/Users", json=DEE, headers=bearer(provider))
+        as_made = row(101)
+        # a GET answers the user as the provider wrote it, from the column the settings name (user_resource)
+        read = await c.get("/scim/v2/Users/101", headers=bearer(provider))
+        # Okta deactivates a user (op replace, no path, active false in the value): the row stays, not active
+        off = await c.patch(
+            "/scim/v2/Users/101",
+            json={"schemas": [PATCH], "Operations": [{"op": "replace", "value": {"active": False}}]},
+            headers=bearer(provider),
+        )
+        as_off = row(101)
+        # a PUT that says less than the user had (no email, nothing of active): the app's function keeps both
+        less = await c.put("/scim/v2/Users/101", json={"schemas": [USER], "userName": "dee"}, headers=bearer(provider))
+        as_less = row(101)
+        # a user the app made itself, whom the provider never wrote: a PATCH starts from what the columns say
+        named = await c.patch(
+            "/scim/v2/Users/2",
+            json={"schemas": [PATCH], "Operations": [{"op": "Replace", "path": "displayName", "value": "Bo B."}]},
+            headers=bearer(provider),
+        )
+    assert made.status_code == 201, made.text
+    assert as_made == ("dee", "dee@example.com", True, "Dee User", False), as_made
+    assert read.status_code == 200, read.text
+    assert (read.json()["displayName"], read.json()["emails"][0]["value"], read.json()["active"]) == (
+        "Dee User",
+        "dee@example.com",
+        True,
+    ), read.text
+    assert off.status_code == 200 and off.json()["active"] is False, off.text
+    assert as_off == ("dee", "dee@example.com", False, "Dee User", False), as_off
+    assert less.status_code == 200 and less.json()["active"] is False, less.text
+    assert as_less == ("dee", "dee@example.com", False, None, False), as_less
+    assert named.status_code == 200 and named.json()["userName"] == "bo", named.text
+    assert row(2) == ("bo", None, True, "Bo B.", False), row(2)
 
 
 async def test_scim_a_body_goes_on_unread_and_nothing_sent_is_an_error(

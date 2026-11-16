@@ -143,8 +143,10 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   key every folder gives, as an org's admins through each folder's org, once for each folder above each one: an org
   admin's filter reads every row of inherits, 766,000. Right after the first apply, before autovacuum has run, a
   write that reads many of the index's rows can take forty times as long: run `VACUUM` on its tables after it. <!-- unchecked: times measured by hand on 2026-10-31 and 2026-11-01 -->
-- **Identity providers**: `authz.sync_members` takes the member list; there is no SCIM
-  endpoint. A JWT's signature is checked in plain SQL: HS256, or RS256 against the provider's stored keys,
+- **Identity providers**: users and groups come by SCIM, which the database answers
+  ([Identity](identity.md#users-and-groups-from-an-identity-provider-scim)): the FastAPI and the Next.js SDKs
+  have the route, the other SDKs not yet, and it serves no Bulk, no sorting, no ETags and no password change.
+  A JWT's signature is checked in plain SQL: HS256, or RS256 against the provider's stored keys,
   which takes about 2 ms a sign-in with a 2048-bit key, 4 ms with a 3072-bit one and 7 ms with a 4096-bit
   one, the first time a connection sees the token; the same token there again takes 0.3 ms, as an HS256 token
   does. <!-- unchecked: times measured by hand on 2026-11-15, PostgreSQL 16 -->

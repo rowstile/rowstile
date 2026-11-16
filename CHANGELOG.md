@@ -24,9 +24,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   over https, from that server alone, 64 KB and ten seconds at most. `--check` stores nothing and exits 1 if the
   stored keys are no longer the provider's; without a URL it lists the stored keys
   ([Tools](docs/reference/tools.md)).
-- The first part of a SCIM endpoint, answered in SQL: `authz.scim(method, path, query, body, token)` takes an
-  identity provider's request as a route got it and answers a status, a body and a location. So far it serves
-  groups and users. Groups are read, listed, found by `displayName`, `externalId` or `id`, patched as Microsoft
+- A SCIM endpoint for an identity provider's users and groups (Okta, Microsoft Entra ID), answered in SQL:
+  `authz.scim(method, path, query, body, token)` takes a request as a route got it and answers a status, a body
+  and a location. Groups are read, listed, found by `displayName`, `externalId` or `id`, patched as Microsoft
   Entra ID and Okta write it (members added, removed, replaced), replaced, and made, renamed and deleted through a
   function the app gives. Members are written as `authz.sync_members` writes them, with its line in the audit
   trail. Users are read and found by `userName`, `externalId` or `id`, and made, changed, deactivated and deleted
@@ -47,9 +47,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   catch-all route (`app/scim/v2/[...scim]/route.ts`) answers the same way, an error logged with
   `console.error`; the address of what was made is on the host the provider asked (`x-forwarded-host`). On
   another framework, `scim(method, path, query, body, token)` of each driver's calls (`db.$authz`,
-  `authz(pool)`) asks the database. The limits page still says there is no endpoint to mount: the stack
-  pages follow
-  ([App code](docs/reference/app-code.md)).
+  `authz(pool)`) asks the database. The other SDKs have no route yet
+  ([Identity](docs/reference/identity.md#users-and-groups-from-an-identity-provider-scim); the setup step by
+  step, from apps the tests run: [FastAPI](docs/stacks/fastapi.md#users-and-groups-from-an-identity-provider-scim),
+  [Next.js](docs/stacks/nextjs.md#users-and-groups-from-an-identity-provider-scim)).
 
 ### Changed
 

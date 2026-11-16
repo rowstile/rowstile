@@ -412,7 +412,7 @@ FEATURES: list[Feature] = [
         "A SCIM endpoint for an identity provider's users and groups, answered in SQL: `authz.scim`, and "
         "`authz.set_scim` for what it reads",
         ("api.scim", "api.set_scim", "err.AZ720", "err.AZ721", "err.AZ722"),
-        Doc(APP, "a SCIM endpoint for an identity provider's users and groups"),
+        Doc(IDENT, "Users and groups from an identity provider (SCIM)"),
         (
             T("scim.sh", "the app role cannot set the endpoint up"),
             T("scim.sh", "... and one another role owns, which could then run its own code as the owner"),
@@ -466,11 +466,13 @@ FEATURES: list[Feature] = [
             Check(FASTAPI_SCIM, "test_scim_only_the_providers_key_is_answered"),
             Check(FASTAPI_SCIM, "test_scim_a_patch_changes_the_members_and_the_policy_follows"),
             Check(FASTAPI_SCIM, "test_scim_a_user_made_is_answered_with_where_it_is"),
+            Check(FASTAPI_SCIM, "test_scim_the_apps_function_keeps_what_the_provider_says_nothing_of"),
             Check(FASTAPI_SCIM, "test_scim_requests_are_not_user_requests"),
             # the TypeScript SDK's route for Next.js: the same requests, through the server and to the handlers
             Check(NEXT_SCIM, "only the provider's key is answered"),
             Check(NEXT_SCIM, "a PATCH changes the members and the policy follows"),
             Check(NEXT_SCIM, "a user made is answered with where it is"),
+            Check(NEXT_SCIM, "the app's function keeps what the provider says nothing of"),
             Check(NEXT_SCIM, "requests are not user requests: user() is never asked"),
         ),
         (T(DIFF, "authz.scim("),),

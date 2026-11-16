@@ -18,7 +18,23 @@ import { authz as postgresAuthz } from "@rowstile/postgres";
 import { db, pool } from "@/db";
 import { APP, OWNER, SERVER, SERVER_LOG, SERVER_ONE, as, seed } from "./data";
 
-const SETTINGS = { principal: "user:9", group: "project.member", group_name: "name", user_name: "name", user_function: "app.scim_user" };
+// What the tables' owner says once, in psql or a migration (docs/stacks/nextjs.md shows these lines): the provider
+// is user 9, a user the app keeps for it; its groups are the projects' members; and what the endpoint reads of a user
+const SET_UP = `
+SELECT authz.set_scim('{
+  "principal": "user:9",
+  "group": "project.member", "group_name": "name",
+  "user_name": "name", "user_active": "active", "user_resource": "scim",
+  "user_function": "app.scim_user"
+}');
+`;
+// ... and the provider's key, made once as that user
+const MAKE_KEY = `
+BEGIN;
+SELECT authz.act_as('user', '9');
+SELECT authz.create_api_key('the identity provider');   -- shown this once: the provider's bearer token
+COMMIT;
+`;
 const ERROR = "urn:ietf:params:scim:api:messages:2.0:Error";
 const PATCH = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
 const USER = "urn:ietf:params:scim:schemas:core:2.0:User";
@@ -75,9 +91,10 @@ let key = "";
 beforeEach(async () => {
   await seed();
   await owner.query("INSERT INTO app.users VALUES (9, 'provisioning')");
-  key = await keyOf(9, "the identity provider");
+  const made = (await owner.query(MAKE_KEY)) as unknown as pg.QueryResult[];    // (a result for each statement)
+  key = made[2].rows[0].create_api_key as string;
   await owner.query("SELECT setval('app.provisioned_user_ids', 100)");
-  await owner.query("SELECT authz.set_scim($1::jsonb)", [JSON.stringify(SETTINGS)]);
+  await owner.query(SET_UP);
 });
 afterEach(() => owner.query("SELECT authz.set_scim('{}')"));
 afterAll(async () => {
@@ -215,6 +232,29 @@ describe.each([[THROUGH, SERVER, through], ["on the handlers here", HERE, here(r
     expect([deleted.status, await deleted.text(), deleted.headers.get("content-type")]).toEqual([204, "", null]);
     const gone = await ask("GET", "Users/101", { headers: bearer(key) });
     expect([gone.status, (await gone.json()).schemas]).toEqual([404, [ERROR]]);
+  });
+
+  test("the app's function keeps what the provider says nothing of", async () => {
+    const row = async (id: number) => (await owner.query(
+      "SELECT name, email, active, scim->>'displayName' AS shown, scim ? 'password' AS password FROM app.users WHERE id = $1", [id])).rows[0];
+    expect((await ask("POST", "Users", json(DEE, bearer(key)))).status).toBe(201);
+    expect(await row(101)).toEqual({ name: "dee", email: "dee@example.com", active: true, shown: "Dee User", password: false });
+    // a GET answers the user as the provider wrote it, from the column the settings name (user_resource)
+    const read = await (await ask("GET", "Users/101", { headers: bearer(key) })).json();
+    expect([read.displayName, read.emails[0].value, read.active]).toEqual(["Dee User", "dee@example.com", true]);
+    // Okta deactivates a user (op replace, no path, active false in the value): the row stays, not active
+    const off = await ask("PATCH", "Users/101", json({ schemas: [PATCH], Operations: [{ op: "replace", value: { active: false } }] }, bearer(key)));
+    expect([off.status, (await off.json()).active]).toEqual([200, false]);
+    expect(await row(101)).toEqual({ name: "dee", email: "dee@example.com", active: false, shown: "Dee User", password: false });
+    // a PUT that says less than the user had (no email, nothing of active): the app's function keeps both
+    const less = await ask("PUT", "Users/101", json({ schemas: [USER], userName: "dee" }, bearer(key)));
+    expect([less.status, (await less.json()).active]).toEqual([200, false]);
+    expect(await row(101)).toEqual({ name: "dee", email: "dee@example.com", active: false, shown: null, password: false });
+    // a user the app made itself, whom the provider never wrote: a PATCH starts from what the columns say
+    const named = await ask("PATCH", "Users/2", json(
+      { schemas: [PATCH], Operations: [{ op: "Replace", path: "displayName", value: "Bo B." }] }, bearer(key)));
+    expect([named.status, (await named.json()).userName]).toEqual([200, "bo"]);
+    expect(await row(2)).toEqual({ name: "bo", email: null, active: true, shown: "Bo B.", password: false });
   });
 
   test("a body goes on unread and nothing sent is an error", async () => {

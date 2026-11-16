@@ -292,6 +292,106 @@ It returns the copy's URL, and the app role's for it. The copy needs nobody conn
 service keeps a connection (Neon does, for minutes after one), it says so and what to use instead ([Managed
 Postgres](../managed-postgres.md)).
 
+## Users and groups from an identity provider (SCIM)
+
+An identity provider (Okta, Microsoft Entra ID) can write its directory's users and groups to the app. It sends
+SCIM requests, and the database answers them
+([Identity](../reference/identity.md#users-and-groups-from-an-identity-provider-scim) has all of it). The app
+mounts the route, on the object `Rowstile(...)` gave:
+
+```python
+    # an identity provider's users and groups (SCIM: Okta, Microsoft Entra ID): the database answers each request
+    authz.mount_scim("/scim/v2")
+```
+
+The route passes each request on and answers what the database says. The bearer token alone says who asks:
+`user(request)` isn't asked about a request under the mount, and its transaction signs nobody in, whatever
+session the request also carries. An error (settings that no longer hold, your function failing) is answered 500
+in SCIM's words and logged by the `rowstile` logger. The route reads a request's whole body before the database
+looks at the key, as any route that reads JSON does: how large a body may be is the server in front's to cap.
+
+Users are rows of your table, with columns rowstile doesn't know, so a function of yours makes and changes them.
+Here the users' table has three columns for what a provider says: an email, whether the user is active, and the
+user as the provider wrote it, which the endpoint answers when the provider reads the user back.
+
+```python
+# app/models.py
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    # what an identity provider says of a user (SCIM): app.scim_user writes them
+    email: Mapped[str | None] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, server_default=true())
+    scim: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+```
+
+The function is a migration of the app's, which the owner runs: the database calls it with the owner's rights, so
+it must be the owner's own. It never gets a password. A request may say less of a user than the app has (a PUT
+without an email, a PATCH of a user the provider never wrote), so it keeps what the request says nothing of:
+
+```python
+# migrations/versions/0002_scim_user.py
+def upgrade() -> None:
+    # p_id NULL: a user to make; p_resource NULL: one to delete; else one to change. It answers the user's key.
+    # rowstile calls it as the tables' owner, whose own it is: the app role has no right to write app.users
+    op.execute("""CREATE FUNCTION app.scim_user(p_id text, p_resource jsonb) RETURNS text LANGUAGE plpgsql AS $f$
+    DECLARE v_id text;
+    BEGIN
+      IF p_resource IS NULL THEN
+        DELETE FROM app.users WHERE id = p_id::bigint;
+        RETURN p_id;
+      ELSIF p_id IS NULL THEN
+        INSERT INTO app.users (name, email, active, scim)
+        VALUES (p_resource->>'userName', p_resource#>>'{emails,0,value}',
+                coalesce((p_resource->>'active')::boolean, true), p_resource)
+        RETURNING id::text INTO v_id;
+      ELSE
+        -- a user changed: what the provider says nothing of stays as the app had it
+        UPDATE app.users SET name = p_resource->>'userName', scim = p_resource,
+          email = coalesce(p_resource#>>'{emails,0,value}', email),
+          active = coalesce((p_resource->>'active')::boolean, active)
+        WHERE id = p_id::bigint RETURNING id::text INTO v_id;
+      END IF;
+      RETURN v_id;
+    END $f$""")
+```
+
+Then the owner says what the endpoint reads, once, in psql or in a migration after the policy's own
+(`authz.set_scim` comes with the policy). The call replaces the stored settings, and each is checked as it is
+set:
+
+```sql
+SELECT authz.set_scim('{
+  "principal": "user:9",
+  "group": "project.member", "group_name": "name",
+  "user_name": "name", "user_active": "active", "user_resource": "scim",
+  "user_function": "app.scim_user"
+}');
+```
+
+- `principal` is whose API key signs the provider in. Here it is user 9, a user the app holds for the provider
+  and nobody signs in as; a row of a type that signs in (this app's `service`) does as well. The row is there
+  before the settings name it.
+- `group` is what the provider's groups are in the policy: here a project's members, so a group's PATCH writes
+  `app.members` as `authz.sync_members` would, with its line in the audit trail, and the policy follows at once.
+  With no `group_function` the provider finds the projects the app has by their name, and can't make one.
+- The `user_` settings name the users' columns and the function above.
+
+The provider's bearer token is an API key of that principal, made once:
+
+```sql
+BEGIN;
+SELECT authz.act_as('user', '9');
+SELECT authz.create_api_key('the identity provider');   -- shown this once: the provider's bearer token
+COMMIT;
+```
+
+Give the provider the route's address (`https://app.example/scim/v2`) and that key. A user the provider
+deactivates stays, with `active` false: what such a user may do is the policy's to say, and
+`type user = app.users where {active}` makes one nobody. `rowstile lint` says when a setting no longer holds (a
+column renamed, the function gone): a request that meets it is an error, the 500 above.
+
 ## Other drivers
 
 The sync engine (and SQLModel, built on it) takes `install(engine)`. psycopg and asyncpg without SQLAlchemy:

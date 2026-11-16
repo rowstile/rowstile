@@ -154,3 +154,88 @@ JIT back on after signing in (`SET LOCAL jit = on`). <!-- checked: tests/session
 Who may call `act_as`: the app role and its members (the policy grants it), so a compromised app can still
 choose users. <!-- checked: tests/sessions.sh "a role that isn't the app role can't act_as"; tests/sessions.sh "authz.act_as signs carol in: she sees her files" -->
 Keep the app role's credentials in the backend.
+
+## Users and groups from an identity provider (SCIM)
+
+An identity provider (Okta, Microsoft Entra ID) writes its directory's users and groups to an app by sending SCIM
+requests (RFC 7644), and the database answers them: `authz.scim(method, path, query, body, token)` takes a
+request's parts and answers a `status`, a `body` and a `location`. The app's part is a route that passes on the
+request's method, its path below the route (`Groups/10`), its query string and its body as they were sent and its
+bearer token, and answers what comes back. The Python SDK has that route for FastAPI
+([FastAPI](../stacks/fastapi.md#users-and-groups-from-an-identity-provider-scim)) and the TypeScript SDK for
+Next.js ([Next.js](../stacks/nextjs.md#users-and-groups-from-an-identity-provider-scim)); the other SDKs' routes
+are not there yet. A body that is no JSON is answered 400, once the key says who asks. <!-- checked: tests/scim.sh "a body that is no JSON"; tests/scim.sh "without the provider's key such a body is not read: the key is refused" -->
+
+**The owner says what the endpoint reads**, in one call that replaces the stored settings (`'{}'` turns the
+endpoint off): <!-- checked: tests/scim.sh "the next settings replace the stored ones: a setting left out is gone"; tests/scim.sh "with no settings the endpoint is nobody's: the provider's key is refused"; tests/reference.sh "the settings identity.md gives the endpoint: the provider's key finds a team by its name, and adds a member to it" -->
+
+```sql
+SELECT authz.set_scim('{
+  "principal": "user:1",
+  "group": "team.member", "group_name": "name",
+  "user_name": "name"
+}');
+```
+
+- `principal`: whose API key signs the provider in, as `type:id`: a user the app holds for the provider, or a row
+  of a type that signs in (a service, above). The provider's bearer token is an API key of that principal, made as
+  any of its keys is (`authz.create_api_key`).
+- `group`: the groups, as `type.relation`: a relation `authz.sync_members` takes ([App code](app-code.md)).
+  `group_name` and `group_external_id` name the columns of the groups' table that hold a group's `displayName` and
+  its `externalId`.
+- `user_name`, `user_external_id` and `user_active`: the columns of the users' table that hold a user's `userName`,
+  its `externalId` and whether it is active (a boolean).
+- `user_resource`: a jsonb column where the app's function puts the user as the provider wrote it. A GET then
+  answers that, with what the three columns say now. <!-- checked: tests/scim.sh "... and a GET answers what the provider wrote, from the column the settings name for it" -->
+  Name one: without it a user is what the three columns say, and Microsoft Entra ID's validator checks that
+  "Returned values from GET match the passed values from the POST request" (Microsoft's provisioning docs, read
+  2026-11-16).
+- `group_function` and `user_function`: the app's functions that make, change and delete a group and a user
+  (below).
+- `page`: the most a list answers. <!-- checked: tests/scim.sh "a list answers a page at most (the setting page, 3 here), and says how many there are" -->
+
+Each setting is checked when set (AZ720), and `authz.lint()` says when one no longer holds (a column dropped, a
+function given to another role): a request that meets it is an error (AZ722). <!-- checked: tests/scim.sh "a column the settings name that is gone"; tests/scim.sh "a function that is gone"; tests/scim.sh "a function the settings name that another role owns now" -->
+`authz.set_scim` is the owner's, as the principal it names writes users and groups: the app role can't call
+it. <!-- checked: tests/scim.sh "the app role cannot set the endpoint up" -->
+
+**The app's functions make the rows.** Users and groups are rows of the app's own tables, with columns rowstile
+doesn't know, so the app gives a function for each, `(p_id text, p_resource jsonb) RETURNS text`: the row's key
+and the user or the group as the request leaves it come in, and the key goes out. A NULL `p_id` is a row to make,
+a NULL `p_resource` one to delete. The function runs as the owner, so it is the owner's own: one that another
+role owns is refused when set, and is an error from then on if it is given away later. <!-- checked: tests/scim.sh "... and one another role owns, which could then run its own code as the owner"; tests/scim.sh "a function the settings name that another role owns now" -->
+With no function, a request that makes or deletes a user or a group, changes a user or renames a group is
+answered 501. A group's members are written all the same, and the users and the groups the app has are read and
+matched. <!-- checked: tests/scim.sh "with no function, a group can't be made"; tests/scim.sh "... nor a PATCH that changes the name"; tests/scim.sh "with no function, a user can't be made"; tests/scim.sh "... nor changed" -->
+A user comes as a POST's or a PUT's body, or as a PATCH's operations applied to the user as it is, never with a
+password (Okta's docs: "Okta sends the `password` parameter in a create user request, even if password sync isn't
+enabled"). <!-- checked: tests/scim.sh "Entra ID makes a user: 201, the user as it wrote it, where it is"; tests/scim.sh "Entra ID changes the userName (op Replace, the path userName)"; tests/scim.sh "... nor given to the app's function, which kept the rest" -->
+A request may say less of a user than the app has (a PUT without an email, a PATCH of a user the app made by
+itself): write the function so that what `p_resource` says nothing of stays, `coalesce(p_resource->>'displayName',
+name)`. The stack pages each show one.
+
+**Groups** are read, listed, found by `displayName`, `externalId` or `id`, patched (members added, removed and
+replaced, as Microsoft Entra ID and Okta write a PATCH), replaced, and made, renamed and deleted through the
+app's function. <!-- checked: tests/scim.sh "a group found by its displayName, the query string as it is sent"; tests/scim.sh "one PATCH that adds a member and removes another"; tests/scim.sh "a PUT with the group's name and its members: answered with the group"; tests/scim.sh "Entra ID renames a group (op Replace, the path displayName)"; tests/scim.sh "a group deleted: 204, no body" -->
+Members are written as `authz.sync_members` writes them, with its line in the audit trail, the provider's
+principal as who did it. <!-- checked: tests/scim.sh "... changes the rows as authz.sync_members would, in one line of the audit" -->
+
+**Users** are read, listed and found by `userName`, `externalId` or `id`, and made, changed and deleted through
+the app's function. <!-- checked: tests/scim.sh "a user found by its id"; tests/scim.sh "Okta asks whether a user is there before it makes one"; tests/scim.sh "a user deleted: 204, no body" -->
+A user the provider deactivates stays, answered as not active: what such a user may do is the policy's to say
+(`type user = app.users where {active}` makes one nobody). A `userName` another user has is answered 409. <!-- checked: tests/scim.sh "Okta deactivates a user (op replace, no path, active false in the value)"; tests/scim.sh "... and the policy follows (type user ... where {active}): bob reads nothing now"; tests/scim.sh "the same user made again: 409, uniqueness" -->
+
+**A list answers a page**: `startIndex` and `count` as the provider sends them, the setting `page` at most, with
+how many there are in all. `ServiceProviderConfig`, `ResourceTypes` and `Schemas` say what the endpoint serves:
+PATCH and filters; no Bulk, no sorting, no ETags, no password change, no `/Me`, no search by POST, each answered
+501. <!-- checked: tests/scim.sh "the next page"; tests/scim.sh "a startIndex under 1 is 1, and a count over the setting page is the page"; tests/scim.sh "what it serves: PATCH and filters (the page at most); no Bulk, no sorting, no ETags, no password change; a bearer token"; tests/scim.sh "the resource types: users and groups, where each is served and its schema"; tests/scim.sh "Bulk is not served"; tests/scim.sh "... nor /Me" -->
+
+**The key alone says who asks.** The app role may call `authz.scim`, and nothing in it trusts the caller: a
+request whose token isn't a key of the settings' principal is answered 401, and a key limited to scopes that write
+nothing only reads. <!-- checked: tests/scim.sh "no bearer token"; tests/scim.sh "another service's key"; tests/scim.sh "a key limited to reading reads"; tests/scim.sh "... and changes nothing" -->
+An answered request's transaction is signed in as that principal, as `authz.login_key` signs one in, so call
+`authz.scim` in a transaction of its own; a refused one signs nobody in. <!-- checked: tests/scim.sh "an answered one is the principal's: its transaction is signed in as the service"; tests/scim.sh "a refused request signs nobody in" -->
+A refusal is an answer with SCIM's error body (AZ721) and changes nothing; a request is done whole or not at
+all. <!-- checked: tests/scim.sh "with no function, a group can't be made"; tests/scim.sh "... and the operation before it in the same PATCH changed nothing: a PATCH is whole or not at all" -->
+An error stays an error, for the app to see: settings that no longer hold (AZ722), the app's function failing.
+The SDKs' routes answer those 500 in SCIM's words and log them.
