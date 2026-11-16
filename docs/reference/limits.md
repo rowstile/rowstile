@@ -152,12 +152,22 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   does. <!-- unchecked: times measured by hand on 2026-11-15, PostgreSQL 16 -->
   Tokens signed another way (ES256, EdDSA) are refused, since a check of ES256 written in plain SQL took 12 ms:
   verify those in your backend and sign in from there ([Identity](identity.md)), or use an API key. <!-- checked: tests/identity.sh "a token that says ES256: neither a secret nor a stored key checks it"; tests/identity.sh "alg none" -->
-- **Writes cost more**: each closure table is maintained on every tree write,
-  and tree writes to one type are serialized. Inheritance conditions that read
+- **Writes cost more**: each closure table is maintained on every tree write. A tree write locks what it
+  touches: the rows it changes with everything below them, and the rows those hang under. So two writes to
+  different parts of a tree don't wait for each other. <!-- checked: tests/concurrency.sh "the second move is done while the first one's transaction is still open"; tests/interleave.py "waited for a write to another part of the tree" -->
+  Two that meet wait in READ COMMITTED; in REPEATABLE READ and SERIALIZABLE the later one fails with a
+  serialization error, to retry. <!-- checked: tests/concurrency.sh "the late writer gets a serialization error (the app retries)"; tests/interleave.py "none needing a retry" -->
+  The locks are a fixed number of rows for each type (1,024, by a hash of the row's id), so now and then two
+  unrelated writes meet on one, and one waits as if they were related. A write of more than 1,000 rows takes its
+  whole type instead, and the other tree writes to that type wait while it runs; so does every tree write to a
+  type that inherits through another type too, or whose inheritance condition reads other rows. The number is a
+  setting the owner writes: `INSERT INTO authz.settings VALUES ('tree_lock_limit', '5000')` (0: every tree write
+  takes its whole type). <!-- checked: tests/moves.sh "with the setting at 100, the same move takes the whole type"; tests/moves.sh "at 0 every tree write takes the whole type"; tests/interleave.py "DOCS_FEW = replace(" -->
+  Inheritance conditions that read
   other tables are re-evaluated for every row of the type when those tables change
   (and when a statement writes rows of the type's own table, if a condition reads it).
-  A move rewrites one row per folder below it and per ancestor it gains or loses;
-  while it runs, other tree writes to that type wait. If a link leads from inside the
+  A move rewrites one row per folder below it and per ancestor it gains or loses.
+  If a link leads from inside the
   moved part back to the folder's old or new ancestors, everything below is recomputed
   instead, which is several times slower.
 - **Privileges**: what the policy reads (relations, and `{conditions}` in permissions, rules and caveats) it

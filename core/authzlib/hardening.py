@@ -5,6 +5,7 @@ from __future__ import annotations
 from .compiler import MANY_EXPANSIONS, Core
 from .parse import KEYWORDS, Cond, Loc, Ref, cols
 from .sqlutil import CHILD_TRIGGER_MARK, POLICY_MARKS, VIEW_MARKS, lit, q, qt
+from .trees import TREE_LOCK_LIMIT
 
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
 
@@ -26,6 +27,17 @@ LATERAL (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.aclexplode(n.nspacl) 
                 END AS who) w
 -- a temporary schema is the session's own, and never searched for functions or operators
 WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_'"""
+
+
+# the setting tree_lock_limit (trees.py) is read as a whole number or not at all
+TREE_LOCK_LINT = f"""
+  -- the size above which a tree write takes its whole type: a setting that is no whole number isn't read
+  FOR r IN SELECT s.value FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value !~ '^[0-9]{{1,9}}$' LOOP
+    severity := 'warning'; object := 'authz.settings tree_lock_limit';
+    problem := format('is %L, which is not a whole number, so it is not read: a tree write that would lock more than {TREE_LOCK_LIMIT} rows takes its whole type, as without the setting. Write a number, or delete the row', r.value);
+    RETURN NEXT;
+  END LOOP;
+"""
 
 
 class LintMixin(Core):
@@ -387,7 +399,7 @@ BEGIN
         ELSE 'that guards it is missing: the trail may be changed' END);
     RETURN NEXT;
   END LOOP;
-{self.sync_lint_sql()}{self.scim_lint_sql()}  -- governed tables
+{self.sync_lint_sql()}{self.scim_lint_sql()}{TREE_LOCK_LINT}  -- governed tables
   FOR r IN SELECT c.oid::regclass AS tbl, c.relrowsecurity, c.relowner,
                   c.oid = ANY (SELECT to_regclass(x) FROM unnest({arr([qt(t) for t in governed])}) x) AS governed
            FROM pg_class c WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest({arr([qt(t) for t in typed_tables])}) x) LOOP

@@ -6214,6 +6214,13 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     problem := r.said || '. Set the endpoint''s settings again (authz.set_scim), or put right what they name';
     RETURN NEXT;
   END LOOP;
+
+  -- the size above which a tree write takes its whole type: a setting that is no whole number isn't read
+  FOR r IN SELECT s.value FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value !~ '^[0-9]{1,9}$' LOOP
+    severity := 'warning'; object := 'authz.settings tree_lock_limit';
+    problem := format('is %L, which is not a whole number, so it is not read: a tree write that would lock more than 1000 rows takes its whole type, as without the setting. Write a number, or delete the row', r.value);
+    RETURN NEXT;
+  END LOOP;
   -- governed tables
   FOR r IN SELECT c.oid::regclass AS tbl, c.relrowsecurity, c.relowner,
                   c.oid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY['"lp"."domains"', '"lp"."emails"', '"lp"."orgs"', '"lp"."settings"']::text[]) x) AS governed

@@ -171,4 +171,36 @@ got=$(stopped "DELETE FROM $LOCKS WHERE type = 'folder' AND slot = 0" "SELECT au
 check "nothing was written by them, and the tables match a rebuild" \
   "SELECT NOT EXISTS (SELECT 1 FROM app.folders WHERE id = 9003) AND authz.verify()"
 
+echo "-- 8. the size above which a write takes its whole type is a setting (tree_lock_limit)"
+# a write to the whole type updates the type's row; one that locks what it touches leaves it as it was
+whole() { PSQL -c "SELECT n FROM authz_int.locks WHERE type = 'folder'"; }
+setting() { PSQL -c "INSERT INTO authz.settings VALUES ('tree_lock_limit', '$1') ON CONFLICT (key) DO UPDATE SET value = '$1'"; }
+below=$(PSQL -c "SELECT count(*) FROM $T WHERE ancestor = $F")
+was=$(whole)
+PSQL -c "UPDATE app.folders SET parent_id = 2000 WHERE id = $F"
+[ "$below" -gt 100 ] && [ "$below" -le 1000 ] && [ "$(whole)" = "$was" ] &&
+  echo "ok    a move of $below folders locks what it touches: the type's row is as it was" ||
+  { echo "FAIL  a move of $below folders, with no setting: the type's row went from $was to $(whole)"; fails=$((fails + 1)); }
+setting 100
+PSQL -c "UPDATE app.folders SET parent_id = 1000 WHERE id = $F"
+[ "$(whole)" -gt "$was" ] && echo "ok    with the setting at 100, the same move takes the whole type" ||
+  { echo "FAIL  with the setting at 100, a move of $below folders left the type's row as it was"; fails=$((fails + 1)); }
+was=$(whole)
+PSQL -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (9004, 1, $G, 5, 'small')"
+[ "$(whole)" = "$was" ] && echo "ok    ... and a folder made still locks what it touches" ||
+  { echo "FAIL  with the setting at 100, a folder made took the whole type"; fails=$((fails + 1)); }
+setting 0
+PSQL -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (9005, 1, $G, 5, 'whole')"
+[ "$(whole)" -gt "$was" ] && echo "ok    at 0 every tree write takes the whole type" ||
+  { echo "FAIL  with the setting at 0, a folder made left the type's row as it was"; fails=$((fails + 1)); }
+setting many
+was=$(whole)
+PSQL -c "UPDATE app.folders SET parent_id = 2000 WHERE id = $F"
+[ "$(whole)" = "$was" ] && echo "ok    a setting that is no whole number isn't read: the move locks what it touches, as with none" ||
+  { echo "FAIL  with the setting at 'many', a move of $below folders took the whole type"; fails=$((fails + 1)); }
+check "... and authz.lint() says so" \
+  "SELECT count(*) = 1 FROM authz.lint() WHERE object = 'authz.settings tree_lock_limit' AND problem LIKE 'is ''many'', which is not a whole number%'"
+PSQL -c "DELETE FROM authz.settings WHERE key = 'tree_lock_limit'" -c "DELETE FROM app.folders WHERE id IN (9004, 9005)"
+check "the tables match a rebuild after each" "SELECT authz.verify() AND NOT EXISTS (SELECT 1 FROM authz.lint() WHERE object LIKE '%tree_lock_limit')"
+
 [ $fails -eq 0 ] && echo "all move checks passed" || { echo "$fails move checks failed"; exit 1; }

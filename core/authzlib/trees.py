@@ -52,8 +52,16 @@ STRIPES = 1024
 BORN = 4
 SLOTS = STRIPES * (BORN + 1)
 TREE_LOCKS = f"authz_int.tree_locks_{STRIPES}_{BORN}"
-# A write that would lock more objects than this takes its whole type at once
+# A write that would lock more objects than this takes its whole type at once, unless the setting tree_lock_limit
+# says another number (a row of authz.settings, the owner's to write; 0: every tree write takes its whole type).
+# The number is of the write's first guess: its rows and what is stored below them
 TREE_LOCK_LIMIT = 1000
+# ...as a write reads it. A value that isn't a whole number isn't read (one bad row would fail every tree write),
+# and authz.lint() reports it
+TREE_LOCK_MOST = (
+    "coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), "
+    f"{TREE_LOCK_LIMIT})"
+)
 # where a lookup of one source's links is given the value it looks for (ensure_tree's lock_lookup)
 OUTER = "\x00outer\x00"
 # a name inside the tree's names: f('_refresh') is authz_int."<tree>_refresh"
@@ -833,7 +841,7 @@ END $f$;""")
             lit(t.name),
             "(SELECT x::text FROM hint i, unnest(i._ids) x)",
             "(SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b))",
-            f"(SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= {TREE_LOCK_LIMIT}",
+            "(SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= (SELECT n._most FROM narrow n)",
             False,
         )
 
@@ -851,36 +859,41 @@ END $f$;""")
             # (the first guess of what is below: the tree's own stored rows, whatever the type's other trees
             # hold. A function of one tree reads no other tree's tables: a migration may run it while those
             # are being made again. What the others' links add, the walk finds)
-            stored = f"UNION (SELECT s.descendant FROM {f('')} s WHERE s.ancestor = ANY ({roots}) LIMIT {TREE_LOCK_LIMIT + 1})"
+            stored = (
+                f"UNION (SELECT s.descendant FROM {f('')} s WHERE s.ancestor = ANY ({roots}) "
+                "LIMIT (SELECT n._most + 1 FROM narrow n))"
+            )
             more = (
                 f"authz_int.tree_lock({lit(t.name)}, authz__.{reach}::text[], authz__.under, authz__.hung, "
                 f"authz__.held, {{wait}}) l"
             )
 
             def rounds(short: str, one: bool = False) -> str:
-                first = f"""WITH hint AS MATERIALIZED (
+                first = f"""WITH narrow AS MATERIALIZED (
+      SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = {lit(t.name)}), false) AS _is,
+             {TREE_LOCK_MOST} AS _most),
+    hint AS MATERIALIZED (
       SELECT ARRAY(SELECT x FROM unnest({roots}) AS x WHERE x IS NOT NULL
                    {stored}
                    UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
     hangs AS MATERIALIZED (
       SELECT h._under, h._hung
       FROM {hangs}),
-    narrow AS MATERIALIZED (
-      SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = {lit(t.name)}), false) AS _is),
     {ctes}
-    SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
-           (SELECT count(*) FROM got g WHERE g._held = 1),
+    SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT n._most FROM narrow n),
+           (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
            ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
-    INTO {reach}, under, hung, stripes, asked, taken, held
+    INTO {reach}, under, hung, stripes, most, asked, taken, held
     FROM hint i, hangs p;"""
                 if one:
                     first = f"""IF cardinality({given}) = 1 AND {given}[1] IS NOT NULL THEN
       -- (one row, nothing hanging under it: the short way to the same lock rows)
-      SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = {lit(t.name)}), false)
-      INTO under, hung, stripes
+      SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = {lit(t.name)}), false),
+             {TREE_LOCK_MOST}
+      INTO under, hung, stripes, most
       FROM {hangs};
       {reach} := {given};
-      IF authz__.stripes THEN
+      IF authz__.stripes AND authz__.most > 0 THEN
         held := authz_int.tree_lock_one({lit(t.name)}, authz__.{reach}[1]::text, authz__.under, authz__.hung);
       END IF;
       asked := 0;
@@ -889,8 +902,8 @@ END $f$;""")
       {first.replace(chr(10), chr(10) + "  ")}
     END IF;"""
                 return f"""{first}
-    IF NOT authz__.stripes OR cardinality(authz__.{reach}) > {TREE_LOCK_LIMIT} THEN
-      -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
+    IF NOT authz__.stripes OR cardinality(authz__.{reach}) > authz__.most THEN
+      -- (a type whose every tree write takes its row; a write of more objects than the setting says)
       PERFORM authz_int.tree_lock_all({lit(t.name)});
       held := ARRAY[-1];
     ELSIF authz__.taken <> authz__.asked THEN
@@ -930,7 +943,7 @@ LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 <<authz__>>
 DECLARE
   affected {pkt}[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
-  locked {pkt}[]; locked_under text[]; locked_hung text[]; seen {pkt}[];{" reach " + pkt + "[]; roots " + pkt + "[];" if both else ""}
+  locked {pkt}[]; locked_under text[]; locked_hung text[]; seen {pkt}[]; most int;{" reach " + pkt + "[]; roots " + pkt + "[];" if both else ""}
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;{chr(10) + "  roots := coalesce(p_reach, p_ids);" if both else ""}
   IF p_plain THEN
