@@ -751,17 +751,19 @@ END $f$;
 -- An identity provider's SCIM request answered (RFC 7644): what a route got, in; what it answers, out.
 --   SELECT status, body, location FROM authz.scim('PATCH', 'Groups/10', '', '{"Operations": [...]}', 'ak_...')
 -- p_path: the path below the route, as the route read it (Groups/10); p_query: the query string as it was sent
--- (filter=displayName%20eq%20%22Engineering%22); p_token: the bearer token. location: for what was made (201), its
--- path below the route.
+-- (filter=displayName%20eq%20%22Engineering%22); p_body: the body as it was sent (NULL or empty: none); p_token:
+-- the bearer token. location: for what was made (201), its path below the route.
+-- The body is a text, read here: a route passes it on unread, and one that is no JSON is refused (400) once the
+-- key says who asks, as a query string is. So nothing a stranger sends fails before the key is looked at.
 -- A request is the provider's when its token is an API key of the principal the settings name (authz.set_scim), and
 -- its transaction is then signed in as that principal, as authz.login_key signs it in: the audit trail says who.
 -- Nothing else says who asks: the app role may call this, and gets 401 without that key. A key limited to scopes
 -- that write nothing reads, and changes nothing (403).
-CREATE FUNCTION authz.scim(p_method text, p_path text, p_query text, p_body jsonb, p_token text,
+CREATE FUNCTION authz.scim(p_method text, p_path text, p_query text, p_body text, p_token text,
   OUT status int, OUT body jsonb, OUT location text)
 LANGUAGE plpgsql {DEF} AS $f$
 DECLARE v_settings jsonb; k authz.api_keys; v_answer authz_int.scim_answer; v_method text := upper(coalesce(p_method, ''));
-        v_path text := btrim(coalesce(p_path, ''), '/'); v_parts text[]; v_query jsonb;
+        v_path text := btrim(coalesce(p_path, ''), '/'); v_parts text[]; v_query jsonb; v_body jsonb;
 BEGIN
   SELECT coalesce(jsonb_object_agg(substr(x.key, 6), x.value), '{}') INTO v_settings
   FROM authz.settings x WHERE starts_with(x.key, 'scim_');
@@ -783,14 +785,25 @@ BEGIN
     v_answer := authz_int.scim_no(403, NULL, 'this key is read-only: it reads users and groups, and changes none');
   ELSE
     v_query := authz_int.scim_query(p_query);
+    -- the body, read once. What is no JSON leaves v_body NULL; so does a body nested deeper than the server's
+    -- stack, which the server can't read at all (its error, 54001)
+    BEGIN
+      IF pg_input_is_valid(nullif(p_body, ''), 'jsonb') THEN
+        v_body := p_body::jsonb;
+      END IF;
+    EXCEPTION WHEN statement_too_complex THEN
+      v_body := NULL;
+    END;
     IF v_query IS NULL THEN
       v_answer := authz_int.scim_no(400, 'invalidSyntax', 'the query string''s escapes are no text');
+    ELSIF p_body <> '' AND v_body IS NULL THEN
+      v_answer := authz_int.scim_no(400, 'invalidSyntax', 'the request''s body is no JSON, or is nested too deep to read');
     ELSIF v_parts[1] IN ('Bulk', 'Me', '.search') OR v_parts[2] = '.search' THEN
       v_answer := authz_int.scim_no(501, NULL, format('%s is not served: no Bulk, no /Me, no search by POST (ServiceProviderConfig says what is)', v_path));
     ELSIF v_parts[1] = 'Groups' AND cardinality(v_parts) <= 2 THEN
-      v_answer := authz_int.scim_group(v_settings, v_method, v_parts[2], v_query, p_body);
+      v_answer := authz_int.scim_group(v_settings, v_method, v_parts[2], v_query, v_body);
     ELSIF v_parts[1] = 'Users' AND cardinality(v_parts) <= 2 THEN
-      v_answer := authz_int.scim_user(v_settings, v_method, v_parts[2], v_query, p_body);
+      v_answer := authz_int.scim_user(v_settings, v_method, v_parts[2], v_query, v_body);
     ELSIF (v_parts[1] = 'ServiceProviderConfig' AND cardinality(v_parts) = 1)
           OR (v_parts[1] IN ('ResourceTypes', 'Schemas') AND cardinality(v_parts) <= 2) THEN
       v_answer := authz_int.scim_discovery(v_settings, v_method, v_parts);

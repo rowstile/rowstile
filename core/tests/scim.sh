@@ -36,7 +36,7 @@ expect_code() {  # $1 label, $2 expected "SQLSTATE: the message's words" (or ok)
 ask() {
   psql -X -q -At -d "${ASK_DB:-$DB}" -v m="$2" -v p="$3" -v qs="${4:-}" -v b="${5:-}" -v t="${6-$KEY}" 2>&1 <<SQL | tail -n 1
 SET ROLE app_user;
-SELECT $1 FROM authz.scim(:'m', :'p', :'qs', nullif(:'b', '')::jsonb, nullif(:'t', 'NULL')) a;
+SELECT $1 FROM authz.scim(:'m', :'p', :'qs', :'b', nullif(:'t', 'NULL')) a;
 SQL
 }
 is() {  # $1 label, $2 expected, the rest: ask's arguments
@@ -294,6 +294,21 @@ is "a value with an escape JSON doesn't have" "$INVALID_FILTER" "$ERR" GET Group
 is "an and with nothing after it" "$INVALID_FILTER" "$ERR" GET Groups 'filter=displayName%20eq%20%22Sales%22%20and%20'
 is "a query string whose escapes are no text" "400 invalidSyntax: the query string's escapes are no text (rowstile help AZ721)" "$ERR" \
   GET Groups 'filter=displayName%20eq%20%22%FF%22'
+# the body comes as it was sent, a text: a route passes it on unread, and what is no JSON is said here
+NO_JSON="400 invalidSyntax: the request's body is no JSON, or is nested too deep to read (rowstile help AZ721)"
+is "a body that is no JSON" "$NO_JSON" "$ERR" POST Groups "" '{"displayName": '
+is "... one that is only spaces" "$NO_JSON" "$ERR" POST Groups "" '   '
+is "... one with a text no text of the database holds (an escaped NUL)" "$NO_JSON" "$ERR" POST Groups "" '{"displayName": "a\u0000b"}'
+is "... half of a pair of surrogates" "$NO_JSON" "$ERR" POST Groups "" '{"displayName": "\ud83d"}'
+is "... a number too large for any number of the database" "$NO_JSON" "$ERR" POST Groups "" '{"displayName": "X", "n": 1e1000000}'
+is "... whatever the method, a GET's too" "$NO_JSON" "$ERR" GET Groups/10 "" '{'
+is "... and one nested deeper than the server can read, which is the server's error and no failure here" "$NO_JSON" "$ERR" \
+  POST Groups "" "$(printf '[%.0s' $(seq 100000))"
+is "JSON's null is a body, with nothing a group is made from" "400" "a.status" POST Groups "" 'null'
+is "without the provider's key such a body is not read: the key is refused" "$UNAUTHORIZED" "$ERR" POST Groups "" '{"displayName": ' "$OTHER"
+is "... nor is it with a key that only reads" "403 -: this key is read-only: it reads users and groups, and changes none (rowstile help AZ721)" "$ERR" \
+  POST Groups "" '{"displayName": ' "$READ"
+same "... and no group was made" "10,11" "$(own "SELECT string_agg(id::text, ',' ORDER BY id) FROM sc.teams")"
 is "a parameter given twice: the last one counts; one the endpoint doesn't know, and an empty one, are no matter" "200|1|1|1|11" "$LIST" \
   GET Groups 'filter=displayName%20eq%20%22Engineering%22&&attributes=id&filter=displayName%20eq%20%22Sales%22'
 own "INSERT INTO sc.teams (id, name) VALUES (12, 'Zoë \"Z\" & co'), (13, 'Thirteen'), (14, '100%')" >/dev/null
