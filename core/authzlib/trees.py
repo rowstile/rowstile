@@ -30,6 +30,18 @@ DEFINER = "SECURITY DEFINER SET search_path FROM CURRENT"
 # has found in memory (a recursive UNION's hash table never goes to disk), so over all rows at once it would take
 # memory in proportion to the tree, whatever work_mem says.
 BATCH = 10000
+# A tree's row triggers and its refresh plan their statements once a session. They take arrays, and a plan made for
+# the arrays at hand looks cheaper to Postgres than one it can keep: it would plan each statement again on every
+# write (a fifth of a write's time, measured on the scale benchmark). A write of more rows than PLAN_FOR goes back
+# to plans made for it, as the shift always does: a plan made for a few rows would be ruinous for a big move
+# (three times slower, measured). Set inside a function that sets the same setting, it is undone when the function
+# ends: Postgres's rule for SET LOCAL.
+PLAN_ONCE = "SET plan_cache_mode = force_generic_plan"
+PLAN_FOR = 1000
+PLAN_AGAIN = (
+    "-- (a write this big gets plans of its own; the setting is as it was when this function ends)\n"
+    "    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);"
+)
 # a name inside the tree's names: f('_refresh') is authz_int."<tree>_refresh"
 Namer = Callable[[str], str]
 # a condition to check where it is written: (table, SQL, loc)
@@ -530,7 +542,7 @@ END $f$;""")
         )
         sql.append(f"""-- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION {f("_refresh")}(p_ids {pkt}[], p_shift boolean DEFAULT false) RETURNS void
-LANGUAGE plpgsql {DEFINER} AS $f$
+LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 DECLARE affected {pkt}[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
@@ -541,6 +553,9 @@ BEGIN
     SELECT e._child FROM down CROSS JOIN LATERAL (
       {each_source(links, "_parent", "down.id")}) e)
   SELECT array_agg(id) INTO affected FROM down;
+  IF cardinality(affected) > {PLAN_FOR} THEN
+    {PLAN_AGAIN}
+  END IF;
   {body}{cache_refresh}
   PERFORM authz_int.changed({lit(t.name)}, affected::text[], 'inheritance');
 END $f$;""")
@@ -621,7 +636,7 @@ END $f$;""")
 
         sql.append(f"""-- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION {f("_on_rows")}() RETURNS trigger
-LANGUAGE plpgsql {DEFINER} AS $f$
+LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 <<authz__>>
 DECLARE ids {pkt}[]; shift boolean := false;{" wrote boolean;" if reads else ""}
 BEGIN
@@ -667,7 +682,7 @@ CREATE TRIGGER {trig("_trunc")} AFTER TRUNCATE ON {tbl}
             sfx = f"_on_links{i + 1}"
             sql.append(f"""-- links stored in {ltable}
 CREATE FUNCTION {f(sfx)}() RETURNS trigger
-LANGUAGE plpgsql {DEFINER} AS $f$
+LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current
   IF TG_OP = 'INSERT' THEN PERFORM {f("_refresh")}(ARRAY({new_ids}), {shift_lit});
@@ -978,7 +993,7 @@ CREATE TABLE {f("_reads")} (rel regclass PRIMARY KEY);""")
 
         sql.append(f"""-- recompute the given nodes and everything linked below them
 CREATE FUNCTION {f("_refresh")}(p_types text[], p_ids text[]) RETURNS void
-LANGUAGE plpgsql {DEFINER} AS $f$
+LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
@@ -989,6 +1004,9 @@ BEGIN
     SELECT e.ct, e.c FROM down CROSS JOIN LATERAL (
       {chr(10) + "      UNION ALL ".join(down_steps) if down_steps else "SELECT NULL::text AS ct, NULL::text AS c WHERE false"}) e)
   SELECT array_agg(_t), array_agg(_i) INTO a_t, a_i FROM down;
+  IF cardinality(a_i) > {PLAN_FOR} THEN
+    {PLAN_AGAIN}
+  END IF;
   DELETE FROM {f("")} WHERE (dtype, did) IN (SELECT * FROM unnest(a_t, a_i));
   INSERT INTO {f("")} SELECT * FROM {f("_compute")}(a_t, a_i);{cache_refresh}
   PERFORM authz_int.changed(x.t, array_agg(x.i), 'inheritance') FROM unnest(a_t, a_i) x(t, i) GROUP BY x.t;
@@ -1100,7 +1118,7 @@ END $f$;""")
             sfx = f"_rows_{t.name}"
             sql.append(f"""-- {t.name} rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION {f(sfx)}() RETURNS trigger
-LANGUAGE plpgsql {DEFINER} AS $f$
+LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 DECLARE ids text[];{" wrote boolean;" if reads else ""}
 BEGIN
   IF TG_OP = 'INSERT' THEN
@@ -1138,7 +1156,7 @@ CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(t.table)}
             sfx = f"_on_links{i + 1}"
             sql.append(f"""-- links stored in {ltable}
 CREATE FUNCTION {f(sfx)}() RETURNS trigger
-LANGUAGE plpgsql {DEFINER} AS $f$
+LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current

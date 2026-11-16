@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', 'f6aecb6111dac9df17f153c294b78b08', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', 'fa00b0d803b5a569ff525b5106373efe', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'domain_email_org_setting__domain_email_org_settings__tree')) n(name, hash, oids, rel)
@@ -750,7 +750,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('domain_email_org_setting__domain_email_org_settings__tree', 'f6aecb6111dac9df17f153c294b78b08', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('domain_email_org_setting__domain_email_org_settings__tree', 'fa00b0d803b5a569ff525b5106373efe', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1489,7 +1489,7 @@ END $imm$;
 
 -- recompute the given nodes and everything linked below them
 CREATE FUNCTION authz_int."domain_email_org_setting__domain_email_org_settings__t_07bd0a7e"(p_types text[], p_ids text[]) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -1502,6 +1502,10 @@ BEGIN
       
 SELECT 'domain'::text AS ct, r."id"::text AS c FROM "lp"."domains" r WHERE r."org_id" = (CASE WHEN down._t = 'org' THEN down._i END)::bigint      UNION ALL SELECT 'email'::text AS ct, r."id"::text AS c FROM "lp"."emails" r WHERE r."domain_id" = (CASE WHEN down._t = 'domain' THEN down._i END)::bigint      UNION ALL SELECT 'org'::text AS ct, r."id"::text AS c FROM "lp"."orgs" r WHERE r."settings_id" = (CASE WHEN down._t = 'setting' THEN down._i END)::bigint      UNION ALL SELECT 'setting'::text AS ct, r."id"::text AS c FROM "lp"."settings" r WHERE r."email_id" = (CASE WHEN down._t = 'email' THEN down._i END)::bigint) e)
   SELECT array_agg(_t), array_agg(_i) INTO a_t, a_i FROM down;
+  IF cardinality(a_i) > 1000 THEN
+    -- (a write this big gets plans of its own; the setting is as it was when this function ends)
+    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
+  END IF;
   DELETE FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" WHERE (dtype, did) IN (SELECT * FROM unnest(a_t, a_i));
   INSERT INTO authz_int."domain_email_org_setting__domain_email_org_settings__tree" SELECT * FROM authz_int."domain_email_org_setting__domain_email_org_settings__t_4c2a3980"(a_t, a_i);
   PERFORM authz_int.changed(x.t, array_agg(x.i), 'inheritance') FROM unnest(a_t, a_i) x(t, i) GROUP BY x.t;
@@ -1576,7 +1580,7 @@ END $f$;
 
 -- domain rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."domain_email_org_setting__domain_email_org_settings__t_fcf5af1b"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[];
 BEGIN
@@ -1610,7 +1614,7 @@ COMMENT ON TRIGGER "authz_domain_email_org_setting__domain_email_org_setti_fd8d9
 
 -- email rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."domain_email_org_setting__domain_email_org_settings__t_f07ab0ab"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[];
 BEGIN
@@ -1645,7 +1649,7 @@ COMMENT ON TRIGGER "authz_domain_email_org_setting__domain_email_org_setti_5534f
 
 -- org rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."domain_email_org_setting__domain_email_org_settings__t_dc7cfbc6"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[];
 BEGIN
@@ -1679,7 +1683,7 @@ COMMENT ON TRIGGER "authz_domain_email_org_setting__domain_email_org_setti_a3bee
 
 -- setting rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."domain_email_org_setting__domain_email_org_settings__t_c86d096d"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[];
 BEGIN

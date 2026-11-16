@@ -102,13 +102,13 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'ece22d7236976fbe3148cdbe1a7be736', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('folder_project__host_inside_parent__tree2', '40d60a7ffd4ea91ac78c1e88534e5a43', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '3562f069ecab34a5203bd5538782d158', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '61613ca3fc6c9473718ea2ebd3e85bd3', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder_project__backer_parent__tree', '5f936af93730821aee4493da95bbf5cd', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder_project__backer_parent__tree', 'd46886d222a19630ec3ca6abb479acde', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
@@ -876,15 +876,15 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder_project__host_inside_parent__tree2', 'ece22d7236976fbe3148cdbe1a7be736', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder_project__host_inside_parent__tree2', '40d60a7ffd4ea91ac78c1e88534e5a43', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__parent__tree', '3562f069ecab34a5203bd5538782d158', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', '61613ca3fc6c9473718ea2ebd3e85bd3', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder_project__backer_parent__tree', '5f936af93730821aee4493da95bbf5cd', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder_project__backer_parent__tree', 'd46886d222a19630ec3ca6abb479acde', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1652,7 +1652,7 @@ CREATE TABLE authz_int."folder_project__host_inside_parent__tree_reads" (rel reg
 
 -- recompute the given nodes and everything linked below them
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_refresh"(p_types text[], p_ids text[]) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -1665,6 +1665,10 @@ BEGIN
       
 SELECT 'folder'::text AS ct, r."id"::text AS c FROM "cx"."folders" r WHERE (r."parent_type" = 'folder' AND (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint = (CASE WHEN down._t = 'folder' THEN down._i END)::bigint)      UNION ALL SELECT 'folder'::text AS ct, r."id"::text AS c FROM "cx"."folders" r WHERE (r."parent_type" = 'project' AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint = (CASE WHEN down._t = 'project' THEN down._i END)::bigint)      UNION ALL SELECT 'project'::text AS ct, g.object_id AS c FROM authz.shares g WHERE down._t = 'folder' AND g.subject_id = down._i AND g.object_type = 'project' AND g.relation = 'host' AND g.subject_type = 'folder' AND g.subject_relation = ''      UNION ALL SELECT 'project'::text AS ct, s."project_id"::text AS c FROM "cx"."placements" s WHERE s."folder_id" = (CASE WHEN down._t = 'folder' THEN down._i END)::bigint AND coalesce((active), false)) e)
   SELECT array_agg(_t), array_agg(_i) INTO a_t, a_i FROM down;
+  IF cardinality(a_i) > 1000 THEN
+    -- (a write this big gets plans of its own; the setting is as it was when this function ends)
+    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
+  END IF;
   DELETE FROM authz_int."folder_project__host_inside_parent__tree" WHERE (dtype, did) IN (SELECT * FROM unnest(a_t, a_i));
   INSERT INTO authz_int."folder_project__host_inside_parent__tree" SELECT * FROM authz_int."folder_project__host_inside_parent__tree_compute"(a_t, a_i);
   DELETE FROM authz_int."folder_project__host_inside_parent__tree_cond_cache" k WHERE (k.t, k.id) IN (SELECT * FROM unnest(a_t, a_i));
@@ -1789,7 +1793,7 @@ END $f$;
 
 -- folder rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_rows_folder"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[]; wrote boolean;
 BEGIN
@@ -1831,7 +1835,7 @@ COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree_rows_fo_60505
 
 -- project rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_rows_project"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[]; wrote boolean;
 BEGIN
@@ -1870,7 +1874,7 @@ COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree_rows_pr_b124c
 
 -- links stored in cx.placements
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_links1"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -2017,7 +2021,7 @@ END $imm$;
 
 -- recompute the given nodes and everything linked below them
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_refresh"(p_types text[], p_ids text[]) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -2030,6 +2034,10 @@ BEGIN
       
 SELECT 'folder'::text AS ct, r."id"::text AS c FROM "cx"."folders" r WHERE (r."parent_type" = 'folder' AND (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint = (CASE WHEN down._t = 'folder' THEN down._i END)::bigint)      UNION ALL SELECT 'folder'::text AS ct, r."id"::text AS c FROM "cx"."folders" r WHERE (r."parent_type" = 'project' AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint = (CASE WHEN down._t = 'project' THEN down._i END)::bigint)      UNION ALL SELECT 'project'::text AS ct, g.object_id AS c FROM authz.shares g WHERE down._t = 'folder' AND g.subject_id = down._i AND g.object_type = 'project' AND g.relation = 'host' AND g.subject_type = 'folder' AND g.subject_relation = ''      UNION ALL SELECT 'project'::text AS ct, s."project_id"::text AS c FROM "cx"."placements" s WHERE s."folder_id" = (CASE WHEN down._t = 'folder' THEN down._i END)::bigint AND coalesce((active), false)) e)
   SELECT array_agg(_t), array_agg(_i) INTO a_t, a_i FROM down;
+  IF cardinality(a_i) > 1000 THEN
+    -- (a write this big gets plans of its own; the setting is as it was when this function ends)
+    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
+  END IF;
   DELETE FROM authz_int."folder_project__host_inside_parent__tree2" WHERE (dtype, did) IN (SELECT * FROM unnest(a_t, a_i));
   INSERT INTO authz_int."folder_project__host_inside_parent__tree2" SELECT * FROM authz_int."folder_project__host_inside_parent__tree2_compute"(a_t, a_i);
   PERFORM authz_int.changed(x.t, array_agg(x.i), 'inheritance') FROM unnest(a_t, a_i) x(t, i) GROUP BY x.t;
@@ -2102,7 +2110,7 @@ END $f$;
 
 -- folder rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_rows_folder"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[];
 BEGIN
@@ -2138,7 +2146,7 @@ COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree2_rows_f_48ef9
 
 -- project rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_rows_project"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[];
 BEGIN
@@ -2172,7 +2180,7 @@ COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree2_rows_p_aa5eb
 
 -- links stored in cx.placements
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_links1"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -2323,7 +2331,7 @@ END $imm$;
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE affected bigint[];
 BEGIN
@@ -2335,6 +2343,10 @@ BEGIN
     SELECT e._child FROM down CROSS JOIN LATERAL (
       (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint AS _parent FROM "cx"."folders" r WHERE (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)) e)
   SELECT array_agg(id) INTO affected FROM down;
+  IF cardinality(affected) > 1000 THEN
+    -- (a write this big gets plans of its own; the setting is as it was when this function ends)
+    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
+  END IF;
   DELETE FROM authz_int."folder__parent__tree" WHERE descendant = ANY (affected);
   INSERT INTO authz_int."folder__parent__tree" (descendant, ancestor)
   SELECT o_descendant, o_ancestor FROM authz_int."folder__parent__tree_compute"(affected);
@@ -2403,7 +2415,7 @@ END $f$;
 
 -- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder__parent__tree_on_rows"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
 DECLARE ids bigint[]; shift boolean := false;
@@ -2511,7 +2523,7 @@ END $imm$;
 
 -- recompute the given nodes and everything linked below them
 CREATE FUNCTION authz_int."folder_project__backer_parent__tree_refresh"(p_types text[], p_ids text[]) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -2524,6 +2536,10 @@ BEGIN
       
 SELECT 'folder'::text AS ct, r."id"::text AS c FROM "cx"."folders" r WHERE (r."parent_type" = 'folder' AND (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint = (CASE WHEN down._t = 'folder' THEN down._i END)::bigint)      UNION ALL SELECT 'folder'::text AS ct, r."id"::text AS c FROM "cx"."folders" r WHERE (r."parent_type" = 'project' AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint = (CASE WHEN down._t = 'project' THEN down._i END)::bigint)      UNION ALL SELECT 'project'::text AS ct, s."project_id"::text AS c FROM "cx"."backings" s WHERE (s."backer_type" = 'folder' AND (CASE WHEN s."backer_type" = 'folder' THEN s."backer_id" END)::bigint = (CASE WHEN down._t = 'folder' THEN down._i END)::bigint)) e)
   SELECT array_agg(_t), array_agg(_i) INTO a_t, a_i FROM down;
+  IF cardinality(a_i) > 1000 THEN
+    -- (a write this big gets plans of its own; the setting is as it was when this function ends)
+    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
+  END IF;
   DELETE FROM authz_int."folder_project__backer_parent__tree" WHERE (dtype, did) IN (SELECT * FROM unnest(a_t, a_i));
   INSERT INTO authz_int."folder_project__backer_parent__tree" SELECT * FROM authz_int."folder_project__backer_parent__tree_compute"(a_t, a_i);
   PERFORM authz_int.changed(x.t, array_agg(x.i), 'inheritance') FROM unnest(a_t, a_i) x(t, i) GROUP BY x.t;
@@ -2596,7 +2612,7 @@ END $f$;
 
 -- folder rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__backer_parent__tree_rows_folder"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[];
 BEGIN
@@ -2632,7 +2648,7 @@ COMMENT ON TRIGGER "authz_folder_project__backer_parent__tree_rows_folder_trunc"
 
 -- project rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__backer_parent__tree_rows_project"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[];
 BEGIN
@@ -2666,7 +2682,7 @@ COMMENT ON TRIGGER "authz_folder_project__backer_parent__tree_rows_project_trunc
 
 -- links stored in cx.backings
 CREATE FUNCTION authz_int."folder_project__backer_parent__tree_on_links1"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -2771,7 +2787,7 @@ CREATE TABLE authz_int."region_site__over__tree_reads" (rel regclass PRIMARY KEY
 
 -- recompute the given nodes and everything linked below them
 CREATE FUNCTION authz_int."region_site__over__tree_refresh"(p_types text[], p_ids text[]) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -2784,6 +2800,10 @@ BEGIN
       
 SELECT 'region'::text AS ct, s."region_id"::text AS c FROM "cx"."region_links" s WHERE s."parent_id" = (CASE WHEN down._t = 'region' THEN down._i END)::bigint      UNION ALL SELECT 'region'::text AS ct, s."region_id"::text AS c FROM "cx"."site_links" s WHERE s."site_id" = (CASE WHEN down._t = 'site' THEN down._i END)::bigint AND coalesce((active), false)      UNION ALL SELECT 'site'::text AS ct, s."site_id"::text AS c FROM "cx"."site_regions" s WHERE s."region_id" = (CASE WHEN down._t = 'region' THEN down._i END)::bigint AND coalesce((active), false)) e)
   SELECT array_agg(_t), array_agg(_i) INTO a_t, a_i FROM down;
+  IF cardinality(a_i) > 1000 THEN
+    -- (a write this big gets plans of its own; the setting is as it was when this function ends)
+    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
+  END IF;
   DELETE FROM authz_int."region_site__over__tree" WHERE (dtype, did) IN (SELECT * FROM unnest(a_t, a_i));
   INSERT INTO authz_int."region_site__over__tree" SELECT * FROM authz_int."region_site__over__tree_compute"(a_t, a_i);
   DELETE FROM authz_int."region_site__over__tree_cond_cache" k WHERE (k.t, k.id) IN (SELECT * FROM unnest(a_t, a_i));
@@ -2888,7 +2908,7 @@ END $dep$;
 
 -- region rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."region_site__over__tree_rows_region"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[]; wrote boolean;
 BEGIN
@@ -2926,7 +2946,7 @@ COMMENT ON TRIGGER "authz_region_site__over__tree_rows_region_trunc" ON "cx"."re
 
 -- site rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."region_site__over__tree_rows_site"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE ids text[]; wrote boolean;
 BEGIN
@@ -2964,7 +2984,7 @@ COMMENT ON TRIGGER "authz_region_site__over__tree_rows_site_trunc" ON "cx"."site
 
 -- links stored in cx.region_links
 CREATE FUNCTION authz_int."region_site__over__tree_on_links1"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -2991,7 +3011,7 @@ COMMENT ON TRIGGER "authz_region_site__over__tree_on_links1_trunc" ON "cx"."regi
 
 -- links stored in cx.site_links
 CREATE FUNCTION authz_int."region_site__over__tree_on_links2"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -3018,7 +3038,7 @@ COMMENT ON TRIGGER "authz_region_site__over__tree_on_links2_trunc" ON "cx"."site
 
 -- links stored in cx.site_regions
 CREATE FUNCTION authz_int."region_site__over__tree_on_links3"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN

@@ -66,6 +66,13 @@ check "the moved folder's contents now sit under root B" \
   "SELECT count(*) = (SELECT count(*) FROM $T WHERE ancestor = $big) FROM $T WHERE ancestor = 2000 AND descendant IN (SELECT descendant FROM $T WHERE ancestor = $big)"
 check "... and not under root A (no link leads there)" \
   "SELECT NOT EXISTS (SELECT 1 FROM $T WHERE ancestor = 1000 AND descendant = $big)"
+# a tree's triggers plan their statements once, and go back to plans of their own for a write of over a thousand rows:
+# either way the session plans as it did, the write done (root A, with all below it, into root B, and undone)
+got=$(PSQL -c "BEGIN" -c "UPDATE app.folders SET parent_id = $other WHERE id = $big" -c "SHOW plan_cache_mode" \
+           -c "UPDATE app.folders SET parent_id = 2000 WHERE id = 1000" \
+           -c "SELECT count(*) > 1000 FROM $T WHERE ancestor = 1000" -c "SHOW plan_cache_mode" -c "ROLLBACK" | tr '\n' ' ')
+[ "$got" = "auto t auto " ] && echo "ok    a small move and one of over a thousand folders leave the session's way of planning as it was" ||
+  { echo "FAIL  the session's plan_cache_mode after a small move and a big one: $got"; fails=$((fails + 1)); }
 
 echo "-- 2. moving it back, to the top, stopping inheritance, linking and unlinking it"
 for sql in "UPDATE app.folders SET parent_id = 1000 WHERE id = $big" \
