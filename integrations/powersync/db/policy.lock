@@ -176,10 +176,10 @@ function authz_int."folder__owner__who"(p_id integer) | d551fb73a3e1 shape=5faf0
 function authz_int."folder__owner__why"(p_id integer, p_depth int, p_seen text[], p_asker text[]) | e064f6b7ddd2 shape=bab4a57a
 function authz_int."folder__parent__tree_check_loops"(p_ids integer[]) | 607d10823ad0 shape=831f75e6 tree=folder__parent__tree
 function authz_int."folder__parent__tree_compute"(p_ids integer[]) | 57a51e2e467b shape=a5438015 tree=folder__parent__tree
-function authz_int."folder__parent__tree_on_rows"() | 8389a79a29e8 shape=51fa243d tree=folder__parent__tree
+function authz_int."folder__parent__tree_on_rows"() | 678a477d35b1 shape=51fa243d tree=folder__parent__tree
 function authz_int."folder__parent__tree_on_truncate"() | 0f865e70e08f shape=0a5b3c22 tree=folder__parent__tree
 function authz_int."folder__parent__tree_rebuild"() | 354bf7b86997 shape=506d5965 tree=folder__parent__tree
-function authz_int."folder__parent__tree_refresh"(p_ids integer[], p_shift boolean) | 7dfce41cdc47 shape=b5d4cf6f tree=folder__parent__tree
+function authz_int."folder__parent__tree_refresh"(p_ids integer[], p_shift boolean) | b8e66164bb8d shape=b5d4cf6f tree=folder__parent__tree
 function authz_int."folder__parent__tree_shift"(p_ids integer[], p_below integer[]) | cf379de69144 shape=84b108f7 tree=folder__parent__tree
 function authz_int."folder__parent__tree_verify"() | d0c519097eb4 shape=25e0fa0b tree=folder__parent__tree
 function authz_int."folder__team__who"(p_id integer) | 402ec4c3ef0e shape=20fa3359
@@ -345,7 +345,7 @@ step mask_privileges | f8051dad4a89
 step share_indexes | 0c43cf884c22
 step sweep | 1dfed05490f4
 step sync_base | df72cf83413c
-step sync_refresh | f471edfaed57
+step sync_refresh | 04714919a148
 step tables | 0b4e7c3eced9
 table authz_gen.policy_lines | 21fafe4e9464 shape=dcfedc96
 table authz_int."folder__parent__tree" | 0761ea300228 shape=0761ea30 tree=folder__parent__tree
@@ -365,10 +365,10 @@ table authz_int.sync_moved | c49c430f9bba shape=6c60da1e
 table authz_int.sync_queued | 360d686b7075 shape=360d686b
 table authz_int.sync_stripes | 2a83b24590eb shape=8356f57c
 table authz_int.sync_todo | 5530cc58dc54 shape=80f2cd19
-table authz_int.trees | 638c8774cfaa shape=02db6ec7
+table authz_int.trees | 4f182380593b shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 0a502d8ea72b shape=b6d5b497
-tree folder__parent__tree | 98b62857f66b04813470fb0bef82050a
+tree folder__parent__tree | 903974302d44391c9ba21cdd3c5f285d
 trigger "authz_file_col_audit_del" ON "app"."files" | e2db956a9b06
 trigger "authz_file_col_audit_ins" ON "app"."files" | ecf991b5867d
 trigger "authz_file_col_audit_row" ON "app"."files" | 044d69882add

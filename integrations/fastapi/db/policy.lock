@@ -142,10 +142,10 @@ function authz_int."folder__owner__who"(p_id bigint) | 54e2ca0d5382 shape=0f42f6
 function authz_int."folder__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[]) | 674051ffcffc shape=93f60077
 function authz_int."folder__parent__tree_check_loops"(p_ids bigint[]) | 27dc120f81e1 shape=a9007a33 tree=folder__parent__tree
 function authz_int."folder__parent__tree_compute"(p_ids bigint[]) | 3d403a3f975e shape=1b436a45 tree=folder__parent__tree
-function authz_int."folder__parent__tree_on_rows"() | 868ce7fb0b53 shape=51fa243d tree=folder__parent__tree
+function authz_int."folder__parent__tree_on_rows"() | d05a277cd905 shape=51fa243d tree=folder__parent__tree
 function authz_int."folder__parent__tree_on_truncate"() | 0f865e70e08f shape=0a5b3c22 tree=folder__parent__tree
 function authz_int."folder__parent__tree_rebuild"() | 6e56d1e612e2 shape=506d5965 tree=folder__parent__tree
-function authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean) | 2d98c3531a15 shape=9864e978 tree=folder__parent__tree
+function authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean) | 9c9563095c83 shape=9864e978 tree=folder__parent__tree
 function authz_int."folder__parent__tree_shift"(p_ids bigint[], p_below bigint[]) | 9ba2fe7fe7ce shape=297a635d tree=folder__parent__tree
 function authz_int."folder__parent__tree_verify"() | b1ec1c623b32 shape=25e0fa0b tree=folder__parent__tree
 function authz_int."message__col_audit_del"() | da9c333ec223 shape=792db019
@@ -318,10 +318,10 @@ table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 04da39678f90 shape=c57707aa
-table authz_int.trees | a63c9790c18f shape=02db6ec7
+table authz_int.trees | 2c67a7d31494 shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 941796b264b7 shape=b6d5b497
-tree folder__parent__tree | 80fbccaf636c03a8e2824db0a8664c7e
+tree folder__parent__tree | b6208bc5601c9ea10afde91f8d2fac4d
 trigger "authz_folder__parent__tree_del" ON "app"."folders" | b31f2fcea3d2 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_ins" ON "app"."folders" | 2825bf58a3d1 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_trunc" ON "app"."folders" | e98fe3f9b2e1 tree=folder__parent__tree
