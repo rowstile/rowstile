@@ -36,6 +36,13 @@ every size), applies `example/docs.authz` with `rowstile apply` as the tables' o
    the one member of a team given as many. One client each, one after the other. A read by key costs what its
    reader holds ([the limits](../../docs/reference/limits.md)), and this step measures it, each way of holding.
    The six are past the users the other steps draw from, so those steps' data is what it was without them.
+7. tree writes by where they land. Steps 2 to 4 write anywhere in the tree, so how far two writers have to do
+   with each other is chance; here it is chosen. Fifty parts of the tree are made for the step (`parts.sql`: 85
+   folders each, no folder of one inside another's), and 1, 10 and 50 clients write first each in a part of its
+   own, then all in one part: a folder made inside any of the part's folders, then deleted (90% of the writes),
+   and a move of ten folders within the part (10%). A part keeps its size and a move its cost however long a run
+   lasts, so the runs compare. With one lock for each type, both say the same: every tree write to the type waits
+   its turn, wherever it lands. `authz.verify()` is asked again after these writes.
 
 Results are written to `results/`. `latency.py` turns pgbench's per-transaction logs into percentiles; "e2e" adds
 the time a transaction waited to start, which is what a caller arriving at that rate sees. Any statement running

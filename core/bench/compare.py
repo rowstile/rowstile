@@ -5,9 +5,10 @@
 
 One row per measure both builds have: each round's figure, and the mean of `here` over the mean of `base`. Read:
 the times of loading and applying, each read's p50 alone (step 1) and in the gate (step 3), the tree writes a
-second as clients grow (step 2), the gate's writes' p50, the big move, each listing (step 5) and each reader's p50
-by what they hold (step 6). A p50, not a p95: the question is what the code costs, and a p95 on a shared machine
-says more of the machine. The reads' "all" rows are left out: members and admins together have two speeds, and
+second as clients grow (step 2), the gate's writes' p50, the big move and the longest a write beside it took (the
+pause it makes), each listing (step 5), each reader's p50 by what they hold (step 6) and the tree writes a second
+by where the writers are (step 7). A p50, not a p95: the question is what the code costs, and a p95 on a shared
+machine says more of the machine. The reads' "all" rows are left out: members and admins together have two speeds, and
 the middle of the two moves with how many of each a run drew.
 A difference is called (faster, slower) only when every round of one build is beyond every round of the other
 and the means differ by more than one build's own runs do on a runner (FLOOR; the same build against itself on
@@ -61,6 +62,8 @@ def numbers(path: str) -> tuple[str, dict[str, float]]:
                 m = re.match(r"the big move: .*: ([0-9.]+) s", line)
                 if m:
                     out["4. the big move, s"] = float(m.group(1))
+                elif f[0] == "all" and len(f) >= 7 and f[1].isdigit():
+                    out["4. the longest write beside the big move, ms"] = float(f[6])
             elif section == "5":
                 m = re.match(r"(.+?)\s+(authz\.list\(.*\))\s+(\d+) rows\s+([0-9.]+) s$", line.rstrip())
                 if m:
@@ -69,6 +72,10 @@ def numbers(path: str) -> tuple[str, dict[str, float]]:
                 m = re.match(r"(.+ folders)\s+(\d+)\s+(\d+)\s+([0-9.]+)\s", line)
                 if m:
                     out[f"6. {m.group(1)}, p50 ms"] = float(m.group(4))
+            elif section == "7":
+                m = re.match(r"(each in a part of its own|all in one part)\s+(\d+)\s+([0-9.]+)\s", line)
+                if m:
+                    out[f"7. {m.group(1)}, {m.group(2)} clients, {MORE_IS_BETTER}"] = float(m.group(3))
     return build, out
 
 

@@ -19056,7 +19056,9 @@ class Benchmarks(unittest.TestCase):
     def stubbed_run(self, *faults: str, more: dict[str, str] | None = None) -> tuple[int, str]:
         """run.sh over stand-ins for the server, the command and pgbench, which say all went well but for the faults
         named: READS_ABORT (a read client of step 1 stopped on an error), W50_ABORT (a write client of step 2's 50),
-        MOVES_ABORT (a write client beside the big move), MOVE_FAILS (the big move's UPDATE refused). more: other
+        MOVES_ABORT (a write client beside the big move), MOVE_FAILS (the big move's UPDATE refused), HOLDERS_ABORT (a
+        reader of step 6), PARTS_FAIL (step 7's parts not made), PARTS_ABORT (a write client of step 7). The stand-in
+        for pgbench logs five scripts for step 7's ten clients in parts of their own, and nothing else. more: other
         settings scale.sh hands it. Its exit code, and the result it wrote."""
         with tempfile.TemporaryDirectory() as d:
             stubs = os.path.join(d, "bin")
@@ -19066,6 +19068,7 @@ class Benchmarks(unittest.TestCase):
                 "dropdb": "exit 0\n",
                 "psql": 'case "$*" in\n'
                 '  *"UPDATE app.folders SET parent_id"*) [ -z "$MOVE_FAILS" ] || { echo "ERROR:  no" >&2; exit 3; };;\n'
+                '  *"bench/parts.sql"*) [ -z "$PARTS_FAIL" ] || { echo "ERROR:  no parts" >&2; exit 3; };;\n'
                 '  *"authz.verify()"*) echo t;;\n'
                 '  *"authz.list("*) echo 7;;\n'
                 "  *) echo 1;;\n"
@@ -19078,6 +19081,10 @@ class Benchmarks(unittest.TestCase):
                 '  *"--log-prefix=$LOGS/w50"*) [ -z "$W50_ABORT" ] || stop;;\n'
                 '  *"--log-prefix=$LOGS/bw"*) [ -z "$MOVES_ABORT" ] || stop;;\n'
                 '  *"--log-prefix=$LOGS/h2"*) [ -z "$HOLDERS_ABORT" ] || stop;;\n'
+                '  *"--log-prefix=$LOGS/one10"*) [ -z "$PARTS_ABORT" ] || stop;;\n'
+                # (a line of pgbench's log: client, transaction, microseconds, script, when)
+                '  *"--log-prefix=$LOGS/own10"*) for t in "4000 0" "6000 0" "8000 0" "30000 1" "50000 1"; do\n'
+                '      echo "0 1 $t 1 1"; done > "$LOGS/own10.7";;\n'
                 "esac\n",
                 # the command's apply succeeds; anything else is Python's
                 "python3": f'[ "$1" = cli/rowstile_cli.py ] && exit 0\nexec {sys.executable} "$@"\n',
@@ -19091,7 +19098,16 @@ class Benchmarks(unittest.TestCase):
             settings = {"FILES": "2000", "FOLDERS": "100", "LEVELS": "5", "USERS": "20", "TEAMS": "4", "DURATION": "1"}
             env = dict(os.environ, **settings, GATE_DURATION="1", READ_RATE="10", SPEED_GATES="0", OUT=out)
             env.update(LOGS=os.path.join(d, "l"), PATH=stubs + os.pathsep + os.environ["PATH"])
-            for k in ("READS_ABORT", "W50_ABORT", "MOVES_ABORT", "MOVE_FAILS", "HOLDERS_ABORT", "BUILD_COMMIT"):
+            faulty = (
+                "READS_ABORT",
+                "W50_ABORT",
+                "MOVES_ABORT",
+                "MOVE_FAILS",
+                "HOLDERS_ABORT",
+                "PARTS_FAIL",
+                "PARTS_ABORT",
+            )
+            for k in (*faulty, "BUILD_COMMIT"):
                 env.pop(k, None)
             env.update(dict.fromkeys(faults, "1"), **(more or {}))
             done = self.run_sh(env)
@@ -19146,6 +19162,77 @@ class Benchmarks(unittest.TestCase):
         self.assertIn("SELECT x.id, :teams + h.k, 'view'\nFROM " + sizes, load)
         self.assertIn("SELECT 'folder', x.id, 'viewer', 'user', :users + h.k, ''\nFROM " + sizes, shares)
         self.assertIn("SELECT authz.act_as('user', :u::text);", read("bench/workload/read_folder_as.sql"))
+
+    def test_a_result_times_tree_writes_by_where_they_land(self) -> None:
+        # step 7: whom a tree write could wait for is where it lands. Fifty parts of the tree made for the step, no
+        # folder of one inside another's: each client writes in a part of its own, then all of them in one part
+        code, result = self.stubbed_run()
+        self.assertEqual(code, 0, result)
+        step = result[result.index("== 7. Tree writes by where they land (1 s each; ") :]
+        figures = r" +(\d+) +([0-9.]+) +0 +0 +0 +\d+ +(\S+) +(\S+) +(\S+) +(\S+)$"
+        rows = re.findall(r"^(each in a part of its own|all in one part)" + figures, step, re.M)
+        # the stand-in for pgbench says 20 scripts a second each time, and logs five for one run alone: three pairs (a
+        # folder made, then deleted: two writes) and two moves, so eight writes for five scripts
+        nothing = ("0.0", "nan", "nan", "nan", "nan")
+        self.assertEqual(
+            rows,
+            [
+                ("each in a part of its own", "1", *nothing),
+                ("each in a part of its own", "10", "32.0", "6.00", "8.00", "30.00", "50.00"),
+                ("each in a part of its own", "50", *nothing),
+                *(("all in one part", clients, *nothing) for clients in ("1", "10", "50")),
+            ],
+            step,
+        )
+        self.assertRegex(step, r"\nauthz\.verify\(\) after these writes: t \([0-9.]+ s\)\n")
+        # a client stopped on an error, or the parts not made: the run went wrong
+        code, result = self.stubbed_run("PARTS_ABORT")
+        self.assertEqual(code, 1, result)
+        self.assertRegex(result, r"(?m)^all in one part +10 +0\.0 +0 +1 +0 ")
+        code, result = self.stubbed_run("PARTS_FAIL")
+        self.assertEqual(code, 1, result)
+        self.assertTrue(result.endswith("making the parts failed:\nERROR:  no parts\n"), result)
+        # regress.py judges steps 1, 3 and 4 alone
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "result.txt")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(self.result(14.0) + step)
+            numbers, _ = self.regress.numbers(path)
+        self.assertEqual([k for k in numbers if k.startswith("7")], [])
+        # A part: a hundred ids of the folders' own sequence, so no other row has one; five folders that stay (the
+        # top, under a folder of the loaded tree that never moves, and four in it) and eight that move among them,
+        # each with nine below it. The workload works a folder's id out from the part's first
+        parts = read("bench/parts.sql")
+        self.assertIn(
+            "SELECT nextval(pg_get_serial_sequence('app.folders', 'id')) AS first_id, :parts AS parts;", parts
+        )
+        self.assertIn("SELECT setval(pg_get_serial_sequence('app.folders', 'id'), first_id + parts * 100)", parts)
+        made = re.findall(r"^SELECT :first \+ k \* 100( \+ [^,]+)?, 1, ([^,]+), 1, '(\w+)'", parts, re.M)
+        self.assertEqual(
+            made,
+            [
+                ("", "l.first_id + k % (l.last_id - l.first_id + 1)", "part"),
+                (" + s", ":first + k * 100", "stays"),
+                (" + 5 + 10 * m", ":first + k * 100 + 1 + m % 4", "moves"),
+                (" + 5 + 10 * m + c", ":first + k * 100 + 5 + 10 * m", "inside"),
+                (" + 5 + 10 * m + 2 + 2 * c + g", ":first + k * 100 + 5 + 10 * m + c", "inside"),
+            ],
+        )
+        pair, move = read("bench/workload/write_part_pair.sql"), read("bench/workload/write_part_move.sql")
+        for script in (pair, move):
+            # the client's own part, or the first one, everybody's
+            self.assertIn("\\set part :part_first + (:client_id % :parts) * :apart * 100\n", script)
+            self.assertEqual(
+                script.count("SET LOCAL ROLE app_user;\nSELECT authz.act_as('user', :a::text);\n"),
+                script.count("BEGIN;"),
+            )
+        # any of the part's 85 folders takes a new folder, which a second transaction deletes: the part keeps its size
+        self.assertIn("\\set p :part + random(0, 84)\n", pair)
+        self.assertIn("VALUES (1, :p, :a, 'bench') RETURNING id AS made \\gset\nCOMMIT;\nBEGIN;\n", pair)
+        self.assertIn("DELETE FROM app.folders WHERE id = :made;\nCOMMIT;\n", pair)
+        # one of the eight that move, to another of the five that stay: never where it is, never inside one that moves
+        self.assertIn("\\set m :part + 5 + 10 * random(0, 7)\n\\set by random(1, 4)\n", move)
+        self.assertIn("UPDATE app.folders SET parent_id = :part + (parent_id - :part + :by) % 5 WHERE id = :m;\n", move)
 
     def regress_sh(self, d: str, runs: list[tuple[int, float]]) -> tuple[subprocess.CompletedProcess[str], int]:
         """regress.sh in a copy of the folder, over a scale.sh that writes a result (its gate writes' p95) and exits as
@@ -19222,11 +19309,26 @@ class Benchmarks(unittest.TestCase):
                     "per kind of write, 50 clients:\n"
                     "create              1337       0     462.50    2014.31    3431.02    4899.39\n"
                     + self.result(14.0).split("\n", 3)[3].replace("0.20 s", f"{move:.2f} s")
+                    + "writes meanwhile: 20.0/s done, 0 failed, 0 clients aborted, 0 timed out\n"
+                    "script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95\n"
+                    "create               360       0       4.00       9.00      20.00     930.00       9.10\n"
+                    "all                  400       0       4.00      14.00      80.00     930.00      14.10\n"
+                    "authz.verify() after all the writes: t (5.08 s)\n"
                     + "== 5. Listing everything a user can see: authz.list('file', 'view'), all of it and one page\n"
                     "member     authz.list('file', 'view', NULL, 1000)" + " " * 29 + "     1000 rows     0.24 s\n"
                     "== 6. Opening a folder, by how many folders its reader holds directly (1 client, 20 s each)\n"
                     "reader                        txns  failed     p50 ms     p95 ms     p99 ms\n"
                     "a team's 4000 folders         3921       0       5.08       6.02       7.11\n"
+                    "== 7. Tree writes by where they land (20 s each; a folder made, then deleted: 90% of the writes; "
+                    "a move of ten folders: 10%)\n"
+                    "writers                     clients  writes/s  failed aborted  timed out  waiting %  pair p50"
+                    "  pair p95  move p50  move p95\n"
+                    f"each in a part of its own        10{writes * 2:10.1f}       0       0          0         71"
+                    "      6.00      8.00     30.00     50.00\n"
+                    f"all in one part                  10{writes:10.1f}       0       0          0         78"
+                    "      6.00      8.00     30.00     50.00\n"
+                    "(a pair: a folder made, then deleted, two writes; p50 and p95 in ms)\n"
+                    "authz.verify() after these writes: t (5.11 s)\n"
                 )
                 with open(os.path.join(d, f"{which}-{n}.txt"), "w", encoding="utf-8") as fh:
                     fh.write(result)
@@ -19258,9 +19360,15 @@ class Benchmarks(unittest.TestCase):
         self.assertEqual(rows["3. open_file in the gate, p50 ms"][:2], ["1.00", "1.00"])
         self.assertEqual(rows["5. member: authz.list('file', 'view', NULL, 1000), s"][0], "0.24")
         self.assertEqual(rows["6. a team's 4000 folders, p50 ms"][0], "5.08")
+        # the pause a big move makes: the longest a write beside it took. And step 7's writes a second, by where
+        # the writers are and how many
+        self.assertEqual(rows["4. the longest write beside the big move, ms"], ["930.00"] * 4 + ["1.00"])
+        own = rows["7. each in a part of its own, 10 clients, writes/s"]
+        self.assertEqual(own, ["169.20", "160.00", "180.00", "164.00", "1.04"])
+        self.assertEqual(rows["7. all in one part, 10 clients, writes/s"], rows["2. 1 clients, writes/s"])
         # nothing else is a measure: not the sizes, not step 2's table per kind of write, and not the reads' "all"
         # row (members and admins together have two speeds: their middle moves with how many of each a run drew)
-        self.assertEqual(len(rows), 8, sorted(rows))
+        self.assertEqual(len(rows), 11, sorted(rows))
         self.assertNotIn("3. all in the gate, p50 ms", rows)
         self.assertEqual(
             lines[-2],
