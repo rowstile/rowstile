@@ -18,11 +18,12 @@ governance 300
 hand answers 439
 hand answers, kept names 439
 identity 150
-interleavings 1440
+interleavings 1575
 interleavings (read committed, boxes) 10
 interleavings (read committed, cross) 21
 interleavings (read committed, docs after commit) 36
 interleavings (read committed, docs keyed by folder) 36
+interleavings (read committed, docs without the sync index) 15
 interleavings (read committed, docs) 36
 interleavings (read committed, parts) 21
 invariance of the fixed policies 27
