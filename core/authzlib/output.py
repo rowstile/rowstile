@@ -12,6 +12,7 @@ from .identity import SESSION_OK, IdentityMixin
 from .insight import InsightMixin
 from .parse import And, Arrow, ArrowOn, Cascade, Expr, Loc, Not, Or, Ref, Rule, Type, fail
 from .refusals import RefusalMixin
+from .scim import ScimMixin
 from .sqlutil import (
     CHILD_TRIGGERS,
     CHILD_TRIGGERS_FN,
@@ -182,7 +183,9 @@ def cascade_check(c: Cascade) -> str:
     )
 
 
-class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, LintMixin, TreeMixin, SyncMixin):
+class OutputMixin(
+    RefusalMixin, InsightMixin, GovernanceMixin, ScimMixin, IdentityMixin, LintMixin, TreeMixin, SyncMixin
+):
     def late_conditions(self) -> list[tuple[str, str, Loc]]:
         """(rows, condition, line) for each condition only a PL/pgSQL function holds: a signing-in type's where,
         a `shared ... if`. Nothing in the catalog depends on what they read, so the app may drop a column they
@@ -1907,6 +1910,7 @@ END $w$;"""
             ("objects", "who_among", self.who_among_sql()),
             *[("objects", "insight", x) for x in insight],
             ("objects", "identity", self.identity_api_sql()),
+            ("objects", "scim", self.scim_sql()),
             *[("objects", "keys_gone", self.key_forget_sql(t)) for t in self.types.values() if t.principal],
             ("objects", "workflow", self.workflow_sql()),
             ("objects", "child_triggers", CHILD_TRIGGERS_FN),

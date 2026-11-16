@@ -4018,6 +4018,7 @@ class Imports(unittest.TestCase):
             "authzlib.governance",
             "authzlib.hardening",
             "authzlib.identity",
+            "authzlib.scim",
             "authzlib.insight",
             "authzlib.output",
             "authzlib.refusals",

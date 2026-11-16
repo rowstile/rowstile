@@ -54,6 +54,7 @@ PLACES: dict[tuple[str, frozenset[str]], tuple[str, ...]] = {
         "multi scenario",
         "identity",
         "principals",
+        "scim",
         "signed sessions",
         "governance",
         "masks",
