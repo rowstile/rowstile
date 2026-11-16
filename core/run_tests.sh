@@ -398,7 +398,7 @@ record "${PIPESTATUS[0]}" "interleavings (read committed, docs without the sync 
 }
 unit policy 25 interleavings_docs_plain
 interleavings_docs_few() {
-step "every order of two tree writes, in READ COMMITTED (docs, where a write of more than two folders takes the whole type)"
+step "every order of two tree writes, in READ COMMITTED (docs, where a write of more than one folder takes the whole type)"
 python3 tests/interleave.py --levels "read committed" --worlds docs_few --db authz_interleave_rc | quiet_ok
 record "${PIPESTATUS[0]}" "interleavings (read committed, docs with a low limit)"
 }
