@@ -102,13 +102,13 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('user__manager__tree', 'c78ce7ac5394553cd561df0fb1ae7574', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('user__manager__tree', '6dfd53cce76cd73bc68973bbd9d106fe', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."users"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'user__manager__tree'), ('folder_project__folder_parent__tree', '541122641e4ba4f1ef4b7c8dd5511877', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__folder_parent__tree'), ('folder__parent__tree', '447123f82699f31538316d80b46768b0', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__folder_parent__tree'), ('folder__parent__tree', '69b0f47eb02814c8da4f7cb44a8f2d9f', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree')) n(name, hash, oids, rel)
@@ -1252,7 +1252,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('user__manager__tree', 'c78ce7ac5394553cd561df0fb1ae7574', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('user__manager__tree', '6dfd53cce76cd73bc68973bbd9d106fe', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."users"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
@@ -1260,7 +1260,7 @@ INSERT INTO authz_int.trees VALUES
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__parent__tree', '447123f82699f31538316d80b46768b0', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', '69b0f47eb02814c8da4f7cb44a8f2d9f', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -2080,29 +2080,33 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mo
 <<authz__>>
 DECLARE
   affected bigint[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
-  locked bigint[]; locked_under text[]; locked_hung text[]; seen bigint[];
+  locked bigint[]; locked_under text[]; locked_hung text[]; seen bigint[]; most int;
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   IF p_plain THEN
     IF cardinality(p_ids) = 1 AND p_ids[1] IS NOT NULL THEN
       -- (one row, nothing hanging under it: the short way to the same lock rows)
-      SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'user'), false)
-      INTO under, hung, stripes
+      SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'user'), false),
+             coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000)
+      INTO under, hung, stripes, most
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                  array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
           FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
             (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."manager_id" AS _parent FROM "cx"."users" r WHERE r."manager_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
           WHERE e._parent IS NOT NULL) h;
       affected := p_ids;
-      IF authz__.stripes THEN
+      IF authz__.stripes AND authz__.most > 0 THEN
         held := authz_int.tree_lock_one('user', authz__.affected[1]::text, authz__.under, authz__.hung);
       END IF;
       asked := 0;
       taken := 0;
     ELSE
-      WITH hint AS MATERIALIZED (
+      WITH narrow AS MATERIALIZED (
+        SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'user'), false) AS _is,
+               coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) AS _most),
+      hint AS MATERIALIZED (
         SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                     UNION (SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
+                     UNION (SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1) LIMIT (SELECT n._most + 1 FROM narrow n))
                      UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
       hangs AS MATERIALIZED (
         SELECT h._under, h._hung
@@ -2111,8 +2115,6 @@ BEGIN
             FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
               (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."manager_id" AS _parent FROM "cx"."users" r WHERE r."manager_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
             WHERE e._parent IS NOT NULL) h),
-      narrow AS MATERIALIZED (
-        SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'user'), false) AS _is),
       need AS MATERIALIZED (
         SELECT y._slot, bool_or(y._upd) AS _upd
         FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
@@ -2126,7 +2128,7 @@ BEGIN
               UNION ALL
               SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
               FROM (SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b)) u(_above, _hung) WHERE u._above IS NOT NULL) y
-        WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= 1000
+        WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= (SELECT n._most FROM narrow n)
         GROUP BY y._slot),
       got AS MATERIALIZED (
         SELECT o._slot, o._upd,
@@ -2139,14 +2141,14 @@ BEGIN
       bumped AS (
         UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
         WHERE g._upd AND g._held = 1 AND t.type = 'user' AND t.slot = g._slot RETURNING 1)
-      SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
-             (SELECT count(*) FROM got g WHERE g._held = 1),
+      SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT n._most FROM narrow n),
+             (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
              ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
-      INTO affected, under, hung, stripes, asked, taken, held
+      INTO affected, under, hung, stripes, most, asked, taken, held
       FROM hint i, hangs p;
     END IF;
-    IF NOT authz__.stripes OR cardinality(authz__.affected) > 1000 THEN
-      -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
+    IF NOT authz__.stripes OR cardinality(authz__.affected) > authz__.most THEN
+      -- (a type whose every tree write takes its row; a write of more objects than the setting says)
       PERFORM authz_int.tree_lock_all('user');
       held := ARRAY[-1];
     ELSIF authz__.taken <> authz__.asked THEN
@@ -2181,9 +2183,12 @@ BEGIN
   ELSE
     LOOP
       BEGIN
-    WITH hint AS MATERIALIZED (
+    WITH narrow AS MATERIALIZED (
+          SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'user'), false) AS _is,
+                 coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) AS _most),
+        hint AS MATERIALIZED (
           SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                       UNION (SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
+                       UNION (SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1) LIMIT (SELECT n._most + 1 FROM narrow n))
                        UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
         hangs AS MATERIALIZED (
           SELECT h._under, h._hung
@@ -2192,8 +2197,6 @@ BEGIN
               FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
                 (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."manager_id" AS _parent FROM "cx"."users" r WHERE r."manager_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
               WHERE e._parent IS NOT NULL) h),
-        narrow AS MATERIALIZED (
-          SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'user'), false) AS _is),
         need AS MATERIALIZED (
           SELECT y._slot, bool_or(y._upd) AS _upd
           FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
@@ -2207,7 +2210,7 @@ BEGIN
                 UNION ALL
                 SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
                 FROM (SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b)) u(_above, _hung) WHERE u._above IS NOT NULL) y
-          WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= 1000
+          WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= (SELECT n._most FROM narrow n)
           GROUP BY y._slot),
         got AS MATERIALIZED (
           SELECT o._slot, o._upd,
@@ -2220,13 +2223,13 @@ BEGIN
         bumped AS (
           UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
           WHERE g._upd AND g._held = 1 AND t.type = 'user' AND t.slot = g._slot RETURNING 1)
-        SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
-               (SELECT count(*) FROM got g WHERE g._held = 1),
+        SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT n._most FROM narrow n),
+               (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
                ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
-        INTO affected, under, hung, stripes, asked, taken, held
+        INTO affected, under, hung, stripes, most, asked, taken, held
         FROM hint i, hangs p;
-        IF NOT authz__.stripes OR cardinality(authz__.affected) > 1000 THEN
-          -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
+        IF NOT authz__.stripes OR cardinality(authz__.affected) > authz__.most THEN
+          -- (a type whose every tree write takes its row; a write of more objects than the setting says)
           PERFORM authz_int.tree_lock_all('user');
           held := ARRAY[-1];
         ELSIF authz__.taken <> authz__.asked THEN
@@ -2740,14 +2743,15 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mo
 <<authz__>>
 DECLARE
   affected text[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
-  locked text[]; locked_under text[]; locked_hung text[]; seen text[];
+  locked text[]; locked_under text[]; locked_hung text[]; seen text[]; most int;
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   IF p_plain THEN
     IF cardinality(p_ids) = 1 AND p_ids[1] IS NOT NULL THEN
       -- (one row, nothing hanging under it: the short way to the same lock rows)
-      SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false)
-      INTO under, hung, stripes
+      SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false),
+             coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000)
+      INTO under, hung, stripes, most
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                  array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
           FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
@@ -2755,15 +2759,18 @@ BEGIN
       UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, (CASE WHEN (s."org_id", s."child_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."child_id"::bigint)::text END) AS _child, (CASE WHEN (s."org_id", s."parent_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."parent_id"::bigint)::text END) AS _parent FROM "cx"."folder_links" s WHERE (CASE WHEN (s."org_id", s."parent_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."parent_id"::bigint)::text END) IS NOT NULL AND (CASE WHEN (s."org_id", s."child_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."child_id"::bigint)::text END) IS NOT NULL AND (s."org_id", s."child_id") = (((b._y)::authz_gen."folder__key")."org_id", ((b._y)::authz_gen."folder__key")."id")) x OFFSET 0)) e
           WHERE e._parent IS NOT NULL) h;
       affected := p_ids;
-      IF authz__.stripes THEN
+      IF authz__.stripes AND authz__.most > 0 THEN
         held := authz_int.tree_lock_one('folder', authz__.affected[1]::text, authz__.under, authz__.hung);
       END IF;
       asked := 0;
       taken := 0;
     ELSE
-      WITH hint AS MATERIALIZED (
+      WITH narrow AS MATERIALIZED (
+        SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is,
+               coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) AS _most),
+      hint AS MATERIALIZED (
         SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                     UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
+                     UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT (SELECT n._most + 1 FROM narrow n))
                      UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
       hangs AS MATERIALIZED (
         SELECT h._under, h._hung
@@ -2773,8 +2780,6 @@ BEGIN
               (SELECT x.* FROM (SELECT 0 AS _link, ROW(r."org_id"::bigint, r."id"::bigint)::text AS _child, (CASE WHEN r."parent_type" = 'folder' THEN (CASE WHEN (r."org_id", r."parent_id") IS NOT NULL THEN ROW(r."org_id"::bigint, r."parent_id"::bigint)::text END) END) AS _parent FROM "cx"."folders" r WHERE (CASE WHEN r."parent_type" = 'folder' THEN (CASE WHEN (r."org_id", r."parent_id") IS NOT NULL THEN ROW(r."org_id"::bigint, r."parent_id"::bigint)::text END) END) IS NOT NULL AND (r."org_id", r."id") = (((b._y)::authz_gen."folder__key")."org_id", ((b._y)::authz_gen."folder__key")."id")) x OFFSET 0)
         UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, (CASE WHEN (s."org_id", s."child_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."child_id"::bigint)::text END) AS _child, (CASE WHEN (s."org_id", s."parent_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."parent_id"::bigint)::text END) AS _parent FROM "cx"."folder_links" s WHERE (CASE WHEN (s."org_id", s."parent_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."parent_id"::bigint)::text END) IS NOT NULL AND (CASE WHEN (s."org_id", s."child_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."child_id"::bigint)::text END) IS NOT NULL AND (s."org_id", s."child_id") = (((b._y)::authz_gen."folder__key")."org_id", ((b._y)::authz_gen."folder__key")."id")) x OFFSET 0)) e
             WHERE e._parent IS NOT NULL) h),
-      narrow AS MATERIALIZED (
-        SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is),
       need AS MATERIALIZED (
         SELECT y._slot, bool_or(y._upd) AS _upd
         FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
@@ -2788,7 +2793,7 @@ BEGIN
               UNION ALL
               SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
               FROM (SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b)) u(_above, _hung) WHERE u._above IS NOT NULL) y
-        WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= 1000
+        WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= (SELECT n._most FROM narrow n)
         GROUP BY y._slot),
       got AS MATERIALIZED (
         SELECT o._slot, o._upd,
@@ -2801,14 +2806,14 @@ BEGIN
       bumped AS (
         UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
         WHERE g._upd AND g._held = 1 AND t.type = 'folder' AND t.slot = g._slot RETURNING 1)
-      SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
-             (SELECT count(*) FROM got g WHERE g._held = 1),
+      SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT n._most FROM narrow n),
+             (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
              ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
-      INTO affected, under, hung, stripes, asked, taken, held
+      INTO affected, under, hung, stripes, most, asked, taken, held
       FROM hint i, hangs p;
     END IF;
-    IF NOT authz__.stripes OR cardinality(authz__.affected) > 1000 THEN
-      -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
+    IF NOT authz__.stripes OR cardinality(authz__.affected) > authz__.most THEN
+      -- (a type whose every tree write takes its row; a write of more objects than the setting says)
       PERFORM authz_int.tree_lock_all('folder');
       held := ARRAY[-1];
     ELSIF authz__.taken <> authz__.asked THEN
@@ -2845,9 +2850,12 @@ BEGIN
   ELSE
     LOOP
       BEGIN
-    WITH hint AS MATERIALIZED (
+    WITH narrow AS MATERIALIZED (
+          SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is,
+                 coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) AS _most),
+        hint AS MATERIALIZED (
           SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                       UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
+                       UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT (SELECT n._most + 1 FROM narrow n))
                        UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
         hangs AS MATERIALIZED (
           SELECT h._under, h._hung
@@ -2857,8 +2865,6 @@ BEGIN
                 (SELECT x.* FROM (SELECT 0 AS _link, ROW(r."org_id"::bigint, r."id"::bigint)::text AS _child, (CASE WHEN r."parent_type" = 'folder' THEN (CASE WHEN (r."org_id", r."parent_id") IS NOT NULL THEN ROW(r."org_id"::bigint, r."parent_id"::bigint)::text END) END) AS _parent FROM "cx"."folders" r WHERE (CASE WHEN r."parent_type" = 'folder' THEN (CASE WHEN (r."org_id", r."parent_id") IS NOT NULL THEN ROW(r."org_id"::bigint, r."parent_id"::bigint)::text END) END) IS NOT NULL AND (r."org_id", r."id") = (((b._y)::authz_gen."folder__key")."org_id", ((b._y)::authz_gen."folder__key")."id")) x OFFSET 0)
           UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, (CASE WHEN (s."org_id", s."child_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."child_id"::bigint)::text END) AS _child, (CASE WHEN (s."org_id", s."parent_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."parent_id"::bigint)::text END) AS _parent FROM "cx"."folder_links" s WHERE (CASE WHEN (s."org_id", s."parent_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."parent_id"::bigint)::text END) IS NOT NULL AND (CASE WHEN (s."org_id", s."child_id") IS NOT NULL THEN ROW(s."org_id"::bigint, s."child_id"::bigint)::text END) IS NOT NULL AND (s."org_id", s."child_id") = (((b._y)::authz_gen."folder__key")."org_id", ((b._y)::authz_gen."folder__key")."id")) x OFFSET 0)) e
               WHERE e._parent IS NOT NULL) h),
-        narrow AS MATERIALIZED (
-          SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is),
         need AS MATERIALIZED (
           SELECT y._slot, bool_or(y._upd) AS _upd
           FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
@@ -2872,7 +2878,7 @@ BEGIN
                 UNION ALL
                 SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
                 FROM (SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b)) u(_above, _hung) WHERE u._above IS NOT NULL) y
-          WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= 1000
+          WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= (SELECT n._most FROM narrow n)
           GROUP BY y._slot),
         got AS MATERIALIZED (
           SELECT o._slot, o._upd,
@@ -2885,13 +2891,13 @@ BEGIN
         bumped AS (
           UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
           WHERE g._upd AND g._held = 1 AND t.type = 'folder' AND t.slot = g._slot RETURNING 1)
-        SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
-               (SELECT count(*) FROM got g WHERE g._held = 1),
+        SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT n._most FROM narrow n),
+               (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
                ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
-        INTO affected, under, hung, stripes, asked, taken, held
+        INTO affected, under, hung, stripes, most, asked, taken, held
         FROM hint i, hangs p;
-        IF NOT authz__.stripes OR cardinality(authz__.affected) > 1000 THEN
-          -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
+        IF NOT authz__.stripes OR cardinality(authz__.affected) > authz__.most THEN
+          -- (a type whose every tree write takes its row; a write of more objects than the setting says)
           PERFORM authz_int.tree_lock_all('folder');
           held := ARRAY[-1];
         ELSIF authz__.taken <> authz__.asked THEN
@@ -9764,6 +9770,13 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
   FOR r IN SELECT x.said FROM authz_int.scim_stale() x(said) LOOP
     severity := 'warning'; object := 'authz.scim';
     problem := r.said || '. Set the endpoint''s settings again (authz.set_scim), or put right what they name';
+    RETURN NEXT;
+  END LOOP;
+
+  -- the size above which a tree write takes its whole type: a setting that is no whole number isn't read
+  FOR r IN SELECT s.value FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value !~ '^[0-9]{1,9}$' LOOP
+    severity := 'warning'; object := 'authz.settings tree_lock_limit';
+    problem := format('is %L, which is not a whole number, so it is not read: a tree write that would lock more than 1000 rows takes its whole type, as without the setting. Write a number, or delete the row', r.value);
     RETURN NEXT;
   END LOOP;
   -- governed tables

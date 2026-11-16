@@ -2,7 +2,8 @@
 """interleave: every order of the steps of two tree writes, each session at each isolation level.
 
     python3 tests/interleave.py [--levels "read committed,repeatable read,serializable"] [--db authz_interleave]
-                                [--worlds docs,cross,parts,boxes,docs_by,docs_after,docs_plain,shown] [--pairs create-move]
+                                [--worlds docs,cross,parts,boxes,docs_by,docs_after,docs_plain,docs_few,shown]
+                                [--pairs create-move]
 
 Two sessions each run one transaction on a small subtree: a read, which takes the snapshot (of a table no write
 touches, so that what SERIALIZABLE notices is the writes' own doing; the BEGIN goes with it: a BEGIN takes no
@@ -11,7 +12,7 @@ one that changes a tree, or that the tree's rows decide, and is written so that 
 what lies above what the other writes. Every pair of a world's kinds (a kind with itself included) runs in every
 order of its six steps the server allows, with each session at each of the levels asked for (the nine pairs of
 the three by default: one session in READ COMMITTED beside one in SERIALIZABLE too, which SERIALIZABLE's own
-checks can't see). Eight worlds, each in a database of its own, so that every way a tree is kept is written by two
+checks can't see). Nine worlds, each in a database of its own, so that every way a tree is kept is written by two
 transactions at once:
   - docs: the docs app (core/example/), a tree of one type on plain tables: a folder created, moved, linked into
     another, unlinked, deleted, its id changed, and a folder shared and unshared, which `authz.share` and the
@@ -32,6 +33,8 @@ transactions at once:
   - docs_plain: the docs app without its sync index, which takes lock rows of its own at each commit (all of them
     at a stricter level): here a write fails or waits only by the trees' own locks. The docs world's creates, moves,
     links and unlinks, and a move of a folder that has the other session's folder below it (15 pairs);
+  - docs_few: the same, where a write of more than two folders takes its whole type (the setting
+    tree_lock_limit): the moves of what is above do, the other writes lock what they touch (15 pairs);
   - shown: two trees of one type that differ, one through a column whose condition a seal changes, one through
     that column and a share that is a link (`authz.share` of a node into a node): a node created, moved,
     moved aside (into a part no other write is of: neither waits), sealed, shown in another and hidden from one,
@@ -603,6 +606,17 @@ DOCS_PLAIN = replace(
     # below it through a link, so they are not apart)
     apart=frozenset({("create", "create"), ("unlink", "unlink")}),
 )
+# The docs world without its sync index again, where a write of more than two folders takes its whole type (the
+# setting tree_lock_limit, which each schedule's start writes): the moves of what is above do (a with c below it
+# and l through a link; b likewise), the other writes lock what they touch. So a write to the whole type runs
+# beside a write to a part of it, in every order and at every level: each waits for the other where they meet,
+# and the pairs to different parts (neither of more than two folders) still never wait.
+DOCS_FEW = replace(
+    DOCS_PLAIN,
+    name="docs_few",
+    reset=DOCS_RESET
+    + "INSERT INTO authz.settings VALUES ('tree_lock_limit', '2') ON CONFLICT (key) DO UPDATE SET value = '2';\n",
+)
 
 # --- shown: nodes shown in other nodes by sharing, two trees of one type that differ ------------------------------
 # A node's edit comes down from its parent unless the node is sealed; its view comes down from its parent and from
@@ -732,7 +746,7 @@ SHOWN = World(
         }
     ),
 )
-WORLDS = {w.name: w for w in (DOCS, CROSS, PARTS, BOXES, DOCS_BY, DOCS_AFTER, DOCS_PLAIN, SHOWN)}
+WORLDS = {w.name: w for w in (DOCS, CROSS, PARTS, BOXES, DOCS_BY, DOCS_AFTER, DOCS_PLAIN, DOCS_FEW, SHOWN)}
 
 
 class Outcome(NamedTuple):
@@ -1161,7 +1175,7 @@ def main() -> None:
     ap.add_argument(
         "--levels", default=",".join(LEVELS), help="comma-separated isolation levels: each session at each of them"
     )
-    ap.add_argument("--worlds", default=",".join(WORLDS), help="comma-separated worlds (default: all eight)")
+    ap.add_argument("--worlds", default=",".join(WORLDS), help="comma-separated worlds (default: all nine)")
     ap.add_argument("--pairs", default="", help="comma-separated pairs, as create-move (default: every one)")
     args = ap.parse_args()
     chosen = [x.strip() for x in args.levels.split(",") if x.strip()]

@@ -18,11 +18,12 @@ governance 300
 hand answers 439
 hand answers, kept names 439
 identity 150
-interleavings 1764
+interleavings 1899
 interleavings (read committed, boxes) 10
 interleavings (read committed, cross) 21
 interleavings (read committed, docs after commit) 36
 interleavings (read committed, docs keyed by folder) 36
+interleavings (read committed, docs with a low limit) 15
 interleavings (read committed, docs without the sync index) 15
 interleavings (read committed, docs) 36
 interleavings (read committed, parts) 21
@@ -34,7 +35,7 @@ masks 39
 mcp 79
 migrate vs apply 105
 migrations 87
-moves 33
+moves 40
 multi scenario 119
 policy errors 316
 principals 137

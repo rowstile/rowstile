@@ -1244,6 +1244,7 @@ FEATURES: list[Feature] = [
         (
             T("scenario.sql", "moving Engineering into its own subfolder is refused"),
             T("moves.sh", "a folder made while its type's lock rows go is refused, to try again"),
+            T("moves.sh", "with the setting at 100, the same move takes the whole type"),
             T("scenario.sql", "a loop through links does not hang and changes nothing for carol"),
             T("moves.sh", "rows inside the moved folder were left alone"),
             T("concurrency.sh", "no loop"),
@@ -1256,6 +1257,7 @@ FEATURES: list[Feature] = [
             T(DIFF, "class CrossGen("),
             T("interleave.py", "inheritance tables exact after each"),
             T("interleave.py", 'name="shown"'),
+            T("interleave.py", 'name="docs_few"'),
             T("small.py", "def denies("),
             T("genpolicy.py", "def across("),
             T("stress.sh", "the inheritance tables match a rebuild"),
