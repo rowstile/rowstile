@@ -172,14 +172,18 @@ what).
 ## Trees, under load
 
 Inherited permissions are kept in tables by triggers, and those tables must match the tree at every commit. <!-- checked: tests/interleave.py "inheritance tables exact after each"; tests/stress.sh "the inheritance tables match a rebuild" -->
-[`tests/interleave.py`](../core/tests/interleave.py) runs two writes to a tree in two sessions, in six worlds:
+[`tests/interleave.py`](../core/tests/interleave.py) runs two writes to a tree in two sessions, in nine worlds:
 the docs app's folders (a folder created, moved, linked, unlinked, deleted, given a new id, shared, unshared),
 with its sync index (a preview); the same twice more, the index keyed by folder, and brought up to date by a
 worker after commit; a tree of two types whose condition reads another table (folders and projects); a tree on a
-partitioned table, whose links and the table its condition reads each have a table that inherits from them; and a
-tree of two types linked by their own columns, whose condition reads the tree's own table. Each of the 160 pairs runs in
-every order of its steps that Postgres allows (a read, the write, the commit: 2,402 of the 3,200 orders written
-out), with each session at each isolation level, 21,618 schedules. It sends one step at a time and asks Postgres
+partitioned table, whose links and the table its condition reads each have a table that inherits from them; a
+tree of two types linked by their own columns, whose condition reads the tree's own table; the docs app without
+its sync index, whose own locks would hide a missing lock of the trees', twice (the second where a write of more
+than one folder takes its whole type); and two trees of one type that differ, one through a share that is a
+link. Each of the 211 pairs runs in
+every order of its steps that Postgres allows (a read, the write, the commit: 3,272 of the 4,220 orders written
+out), with each session at each isolation level, 29,448 schedules. Where a world's two writes are to different
+parts of a tree, neither may wait for the other or fail on it, at any level. <!-- checked: tests/interleave.py "waited for a write to another part of the tree" --> It sends one step at a time and asks Postgres
 which session waits for a lock, so no order depends on timing. After each, the tables are compared with a
 rebuild (and the sync index with what it should hold), what `authz.list` says with the reference evaluator, and
 in SERIALIZABLE the rows with the two transactions run one after the other. In READ COMMITTED no write ever needs a retry. <!-- checked: tests/interleave.py "none needing a retry" -->

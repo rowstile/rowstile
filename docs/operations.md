@@ -179,12 +179,34 @@ SELECT authz.sync_work();                       -- every second, say: what commi
 SELECT authz.sync_behind();                     -- NULL: the index holds every change committed
 ```
 
+## Retrying a write
+
+A write that changes who inherits from whom (a row of a tree made, moved, linked, shared into another, or deleted)
+locks what it touches: the rows it changes with everything below them, and the rows those hang under
+([Limits](reference/limits.md)). Two writes to different parts of a tree run side by side. Where two meet, one
+waits, and some writes end with an error that means: run the transaction again.
+
+| the write ends with | when | |
+|---|---|---|
+| a serialization error (`40001`) | in REPEATABLE READ or SERIALIZABLE: another write to what this one touches committed after this transaction's snapshot | run the transaction again |
+| a deadlock (`40P01`) | at any level: two transactions that each make several tree writes met crosswise. A transaction of several statements makes several; so does one statement that cascades to rows that are links (`ON DELETE CASCADE` on a link table), a `MERGE`, an `INSERT ... ON CONFLICT DO UPDATE`, a `WITH` that writes. Postgres ends one of the two after `deadlock_timeout` (a second, unless set) | run the transaction again |
+| "the policy was applied while this write ran" ([AZ723](errors/AZ723.md), `40001`) | a policy was applied, or a migration ran, while the write was under way | run the transaction again |
+
+In READ COMMITTED, a statement that makes one tree write (a row made, a move, a link, a share) takes its locks in
+one order, so two such statements wait for each other in turn, not in a circle, and neither needs a retry. Any
+app that writes in transactions of several statements should retry `40P01` and `40001` anyway: Postgres itself
+may end those with either.
+
+A write of more than a thousand rows takes its whole type instead (a setting, `tree_lock_limit`:
+[Limits](reference/limits.md)), as does every tree write to a type that inherits through another type too or
+whose inheritance condition reads other rows: the other tree writes to that type wait while it runs.
+
 ## What to watch
 
 | | how |
 |---|---|
 | the inheritance tables are exact | `SELECT authz.verify()` (reads everything, a batch of rows at a time: about two and a half minutes for a million folders; run it off-peak); false: `rowstile reapply --force` |
 | the policy's invariants hold | `SELECT * FROM authz.check_invariants()` |
-| a tree write waits | in `pg_stat_activity`, a session whose query writes a tree's table with `wait_event_type = 'Lock'` (`transactionid` or `tuple`: the type's lock row, which another writer holds until it commits); `pg_blocking_pids(pid)` names that writer. A big move holds it for half a second to a second per 20k folders below (on the benchmark of 2026-10-03, a build from before the rename: `core/bench/results/2026-10-03-*.txt`) |
+| a tree write waits | in `pg_stat_activity`, a session whose query writes a tree's table with `wait_event_type = 'Lock'` (`transactionid` or `tuple`: a lock row of what it touches, or its type's row, which another writer holds until it commits); `pg_blocking_pids(pid)` names that writer. A move of more than a thousand rows takes its whole type ([Retrying a write](#retrying-a-write)), and holds it for half a second to a second per 20k folders below (on the benchmark of 2026-10-03, a build from before the rename: `core/bench/results/2026-10-03-*.txt`) |
 | slow checks | `pg_stat_statements` on your app's queries; `EXPLAIN` shows the policy's subplans |
 | who did what | `authz.audit`; break-glass use is also announced on channel `authz_alerts` |

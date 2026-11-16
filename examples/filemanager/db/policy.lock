@@ -100,7 +100,7 @@ function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9f
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 7be2692e049e shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | b916646bf293 shape=1223ad2f
-function authz.lint() | f2536e7fbb80 shape=54cb1505
+function authz.lint() | d27031e495ef shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 8e01470f10d4 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
@@ -310,10 +310,10 @@ function authz_int."folder__owner__who"(p_id bigint) | fa0286340996 shape=db8552
 function authz_int."folder__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[]) | 38045bd3cb62 shape=93f60077
 function authz_int."folder__parent__tree_check_loops"(p_ids bigint[]) | 745d51146807 shape=a9007a33 tree=folder__parent__tree
 function authz_int."folder__parent__tree_compute"(p_ids bigint[]) | b44fd5cc084e shape=1b436a45 tree=folder__parent__tree
-function authz_int."folder__parent__tree_on_rows"() | 9e2125ce606b shape=51fa243d tree=folder__parent__tree
+function authz_int."folder__parent__tree_on_rows"() | 07d6c90705c9 shape=51fa243d tree=folder__parent__tree
 function authz_int."folder__parent__tree_on_truncate"() | 0f865e70e08f shape=0a5b3c22 tree=folder__parent__tree
-function authz_int."folder__parent__tree_rebuild"() | 860aa551a86d shape=506d5965 tree=folder__parent__tree
-function authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean) | 38c96e329bf0 shape=9864e978 tree=folder__parent__tree
+function authz_int."folder__parent__tree_rebuild"() | 0cc13f27e4ae shape=506d5965 tree=folder__parent__tree
+function authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach bigint[]) | 3b3285e92530 shape=4be8009d tree=folder__parent__tree
 function authz_int."folder__parent__tree_shift"(p_ids bigint[], p_below bigint[]) | 1cb0e3c12da3 shape=297a635d tree=folder__parent__tree
 function authz_int."folder__parent__tree_verify"() | b50dba0eb547 shape=25e0fa0b tree=folder__parent__tree
 function authz_int."folder__share__has"(p_id bigint) | e38c330c426c shape=4d0f0a80
@@ -350,10 +350,10 @@ function authz_int."group__owner__who"(p_id uuid) | 39ff75111798 shape=3d30647f
 function authz_int."group__owner__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | c03a604c014e shape=9f78f68b
 function authz_int."group__parent__tree_check_loops"(p_ids uuid[]) | b3c798f5d1a0 shape=fec85363 tree=group__parent__tree
 function authz_int."group__parent__tree_compute"(p_ids uuid[]) | 5515865814d7 shape=6c7cd0d5 tree=group__parent__tree
-function authz_int."group__parent__tree_on_rows"() | 08ff7de9fb3d shape=b6d1bd3a tree=group__parent__tree
+function authz_int."group__parent__tree_on_rows"() | ba6d408d58c6 shape=b6d1bd3a tree=group__parent__tree
 function authz_int."group__parent__tree_on_truncate"() | fd469b1c4d78 shape=182aac12 tree=group__parent__tree
-function authz_int."group__parent__tree_rebuild"() | f792e721d8d5 shape=5ce164bb tree=group__parent__tree
-function authz_int."group__parent__tree_refresh"(p_ids uuid[], p_shift boolean) | 9d401dab53c2 shape=dee1181f tree=group__parent__tree
+function authz_int."group__parent__tree_rebuild"() | 885100c7e00d shape=5ce164bb tree=group__parent__tree
+function authz_int."group__parent__tree_refresh"(p_ids uuid[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach uuid[]) | f3b7621ba687 shape=55f1e12d tree=group__parent__tree
 function authz_int."group__parent__tree_shift"(p_ids uuid[], p_below uuid[]) | 4270d91ce889 shape=c8088955 tree=group__parent__tree
 function authz_int."group__parent__tree_verify"() | e4aabba3b5d8 shape=d98700d2 tree=group__parent__tree
 function authz_int."membership__col_audit_del"() | 4bca6074faec shape=41bc195b
@@ -461,6 +461,10 @@ function authz_int.sign() | 26fda3872285 shape=de0f1c18
 function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b078e77 shape=13054e65
 function authz_int.takes_members(p_relation text) | ac49633a7477 shape=f124a374
 function authz_int.token_note(p_token text, p_n numeric) | bf3b1de8e7ea shape=f63a2312
+function authz_int.tree_lock(p_type text, p_write text[], p_under text[], p_hung text[], p_held int[], p_wait boolean, OUT o_held int[], OUT o_short int) | d0259ec145fd shape=82775bfa
+function authz_int.tree_lock_all(p_type text) | 8669729aa69e shape=c79f2bf0
+function authz_int.tree_lock_one(p_type text, p_id text, p_under text[], p_hung text[]) | 8a393e5e7545 shape=b85d6405
+function authz_int.tree_locks_gone() | 996db4e93f8b shape=f6bf2f92
 function authz_int.truncate_once(p_relid oid, p_key text, p_before boolean) | b8b9cd8950d0 shape=2dde8aeb
 function authz_int.url_decode(p_text text) | 161c6fdae846 shape=16ef925b
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
@@ -504,11 +508,12 @@ step mask_privileges | ef21e3cee165
 step share_indexes | 44bd1b62a0b9
 step sweep | a91797a846f7
 step tables | 8b08788da84a
+step tree_locks | 94ef42d01857
 table authz_gen.policy_lines | 89a734b3f052 shape=dcfedc96
 table authz_int."folder__parent__tree" | 533ed647de51 shape=533ed647 tree=folder__parent__tree
 table authz_int."group__parent__tree" | f4724b0f333d shape=f4724b0f tree=group__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
-table authz_int.locks | 447d595fea98 shape=1779df2c
+table authz_int.locks | f7a8d08885ed shape=7547114a
 table authz_int.masked_columns | 2067eb678926 shape=2067eb67
 table authz_int.perms | 9a3968f9786d shape=1d7ef71f
 table authz_int.role_grantable | aa914205cf6b shape=aa914205
@@ -517,11 +522,12 @@ table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 5eb4ea7913ff shape=c57707aa
-table authz_int.trees | 3e9d4da7bed8 shape=02db6ec7
+table authz_int.tree_locks_1024_4 | c01c7cffc629 shape=c01c7cff
+table authz_int.trees | 6ff3796eace2 shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 393e14ce70e0 shape=b6d5b497
-tree folder__parent__tree | 78bf893c546ff3d001c992ab206f129e
-tree group__parent__tree | 5ad2ecbb39a72d88c676b1d68889a3d7
+tree folder__parent__tree | c7d49c87ee4f5e1e530d59c54eb6136e
+tree group__parent__tree | 885f66dc43346a714e1a300a59fb5699
 trigger "authz_file_col_audit_del" ON "fm"."files" | ad5164289d20
 trigger "authz_file_col_audit_ins" ON "fm"."files" | 6e62112b0b6f
 trigger "authz_file_col_audit_row" ON "fm"."files" | da773a9b6ca1
