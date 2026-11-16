@@ -166,6 +166,23 @@ PY
     [ -n "$secret" ] && [ "$got" = 1 ] && ok "the settings identity.md sets: a token signed with that secret, from that issuer, signs in" ||
       bad "a token for the settings identity.md sets" "$got"
   fi
+  # the settings identity.md gives the SCIM endpoint: a key of the user they name is the provider's, to the app role
+  if grep -q "authz.set_scim(" "$T/blocks/$id"; then
+    who=$(sed -n 's/.*"principal": "user:\([0-9]*\)".*/\1/p' "$T/blocks/$id")
+    key=$(psql -X -q -At -d "$DB" -c "BEGIN" -c "SELECT authz.act_as('user', '$who')" -c "SELECT authz.create_api_key('the identity provider')" -c "COMMIT" 2>&1 | tail -n 1)
+    asked() { psql -X -q -At -d "$DB" -c "BEGIN" -c "SET LOCAL ROLE app_user" -c "$1" -c "COMMIT" 2>&1 | tail -n 1; }
+    frank="SELECT count(*) FROM app.team_members WHERE team_id = 10 AND user_id = 6"
+    got="$(psql -X -q -At -d "$DB" -c "$frank")"
+    got="$got, $(asked "SELECT status, body->'totalResults', body#>>'{Resources,0,id}' FROM authz.scim('GET', 'Groups', 'filter=displayName eq \"Engineering\"', NULL, '$key')")"
+    got="$got, $(asked "SELECT status FROM authz.scim('PATCH', 'Groups/10', '', '{\"schemas\": [\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"], \"Operations\": [{\"op\": \"add\", \"path\": \"members\", \"value\": [{\"value\": \"6\"}]}]}', '$key')")"
+    got="$got, $(psql -X -q -At -d "$DB" -c "$frank")"
+    got="$got, $(asked "SELECT status FROM authz.scim('GET', 'Groups/10', '', NULL, 'ak_00000000000000000000000000000000')")"
+    [ -n "$who" ] && [ "$got" = "0, 200|1|10, 204, 1, 401" ] &&
+      ok "the settings identity.md gives the endpoint: the provider's key finds a team by its name, and adds a member to it" ||
+      bad "the settings identity.md gives the endpoint" "$got"
+    # the docs app as the blocks after this one find it elsewhere: the member out again, the endpoint off
+    quiet -d "$DB" -c "DELETE FROM app.team_members WHERE team_id = 10 AND user_id = 6" -c "SELECT authz.set_scim('{}')" >/dev/null
+  fi
 done < <(blocks sql)
 
 echo "-- output the pages show"

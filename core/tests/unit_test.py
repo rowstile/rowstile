@@ -14911,9 +14911,19 @@ class DocPages(unittest.TestCase):
             pages += [
                 (*os.path.relpath(folder, self.REPO).split(os.sep), f) for f in sorted(files) if f.endswith(".md")
             ]
+        # the FastAPI app calls the Python SDK's own object authz (`authz = Rowstile(app, engine, ...)`), and a stack
+        # page shows it so: a method of that class is no function of the database's
+        sdk = search(
+            r"^class Rowstile:\n(.*?)^class ", self.page("sdk", "python", "rowstile", "fastapi.py"), re.S | re.M
+        )
+        methods = set(re.findall(r"^    (?:async )?def ([a-z]\w*)\(self", sdk.group(1), re.M))
+        self.assertIn("mount_scim", methods)
+        self.assertEqual(methods & set(made), set(), "a method of the SDK's with the name of a function: which is it?")
         wrong: list[str] = []
         for page in pages:
             for name, args in calls(self.page(*page), "authz."):
+                if name in methods:
+                    continue
                 if name not in made:
                     wrong.append(f"{'/'.join(page)}: authz.{name}() is not a function")
                 elif (

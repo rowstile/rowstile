@@ -555,3 +555,111 @@ expect.extend(matchers);
 write don't meet each other. The copy needs nobody connected to the original; where the service keeps one
 (Neon does, for minutes after a connection), it says so and what to use instead ([Managed
 Postgres](../managed-postgres.md)).
+
+## Users and groups from an identity provider (SCIM)
+
+An identity provider (Okta, Microsoft Entra ID) can write its directory's users and groups to the app. It sends
+SCIM requests, and the database answers them
+([Identity](../reference/identity.md#users-and-groups-from-an-identity-provider-scim) has all of it). The app's
+part is a catch-all route:
+
+```ts
+// app/scim/v2/[...scim]/route.ts
+import { scimRoutes } from "@rowstile/next";
+import { db } from "@/db";
+
+export const { GET, POST, PUT, PATCH, DELETE } = scimRoutes({ calls: db.$authz });
+```
+
+The handlers pass each request on and answer what the database says. The bearer token alone says who asks:
+`user()` isn't asked about these requests, and their transaction signs nobody in, whatever session a request also
+carries. So keep the route out of what a `proxy.ts` of yours asks a session for: a provider has none. An error
+(settings that no longer hold, your function failing) is answered 500 in SCIM's words and logged with
+`console.error`. The address of what a request made (`Location`) is the route's own, on the host the provider
+asked: `x-forwarded-host` and `x-forwarded-proto`, which Next.js sets from the request when no proxy did. The
+handlers read a request's whole body before the database looks at the key, as any route that reads JSON does: how
+large a body may be is the server in front's to cap.
+
+Users are rows of your table, with columns rowstile doesn't know, so a function of yours makes and changes them.
+It is a migration, written by hand: the database calls it with the owner's rights, so it must be the owner's
+own. Here the users' table gets three columns for what a provider says: an email, whether the user is active, and
+the user as the provider wrote it, which the endpoint answers when the provider reads the user back. The
+function never gets a password. A request may say less of a user than the app has (a PUT without an email, a
+PATCH of a user the provider never wrote), so it keeps what the request says nothing of:
+
+```sql
+-- prisma/migrations/20261116090000_scim_user/migration.sql
+ALTER TABLE "app"."users" ADD COLUMN "email" TEXT,
+  ADD COLUMN "active" BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN "scim" JSONB;
+
+-- the keys of the users it makes
+CREATE SEQUENCE "app"."provisioned_user_ids" AS integer START 1000;
+
+-- p_id NULL: a user to make; p_resource NULL: one to delete; else one to change. It answers the user's key.
+-- rowstile calls it as the tables' owner, whose own it is: the app role has no right to write app.users
+CREATE FUNCTION "app"."scim_user"(p_id text, p_resource jsonb) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE v_id text;
+BEGIN
+  IF p_resource IS NULL THEN
+    DELETE FROM "app"."users" WHERE id = p_id::integer;
+    RETURN p_id;
+  ELSIF p_id IS NULL THEN
+    INSERT INTO "app"."users" (id, name, email, active, scim)
+    VALUES (nextval('app.provisioned_user_ids'), p_resource->>'userName', p_resource#>>'{emails,0,value}',
+            coalesce((p_resource->>'active')::boolean, true), p_resource)
+    RETURNING id::text INTO v_id;
+  ELSE
+    -- a user changed: what the provider says nothing of stays as the app had it
+    UPDATE "app"."users" SET name = p_resource->>'userName', scim = p_resource,
+      email = coalesce(p_resource#>>'{emails,0,value}', email),
+      active = coalesce((p_resource->>'active')::boolean, active)
+    WHERE id = p_id::integer RETURNING id::text INTO v_id;
+  END IF;
+  RETURN v_id;
+END $f$;
+```
+
+The model in `schema.prisma` gets the same three fields (`email String?`, `active Boolean @default(true)`,
+`scim Json?`), so Prisma's own diff shows no change. This app's users have no default for their key, hence the
+sequence.
+
+Then the owner says what the endpoint reads, once, in psql or in a migration after the policy's own
+(`authz.set_scim` comes with the policy). The call replaces the stored settings, and each is checked as it is
+set:
+
+```sql
+SELECT authz.set_scim('{
+  "principal": "user:9",
+  "group": "project.member", "group_name": "name",
+  "user_name": "name", "user_active": "active", "user_resource": "scim",
+  "user_function": "app.scim_user"
+}');
+```
+
+- `principal` is whose API key signs the provider in. Here it is user 9, a user the app holds for the provider
+  and nobody signs in as; a row of a type that signs in (this app's `service`) does as well. The row is there
+  before the settings name it.
+- `group` is what the provider's groups are in the policy: here a project's members, so a group's PATCH writes
+  `app.members` as `authz.sync_members` would, with its line in the audit trail, and the policy follows at once.
+  With no `group_function` the provider finds the projects the app has by their name, and can't make one.
+- The `user_` settings name the users' columns and the function above.
+
+The provider's bearer token is an API key of that principal, made once:
+
+```sql
+BEGIN;
+SELECT authz.act_as('user', '9');
+SELECT authz.create_api_key('the identity provider');   -- shown this once: the provider's bearer token
+COMMIT;
+```
+
+Give the provider the route's address (`https://app.example/scim/v2`) and that key. A user the provider
+deactivates stays, with `active` false: what such a user may do is the policy's to say, and
+`type user = app.users where {active}` makes one nobody. `rowstile lint` says when a setting no longer holds (a
+column renamed, the function gone): a request that meets it is an error, the 500 above.
+
+On another framework, `scim(method, path, query, body, token)` of the driver's calls (`db.$authz`,
+`authz(pool)`) asks the database, and the route is yours: pass on the method, the path below the route, the
+query string and the body as they were sent and the bearer token, and answer the `status`, the `body` and the
+`location` that come back.

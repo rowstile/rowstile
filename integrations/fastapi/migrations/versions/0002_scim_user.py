@@ -22,9 +22,16 @@ def upgrade() -> None:
         DELETE FROM app.users WHERE id = p_id::bigint;
         RETURN p_id;
       ELSIF p_id IS NULL THEN
-        INSERT INTO app.users (name) VALUES (p_resource->>'userName') RETURNING id::text INTO v_id;
+        INSERT INTO app.users (name, email, active, scim)
+        VALUES (p_resource->>'userName', p_resource#>>'{emails,0,value}',
+                coalesce((p_resource->>'active')::boolean, true), p_resource)
+        RETURNING id::text INTO v_id;
       ELSE
-        UPDATE app.users SET name = p_resource->>'userName' WHERE id = p_id::bigint RETURNING id::text INTO v_id;
+        -- a user changed: what the provider says nothing of stays as the app had it
+        UPDATE app.users SET name = p_resource->>'userName', scim = p_resource,
+          email = coalesce(p_resource#>>'{emails,0,value}', email),
+          active = coalesce((p_resource->>'active')::boolean, active)
+        WHERE id = p_id::bigint RETURNING id::text INTO v_id;
       END IF;
       RETURN v_id;
     END $f$""")

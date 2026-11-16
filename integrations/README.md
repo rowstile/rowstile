@@ -50,7 +50,9 @@ database answers is `core/tests/scim.sh`'s to check, and these check what a rout
 request without the provider's API key is 401, whatever else it says of who asks. The requests a provider sends
 before it starts are answered, the query string as it was sent. One PATCH that adds a member of a group and
 removes another changes the members' rows, and the notes each of the two reads follow. A user made is answered 201
-with its address. A body that is no JSON is 400 in SCIM's words, and an error 500, with the database's words in the
+with its address. The app's own function for users (`app.scim_user`, which the stack pages show with the settings
+that name it) keeps what a request says nothing of, and a user the provider deactivates stays, not active. A body
+that is no JSON is 400 in SCIM's words, and an error 500, with the database's words in the
 app's log. The app's own `user(request)` isn't asked about a provider's request, in an app mounted in another
 too, and a sync engine answers as the async one does.
 
