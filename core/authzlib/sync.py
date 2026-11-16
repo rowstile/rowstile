@@ -558,15 +558,30 @@ BEGIN
 END $mi$;"""
 
     def mirror_functions_sql(self, s: Sync, t: Type) -> str:
-        """What keeps a mirror: statement triggers on the table (as the rows are written: an update is its old rows'
-        delete and its new rows' insert, which also follows a row an update puts in another partition) and on its
-        readers table (as the index writes them)."""
+        """What keeps a mirror: statement triggers on the table (as the rows are written: the mirror's rows of the
+        keys a statement's rows name, old and new, are made again from the table, which also follows a row an update
+        puts in another partition) and on its readers table (as the index writes them)."""
         mt = self.mirror_table(t)
         tbl = qt(s.table)
         fn = f"authz_int.{q(t.name + '__mirror')}"
         fn_readers = f"authz_int.{q(t.name + '__mirror_readers')}"
-        on_old = " AND ".join(f"m.{q(c)} = o.{q(c)}" for c, _ in t.key)
         on_x = " AND ".join(f"x.{q(c)} = m.{q(c)}" for c, _ in t.key)
+
+        def again(*rows: tuple[str, str]) -> str:
+            """The mirror's rows of the keys these rows of the statement name (each `(rows, alias)`), made again: gone
+            from the mirror, then the table's rows of those keys as they are now, each once, by the key's index."""
+            keys = " UNION ".join(f"SELECT {', '.join(f'{a}.{q(c)}' for c, _ in t.key)} FROM {r} {a}" for r, a in rows)
+            if len(rows) == 1:
+                keys = "SELECT DISTINCT" + keys.removeprefix("SELECT")
+            on_k = " AND ".join(f"m.{q(c)} = k.{q(c)}" for c, _ in t.key)
+            x_is_k = " AND ".join(f"x.{q(c)} = k.{q(c)}" for c, _ in t.key)
+            # (OFFSET 0 keeps the planner from reading the whole table for a statement of a few rows)
+            source = f"({keys}) k CROSS JOIN LATERAL (SELECT x.* FROM {tbl} x WHERE {x_is_k} OFFSET 0)"
+            return (
+                f"DELETE FROM {mt} m USING ({keys}) k WHERE {on_k};\n"
+                f"    INSERT INTO {mt} {self.mirror_rows_sql(t, source, 'f')};"
+            )
+
         cols = ", ".join(f"m.{q(c)}" for c, _ in t.key)
         xcols = ", ".join(f"x.{q(c)}" for c, _ in t.key)
         row = f"({cols})" if len(t.key) > 1 else cols
@@ -591,11 +606,16 @@ BEGIN
     PERFORM authz_int.sync_dirty({lit(t.name)}, ARRAY['*']);
     RETURN NULL;
   END IF;
-  IF TG_OP IN ('UPDATE', 'DELETE') THEN
-    DELETE FROM {mt} m USING old_rows o WHERE {on_old};
-  END IF;
-  IF TG_OP IN ('INSERT', 'UPDATE') THEN
-    INSERT INTO {mt} {self.mirror_rows_sql(t, "new_rows", "n")};
+  -- The rows the statement wrote are read again from the table, by their keys. The trigger gets each write's rows,
+  -- and a row may be written more than once before it runs: by the statement itself (a foreign key's cascade to the
+  -- row it started from), or by a trigger of the app's, which may also delete the row or make it again. So the
+  -- mirror's rows of those keys go, and the table's rows of those keys, as they are now, take their place
+  IF TG_OP = 'INSERT' THEN
+    {again(("new_rows", "n"))}
+  ELSIF TG_OP = 'UPDATE' THEN
+    {again(("old_rows", "o"), ("new_rows", "n"))}
+  ELSE
+    {again(("old_rows", "o"))}
   END IF;
   RETURN NULL;
 END $f$;
