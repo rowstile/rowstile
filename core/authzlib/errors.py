@@ -1096,7 +1096,9 @@ CODES = {
         '"value"` joined by `and` (`invalidFilter`), a PATCH without `Operations` or with an `op` that is none of '
         "add, remove and replace (`invalidSyntax`), a remove without a path (`noTarget`), a path that is nothing a "
         "PATCH changes here or that isn't read (`invalidPath`), a member that is no user, a group without a name, a "
-        "user without a `userName` (`invalidValue`). 409 (`uniqueness`): a `userName` another user has. 501: the "
+        "user without a `userName`, a `startIndex` or a `count` that is no whole number (`invalidValue`). 409 "
+        "(`uniqueness`): a `userName` another user has. 501: Bulk, `/Me` and a search by POST, which the endpoint "
+        "doesn't serve (`ServiceProviderConfig` says what it does); and where the "
         "settings name no group, no column for a user's `userName`, or no function of the app's to make, change "
         "or delete one (`group_function`, `user_function`). A refusal changes nothing: a request is done whole or "
         "not at all. What the app's own function refuses is answered 400 with its words, and a name or a key "
@@ -1110,7 +1112,8 @@ CODES = {
         "isn't the policy's owner (it is called with the owner's rights, so it is called only while the owner owns "
         "it), or a function that answered something else than the key of the row it made or changed. The message "
         "says which. Nothing was written. It is the app's mistake, not the identity provider's: the SDKs leave it "
-        "an error, a 500. Put right what the settings name, or set them again. SQLSTATE 55000.",
+        "an error, a 500. Put right what the settings name, or set them again; `authz.lint()` lists the settings "
+        "that no longer hold. SQLSTATE 55000.",
         when="runtime",
     ),
     "AZ801": Code(

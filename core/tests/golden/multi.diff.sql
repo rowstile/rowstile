@@ -7416,11 +7416,13 @@ BEGIN
 END $f$;
 
 -- The groups or the users (p_kind) the settings open, as SCIM writes them, in the order of their keys, a page of
--- them at most: those a filter's terms name ([[attribute, value], ...]; none: all), with how many there are in all.
+-- them at most, from the p_start-th on and p_count at most (NULL: the page): those a filter's terms name
+-- ([[attribute, value], ...]; none: all), with how many there are in all, whatever the page.
 -- A value is compared as the column's type compares, so an index on the column finds it; one that is no value of
 -- that type finds nothing. A user is what the provider wrote (the column user_resource names, without a password),
 -- and over it what the columns the settings name say now: its userName, its externalId, whether it is active
-CREATE FUNCTION authz_int.scim_rows(p_settings jsonb, p_kind text, p_terms jsonb, p_members boolean, OUT total bigint, OUT resources jsonb)
+CREATE FUNCTION authz_int.scim_rows(p_settings jsonb, p_kind text, p_terms jsonb, p_members boolean, p_start int, p_count int,
+  OUT total bigint, OUT resources jsonb)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_type text := CASE p_kind WHEN 'user' THEN 'user' ELSE split_part(p_settings->>'group', '.', 1) END; t authz_int.types;
         v_term jsonb; v_id text; v_values text[] := '{}'; v_where text := ''; v_order text;
@@ -7460,9 +7462,10 @@ BEGIN
   v_order := (SELECT string_agg(format('x.%I', c.name), ', ' ORDER BY c.i) FROM unnest(string_to_array(t.pk, ', ')) WITH ORDINALITY c(name, i));
   -- (the row's own columns are named in the innermost query alone, where nothing else has a name)
   EXECUTE format(
-    'SELECT coalesce(max(g.n), 0), coalesce(jsonb_agg(%s ORDER BY g.i), ''[]''::jsonb) '
+    'SELECT (SELECT count(*) FROM %s x WHERE true%s), coalesce(jsonb_agg(%s ORDER BY g.i), ''[]''::jsonb) '
     || 'FROM (SELECT %s AS id, x.%I::text AS name, %s AS external_id, %s AS active, %s AS resource, '
-    || 'count(*) OVER () AS n, row_number() OVER (ORDER BY %s) AS i FROM %s x WHERE true%s ORDER BY %s LIMIT %s) g',
+    || 'row_number() OVER (ORDER BY %s) AS i FROM %s x WHERE true%s ORDER BY %s LIMIT %s OFFSET %s) g',
+    t.tbl, v_where,
     CASE p_kind WHEN 'user' THEN
       format('(g.resource - ''password'' - ''id'' - ''meta'' - ''userName''%s%s) || jsonb_strip_nulls(jsonb_build_object('
              || '''schemas'', coalesce(g.resource->''schemas'', jsonb_build_array(''urn:ietf:params:scim:schemas:core:2.0:User'')), '
@@ -7480,8 +7483,34 @@ BEGIN
     t.id_of, v_name, CASE WHEN v_external IS NULL THEN 'NULL::text' ELSE format('x.%I::text', v_external) END,
     CASE WHEN v_active IS NULL THEN 'NULL::boolean' ELSE format('x.%I', v_active) END,
     CASE WHEN v_resource IS NULL THEN '''{}''::jsonb' ELSE format('coalesce(x.%I, ''{}''::jsonb)', v_resource) END,
-    v_order, t.tbl, v_where, v_order, coalesce((p_settings->>'page')::int, 100))
+    v_order, t.tbl, v_where, v_order, least(coalesce(p_count, 1000), coalesce((p_settings->>'page')::int, 100)), p_start - 1)
   INTO total, resources USING v_id, v_values, p_settings->>'group', p_members;
+END $f$;
+
+-- A list of users or of groups (p_kind) for a GET: those its filter finds, the page its startIndex and count ask
+-- (RFC 7644, 3.4.2.4: a startIndex under 1 is 1, a count under 0 is 0, and a list answers no more than the
+-- setting page whatever the count), with how many there are in all
+CREATE FUNCTION authz_int.scim_list(p_settings jsonb, p_kind text, p_query jsonb, p_members boolean) RETURNS authz_int.scim_answer
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_terms jsonb := '[]'; v_name text := CASE p_kind WHEN 'user' THEN 'userName' ELSE 'displayName' END;
+        v_start int := 1; v_count int; g record;
+BEGIN
+  IF p_query ? 'filter' THEN
+    v_terms := authz_int.scim_filter(p_query->>'filter');
+  END IF;
+  IF v_terms IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(v_terms) x(term)
+                                WHERE x.term->>0 NOT IN (lower(v_name), 'externalid', 'id')) THEN
+    RETURN authz_int.scim_no(400, 'invalidFilter',
+                             format('a filter here is attribute eq "value", joined by and, on %s, externalId and id', v_name));
+  ELSIF coalesce(p_query->>'startindex', '1') !~ '^-?[0-9]{1,9}$' OR coalesce(p_query->>'count', '1') !~ '^-?[0-9]{1,9}$' THEN
+    RETURN authz_int.scim_no(400, 'invalidValue', 'startIndex and count are whole numbers');
+  END IF;
+  v_start := greatest(coalesce((p_query->>'startindex')::int, 1), 1);
+  v_count := CASE WHEN p_query ? 'count' THEN greatest((p_query->>'count')::int, 0) END;   -- (greatest skips a NULL)
+  SELECT * INTO g FROM authz_int.scim_rows(p_settings, p_kind, v_terms, p_members, v_start, v_count);
+  RETURN ROW(200, jsonb_build_object('schemas', jsonb_build_array('urn:ietf:params:scim:api:messages:2.0:ListResponse'),
+                                     'totalResults', g.total, 'itemsPerPage', jsonb_array_length(g.resources),
+                                     'startIndex', v_start, 'Resources', g.resources), NULL)::authz_int.scim_answer;
 END $f$;
 
 -- A group's row held until the transaction ends: two requests that change one group's members go one after the
@@ -7543,18 +7572,7 @@ BEGIN
   IF NOT authz_int.takes_members(p_settings->>'group') THEN   -- (none named, or one the policy no longer has)
     RETURN authz_int.scim_no(501, NULL, 'the SCIM settings name no group to serve (authz.set_scim: group, a relation authz.sync_members takes)');
   ELSIF p_method = 'GET' AND p_id IS NULL THEN
-    IF p_query ? 'filter' THEN
-      v_terms := authz_int.scim_filter(p_query->>'filter');
-    END IF;
-    IF v_terms IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(v_terms) x(term)
-                                  WHERE x.term->>0 NOT IN ('displayname', 'externalid', 'id')) THEN
-      RETURN authz_int.scim_no(400, 'invalidFilter',
-                               'a filter here is attribute eq "value", joined by and, on displayName, externalId and id');
-    END IF;
-    SELECT * INTO g FROM authz_int.scim_rows(p_settings, 'group', v_terms, v_members_too);
-    RETURN ROW(200, jsonb_build_object('schemas', jsonb_build_array('urn:ietf:params:scim:api:messages:2.0:ListResponse'),
-                                       'totalResults', g.total, 'itemsPerPage', jsonb_array_length(g.resources),
-                                       'startIndex', 1, 'Resources', g.resources), NULL)::authz_int.scim_answer;
+    RETURN authz_int.scim_list(p_settings, 'group', p_query, v_members_too);
   ELSIF (p_id IS NULL) <> (p_method = 'POST') OR p_method NOT IN ('GET', 'POST', 'PUT', 'PATCH', 'DELETE') THEN
     RETURN authz_int.scim_no(405, NULL, format('%s is no request Groups%s takes', p_method, coalesce('/' || p_id, '')));
   END IF;
@@ -7563,7 +7581,7 @@ BEGIN
     IF p_method <> 'GET' THEN
       PERFORM authz_int.scim_hold(v_type, v_id);
     END IF;
-    SELECT x.resources->0 INTO v_now FROM authz_int.scim_rows(p_settings, 'group', jsonb_build_array(jsonb_build_array('id', v_id)), true) x;
+    SELECT x.resources->0 INTO v_now FROM authz_int.scim_rows(p_settings, 'group', jsonb_build_array(jsonb_build_array('id', v_id)), true, 1, 1) x;
     IF v_now IS NULL THEN
       RETURN authz_int.scim_no(404, NULL, 'no group ' || p_id);
     ELSIF p_method = 'GET' THEN
@@ -7618,7 +7636,7 @@ BEGIN
   IF p_method = 'PATCH' THEN
     RETURN ROW(204, NULL, NULL)::authz_int.scim_answer;
   END IF;
-  SELECT x.resources->0 INTO v_now FROM authz_int.scim_rows(p_settings, 'group', jsonb_build_array(jsonb_build_array('id', v_id)), true) x;
+  SELECT x.resources->0 INTO v_now FROM authz_int.scim_rows(p_settings, 'group', jsonb_build_array(jsonb_build_array('id', v_id)), true, 1, 1) x;
   RETURN ROW(CASE p_method WHEN 'POST' THEN 201 ELSE 200 END, v_now, CASE p_method WHEN 'POST' THEN 'Groups/' || v_id END)::authz_int.scim_answer;
 END $f$;
 
@@ -7711,18 +7729,7 @@ BEGIN
   IF p_settings->>'user_name' IS NULL THEN
     RETURN authz_int.scim_no(501, NULL, 'the SCIM settings name no column for a user''s userName (authz.set_scim: user_name)');
   ELSIF p_method = 'GET' AND p_id IS NULL THEN
-    IF p_query ? 'filter' THEN
-      v_terms := authz_int.scim_filter(p_query->>'filter');
-    END IF;
-    IF v_terms IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(v_terms) x(term)
-                                  WHERE x.term->>0 NOT IN ('username', 'externalid', 'id')) THEN
-      RETURN authz_int.scim_no(400, 'invalidFilter',
-                               'a filter here is attribute eq "value", joined by and, on userName, externalId and id');
-    END IF;
-    SELECT * INTO g FROM authz_int.scim_rows(p_settings, 'user', v_terms, false);
-    RETURN ROW(200, jsonb_build_object('schemas', jsonb_build_array('urn:ietf:params:scim:api:messages:2.0:ListResponse'),
-                                       'totalResults', g.total, 'itemsPerPage', jsonb_array_length(g.resources),
-                                       'startIndex', 1, 'Resources', g.resources), NULL)::authz_int.scim_answer;
+    RETURN authz_int.scim_list(p_settings, 'user', p_query, false);
   ELSIF (p_id IS NULL) <> (p_method = 'POST') OR p_method NOT IN ('GET', 'POST', 'PUT', 'PATCH', 'DELETE') THEN
     RETURN authz_int.scim_no(405, NULL, format('%s is no request Users%s takes', p_method, coalesce('/' || p_id, '')));
   END IF;
@@ -7731,7 +7738,7 @@ BEGIN
     IF p_method <> 'GET' THEN
       PERFORM authz_int.scim_hold('user', v_id);
     END IF;
-    SELECT x.resources->0 INTO v_now FROM authz_int.scim_rows(p_settings, 'user', jsonb_build_array(jsonb_build_array('id', v_id)), false) x;
+    SELECT x.resources->0 INTO v_now FROM authz_int.scim_rows(p_settings, 'user', jsonb_build_array(jsonb_build_array('id', v_id)), false, 1, 1) x;
     IF v_now IS NULL THEN
       RETURN authz_int.scim_no(404, NULL, 'no user ' || p_id);
     ELSIF p_method = 'GET' THEN
@@ -7759,7 +7766,7 @@ BEGIN
     ELSIF jsonb_typeof(v_new->'active') NOT IN ('boolean', 'null') THEN
       RETURN authz_int.scim_no(400, 'invalidValue', 'active: true or false');
     END IF;
-    SELECT * INTO g FROM authz_int.scim_rows(p_settings, 'user', jsonb_build_array(jsonb_build_array('username', v_new->>'userName')), false);
+    SELECT * INTO g FROM authz_int.scim_rows(p_settings, 'user', jsonb_build_array(jsonb_build_array('username', v_new->>'userName')), false, 1, 2);
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(g.resources) x(other) WHERE x.other->>'id' IS DISTINCT FROM v_id) THEN
       RETURN authz_int.scim_no(409, 'uniqueness', format('a user has the userName %s already', v_new->>'userName'));
     END IF;
@@ -7770,8 +7777,86 @@ BEGIN
   ELSIF p_method = 'DELETE' THEN
     RETURN ROW(204, NULL, NULL)::authz_int.scim_answer;
   END IF;
-  SELECT x.resources->0 INTO v_now FROM authz_int.scim_rows(p_settings, 'user', jsonb_build_array(jsonb_build_array('id', c.key)), false) x;
+  SELECT x.resources->0 INTO v_now FROM authz_int.scim_rows(p_settings, 'user', jsonb_build_array(jsonb_build_array('id', c.key)), false, 1, 1) x;
   RETURN ROW(CASE p_method WHEN 'POST' THEN 201 ELSE 200 END, v_now, CASE p_method WHEN 'POST' THEN 'Users/' || c.key END)::authz_int.scim_answer;
+END $f$;
+
+-- What the endpoint says of itself (RFC 7643, 5 to 7; RFC 7644, 4): what it serves, and the types and the
+-- schemas of what the settings open. A user's schema names what rowstile reads (userName, active), and what the
+-- column user_resource keeps as the provider wrote it where the settings name one
+CREATE FUNCTION authz_int.scim_discovery(p_settings jsonb, p_method text, p_parts text[]) RETURNS authz_int.scim_answer
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_served text[] := ARRAY(SELECT x.name FROM (VALUES ('User', p_settings ? 'user_name'),
+                                                             ('Group', authz_int.takes_members(p_settings->>'group'))) x(name, served)
+                                 WHERE x.served);
+        v_all jsonb; v_one jsonb;
+BEGIN
+  IF p_method <> 'GET' THEN
+    RETURN authz_int.scim_no(405, NULL, format('%s is no request %s takes', p_method, array_to_string(p_parts, '/')));
+  ELSIF p_parts[1] = 'ServiceProviderConfig' THEN
+    RETURN ROW(200, '{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"], "patch": {"supported": true}, "bulk": {"supported": false, "maxOperations": 0, "maxPayloadSize": 0}, "changePassword": {"supported": false}, "sort": {"supported": false}, "etag": {"supported": false}, "authenticationSchemes": [{"type": "oauthbearertoken", "name": "Bearer token", "description": "An API key of the principal the endpoint''s settings name, sent as a bearer token"}], "meta": {"resourceType": "ServiceProviderConfig"}}'::jsonb || jsonb_build_object('filter', jsonb_build_object(
+                 'supported', true, 'maxResults', coalesce((p_settings->>'page')::int, 100))), NULL)::authz_int.scim_answer;
+  END IF;
+  SELECT coalesce(jsonb_agg(CASE WHEN x.one->>'name' = 'User' AND x.one ? 'attributes' AND NOT p_settings ? 'user_resource'
+                                 THEN x.one || jsonb_build_object('attributes', jsonb_path_query_array(x.one->'attributes', '$[*] ? (@.name == "userName" || @.name == "active")'))
+                                 ELSE x.one END ORDER BY x.i), '[]')
+  INTO v_all
+  FROM jsonb_array_elements(CASE p_parts[1] WHEN 'ResourceTypes' THEN '[{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:ResourceType"], "id": "User", "name": "User", "endpoint": "/Users", "description": "A user", "schema": "urn:ietf:params:scim:schemas:core:2.0:User", "meta": {"resourceType": "ResourceType"}}, {"schemas": ["urn:ietf:params:scim:schemas:core:2.0:ResourceType"], "id": "Group", "name": "Group", "endpoint": "/Groups", "description": "A group of users", "schema": "urn:ietf:params:scim:schemas:core:2.0:Group", "meta": {"resourceType": "ResourceType"}}]'::jsonb ELSE '[{"schemas": ["urn:ietf:params:scim:schemas:core:2.0:Schema"], "id": "urn:ietf:params:scim:schemas:core:2.0:User", "name": "User", "description": "A user", "attributes": [{"name": "userName", "type": "string", "multiValued": false, "description": "The name the user signs in by: one user''s", "required": true, "mutability": "readWrite", "returned": "default", "caseExact": false, "uniqueness": "server"}, {"name": "active", "type": "boolean", "multiValued": false, "description": "Whether the user may sign in", "required": false, "mutability": "readWrite", "returned": "default"}, {"name": "displayName", "type": "string", "multiValued": false, "description": "The user''s name as shown", "required": false, "mutability": "readWrite", "returned": "default", "caseExact": false, "uniqueness": "none"}, {"name": "name", "type": "complex", "multiValued": false, "description": "The parts of the user''s name", "required": false, "mutability": "readWrite", "returned": "default", "subAttributes": [{"name": "formatted", "type": "string", "multiValued": false, "description": "The whole name", "required": false, "mutability": "readWrite", "returned": "default", "caseExact": false, "uniqueness": "none"}, {"name": "familyName", "type": "string", "multiValued": false, "description": "The family name", "required": false, "mutability": "readWrite", "returned": "default", "caseExact": false, "uniqueness": "none"}, {"name": "givenName", "type": "string", "multiValued": false, "description": "The given name", "required": false, "mutability": "readWrite", "returned": "default", "caseExact": false, "uniqueness": "none"}]}, {"name": "emails", "type": "complex", "multiValued": true, "description": "The user''s email addresses", "required": false, "mutability": "readWrite", "returned": "default", "subAttributes": [{"name": "value", "type": "string", "multiValued": false, "description": "The address", "required": false, "mutability": "readWrite", "returned": "default", "caseExact": false, "uniqueness": "none"}, {"name": "type", "type": "string", "multiValued": false, "description": "What the address is for: work, home", "required": false, "mutability": "readWrite", "returned": "default", "caseExact": false, "uniqueness": "none"}, {"name": "primary", "type": "boolean", "multiValued": false, "description": "Whether it is the one to use first", "required": false, "mutability": "readWrite", "returned": "default"}]}], "meta": {"resourceType": "Schema"}}, {"schemas": ["urn:ietf:params:scim:schemas:core:2.0:Schema"], "id": "urn:ietf:params:scim:schemas:core:2.0:Group", "name": "Group", "description": "A group of users", "attributes": [{"name": "displayName", "type": "string", "multiValued": false, "description": "The group''s name", "required": true, "mutability": "readWrite", "returned": "default", "caseExact": false, "uniqueness": "none"}, {"name": "members", "type": "complex", "multiValued": true, "description": "The users in the group", "required": false, "mutability": "readWrite", "returned": "default", "subAttributes": [{"name": "value", "type": "string", "multiValued": false, "description": "The id of a user", "required": false, "mutability": "immutable", "returned": "default", "caseExact": false, "uniqueness": "none"}]}], "meta": {"resourceType": "Schema"}}]'::jsonb END) WITH ORDINALITY x(one, i)
+  WHERE x.one->>'name' = ANY (v_served);
+  IF p_parts[2] IS NULL THEN
+    RETURN ROW(200, jsonb_build_object('schemas', jsonb_build_array('urn:ietf:params:scim:api:messages:2.0:ListResponse'),
+                                       'totalResults', jsonb_array_length(v_all), 'itemsPerPage', jsonb_array_length(v_all),
+                                       'startIndex', 1, 'Resources', v_all), NULL)::authz_int.scim_answer;
+  END IF;
+  v_one := (SELECT x.one FROM jsonb_array_elements(v_all) x(one) WHERE x.one->>'id' = p_parts[2]);
+  IF v_one IS NULL THEN
+    RETURN authz_int.scim_no(404, NULL, 'nothing is served at ' || array_to_string(p_parts, '/'));
+  END IF;
+  RETURN ROW(200, v_one, NULL)::authz_int.scim_answer;
+END $f$;
+
+-- The settings that no longer hold, each said as authz.lint() says it (none: all is well): what authz.set_scim
+-- checked, asked again of the database as it is now. Nothing is held: lint runs in a transaction that reads
+CREATE FUNCTION authz_int.scim_stale() RETURNS SETOF text
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_set jsonb; t authz_int.types; v_name text; v_type text; v_id text; v_there boolean; v_column_type text;
+BEGIN
+  SELECT coalesce(jsonb_object_agg(substr(x.key, 6), x.value), '{}') INTO v_set FROM authz.settings x WHERE starts_with(x.key, 'scim_');
+  IF v_set = '{}' THEN
+    RETURN;
+  END IF;
+  v_type := split_part(v_set->>'principal', ':', 1);
+  v_id := substr(v_set->>'principal', length(v_type) + 2);
+  SELECT * INTO t FROM authz_int.types x WHERE x.name = v_type AND (x.principal OR x.name = 'user');
+  IF t.name IS NOT NULL AND pg_input_is_valid(v_id, (SELECT x.keytype FROM authz_int.types x WHERE x.name = v_type)) THEN
+    EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s)', t.tbl, t.find) INTO v_there USING v_id;
+  END IF;
+  IF v_there IS NOT TRUE THEN
+    RETURN NEXT format('the principal %s is no row of a type that signs in: no key signs the provider in', v_set->>'principal');
+  END IF;
+  IF v_set ? 'group' AND NOT authz_int.takes_members(v_set->>'group') THEN
+    RETURN NEXT format('the group %s is no relation with one table of members in the policy now: groups are not served', v_set->>'group');
+  END IF;
+  FOREACH v_name IN ARRAY ARRAY['group_name', 'group_external_id', 'user_name', 'user_external_id', 'user_active', 'user_resource'] LOOP
+    CONTINUE WHEN NOT v_set ? v_name OR (v_name LIKE 'group%' AND NOT authz_int.takes_members(v_set->>'group'));
+    SELECT * INTO t FROM authz_int.types x
+    WHERE x.name = CASE WHEN v_name LIKE 'group%' THEN split_part(v_set->>'group', '.', 1) ELSE 'user' END;
+    SELECT format_type(a.atttypid, a.atttypmod) INTO v_column_type FROM pg_attribute a
+    WHERE a.attrelid = to_regclass(t.tbl) AND a.attname = v_set->>v_name AND a.attnum > 0 AND NOT a.attisdropped;
+    IF v_column_type IS DISTINCT FROM (CASE v_name WHEN 'user_active' THEN 'boolean' WHEN 'user_resource' THEN 'jsonb' ELSE v_column_type END)
+       OR v_column_type IS NULL THEN
+      RETURN NEXT format('%s names the column %s of %s, which %s: requests that read it fail', v_name, v_set->>v_name, to_regclass(t.tbl),
+                         coalesce('is ' || v_column_type || ' now', 'is not there now'));
+    END IF;
+  END LOOP;
+  FOREACH v_name IN ARRAY ARRAY['group_function', 'user_function'] LOOP
+    IF v_set ? v_name AND NOT coalesce((SELECT r.rolsuper OR pg_has_role(p.proowner, n.nspowner, 'MEMBER')
+                                        FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner, pg_namespace n
+                                        WHERE p.oid = to_regprocedure((v_set->>v_name) || '(text, jsonb)') AND n.nspname = 'authz_int'), false) THEN
+      RETURN NEXT format('%s names the function %s, which is gone or is no longer the policy''s owner''s: requests that call it fail',
+                         v_name, v_set->>v_name);
+    END IF;
+  END LOOP;
 END $f$;
 
 -- An identity provider's SCIM request answered (RFC 7644): what a route got, in; what it answers, out.
@@ -7811,10 +7896,15 @@ BEGIN
     v_query := authz_int.scim_query(p_query);
     IF v_query IS NULL THEN
       v_answer := authz_int.scim_no(400, 'invalidSyntax', 'the query string''s escapes are no text');
+    ELSIF v_parts[1] IN ('Bulk', 'Me', '.search') OR v_parts[2] = '.search' THEN
+      v_answer := authz_int.scim_no(501, NULL, format('%s is not served: no Bulk, no /Me, no search by POST (ServiceProviderConfig says what is)', v_path));
     ELSIF v_parts[1] = 'Groups' AND cardinality(v_parts) <= 2 THEN
       v_answer := authz_int.scim_group(v_settings, v_method, v_parts[2], v_query, p_body);
     ELSIF v_parts[1] = 'Users' AND cardinality(v_parts) <= 2 THEN
       v_answer := authz_int.scim_user(v_settings, v_method, v_parts[2], v_query, p_body);
+    ELSIF (v_parts[1] = 'ServiceProviderConfig' AND cardinality(v_parts) = 1)
+          OR (v_parts[1] IN ('ResourceTypes', 'Schemas') AND cardinality(v_parts) <= 2) THEN
+      v_answer := authz_int.scim_discovery(v_settings, v_method, v_parts);
     ELSE
       v_answer := authz_int.scim_no(404, NULL, 'nothing is served at ' || v_path);
     END IF;
@@ -8421,6 +8511,13 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
         WHEN 'R' THEN 'guards it with session_replication_role = replica only: an ordinary session may change the trail'
         WHEN 'D' THEN 'that guards it is off: the trail may be changed'
         ELSE 'that guards it is missing: the trail may be changed' END);
+    RETURN NEXT;
+  END LOOP;
+
+  -- the SCIM endpoint's settings (authz.set_scim) that are no longer so
+  FOR r IN SELECT x.said FROM authz_int.scim_stale() x(said) LOOP
+    severity := 'warning'; object := 'authz.scim';
+    problem := r.said || '. Set the endpoint''s settings again (authz.set_scim), or put right what they name';
     RETURN NEXT;
   END LOOP;
   -- governed tables

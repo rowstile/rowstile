@@ -387,7 +387,7 @@ BEGIN
         ELSE 'that guards it is missing: the trail may be changed' END);
     RETURN NEXT;
   END LOOP;
-{self.sync_lint_sql()}  -- governed tables
+{self.sync_lint_sql()}{self.scim_lint_sql()}  -- governed tables
   FOR r IN SELECT c.oid::regclass AS tbl, c.relrowsecurity, c.relowner,
                   c.oid = ANY (SELECT to_regclass(x) FROM unnest({arr([qt(t) for t in governed])}) x) AS governed
            FROM pg_class c WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest({arr([qt(t) for t in typed_tables])}) x) LOOP
