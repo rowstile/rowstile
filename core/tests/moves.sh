@@ -153,4 +153,22 @@ PSQL -c "UPDATE app.folders SET parent_id = $F, name = 'gone' WHERE id = 9001"
 check "... moved, then deleted by the trigger" "SELECT NOT EXISTS (SELECT 1 FROM app.folders WHERE id = 9001) AND authz.verify()"
 PSQL -c "DROP TRIGGER move_on ON app.folders" -c "DROP FUNCTION app.move_on()"
 
+echo "-- 7. a write that doesn't get its lock rows stops (they go when a policy is applied while it runs)"
+# $1 what goes first, in the write's own transaction, $2 the write: its error's code, words and hint
+stopped() { psql -X -q -At -d "$DB" -v VERBOSITY=verbose -c "BEGIN" -c "$1" -c "$2" 2>&1 | grep '^ERROR:  \|^HINT:  '; }
+STOPPED=$(printf 'ERROR:  40001: the policy was applied while this write ran\nHINT:  rowstile help AZ723')
+NEW="INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (9003, 1, $G, 5, 'late')"
+LOCKS=$(PSQL -c "SELECT c.oid::regclass FROM pg_class c WHERE c.relnamespace = 'authz_int'::regnamespace AND c.relkind = 'r' AND c.relname LIKE 'tree\_locks\_%'")
+got=$(stopped "DELETE FROM $LOCKS WHERE type = 'folder'" "$NEW")
+[ "$got" = "$STOPPED" ] && echo "ok    a folder made while its type's lock rows go is refused, to try again" ||
+  { echo "FAIL  a folder made without its lock rows: $got"; fails=$((fails + 1)); }
+got=$(stopped "DELETE FROM authz_int.locks WHERE type = 'folder'" "$NEW")
+[ "$got" = "$STOPPED" ] && echo "ok    ... and one made while its type's own row goes" ||
+  { echo "FAIL  a folder made without its type's row: $got"; fails=$((fails + 1)); }
+got=$(stopped "DELETE FROM $LOCKS WHERE type = 'folder' AND slot = 0" "SELECT authz_int.\"folder__linked_into_parent__tree_rebuild\"()")
+[ "$got" = "$STOPPED" ] && echo "ok    ... and a rebuild that doesn't get every stripe of the type" ||
+  { echo "FAIL  a rebuild without a stripe: $got"; fails=$((fails + 1)); }
+check "nothing was written by them, and the tables match a rebuild" \
+  "SELECT NOT EXISTS (SELECT 1 FROM app.folders WHERE id = 9003) AND authz.verify()"
+
 [ $fails -eq 0 ] && echo "all move checks passed" || { echo "$fails move checks failed"; exit 1; }

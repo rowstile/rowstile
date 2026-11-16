@@ -154,8 +154,14 @@ For one suite, start a container and run it inside:
   trigger beside it for partitioned tables (`trigger_if_partitioned`, as `<type>__forget` has). `tests/children.sh`
   checks all of it, `tests/around.py` writes straight into the tables under a table: a new trigger gets a case in
   children.sh.
-- Tree writes take the type-wide lock.
-  `tests/interleave.py` and `tests/stress.sh` (`run_tests.sh --proofs`) must stay green for any locking change.
+- Tree writes lock what they touch (`authz_int.tree_lock`, `trees.py`): a type's objects fall into stripes by the
+  hash of their id, a write updates the stripe of each object whose stored rows it writes (what it changed and all
+  below) and shares the stripe of each object those hang under, all in one order; a stricter isolation level fails
+  on a stripe updated since its snapshot. A rebuild, a write of more objects than the limit, and every write to a
+  type with a tree of several types or a condition that reads other rows take the whole type
+  (`authz_int.tree_lock_all`). A new write path takes its locks through `_refresh`, never beside it.
+  `tests/interleave.py` and `tests/stress.sh` (`run_tests.sh --proofs`) must stay green for any locking change, and
+  a pair of writes to different parts of a tree is named in its world's `apart` (neither may wait).
 - Two ways to evaluate a permission, which must agree (the random-change tests check): views (`set_sql`) and
   row checks (`row_sql`). Select rules and `authz.list` use row checks without `point` (lookups into the views,
   which Postgres hashes once for many rows; a recursive permission is first checked against its `__direct` view,

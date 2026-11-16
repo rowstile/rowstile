@@ -42,6 +42,17 @@ PLAN_AGAIN = (
     "-- (a write this big gets plans of its own; the setting is as it was when this function ends)\n"
     "    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);"
 )
+# The lock rows of a type whose tree writes lock only what they touch: its objects fall into STRIPES stripes by the
+# hash of their id, and a stripe has BORN + 1 lock rows (slots), one after the other: its own, then BORN that say a
+# row was hung under one of its objects (which of them: the hung row's hash). A slot's number is where it stands in
+# the one order every write takes its slots in. The table's name carries both numbers: a function of a build with
+# others, still running when this one is applied, fails on a table that isn't there instead of locking other rows.
+STRIPES = 1024
+BORN = 4
+SLOTS = STRIPES * (BORN + 1)
+TREE_LOCKS = f"authz_int.tree_locks_{STRIPES}_{BORN}"
+# A write that would lock more objects than this takes its whole type at once
+TREE_LOCK_LIMIT = 1000
 # a name inside the tree's names: f('_refresh') is authz_int."<tree>_refresh"
 Namer = Callable[[str], str]
 # a condition to check where it is written: (table, SQL, loc)
@@ -70,7 +81,140 @@ class TreeMixin(Core):
         # snapshot predates another writer's commit fails with a serialization
         # error instead of writing a closure from stale data.
         self.locked_types.update(types)
-        return f"UPDATE authz_int.locks SET n = n + 1 WHERE type IN ({', '.join(lit(x) for x in sorted(types))});"
+        return " ".join(f"PERFORM authz_int.tree_lock_all({lit(x)});" for x in sorted(types))
+
+    def tree_lock_ctes(self, type_sql: str, write: str, hangs: str, wanted: str, skip: bool) -> str:
+        """The part of a statement that takes a tree write's locks, as three WITH queries. `write` gives the objects
+        whose stored rows the write writes, `hangs` the objects those it changed hang under beside which hangs there
+        (both as text), `wanted` says which of the slots are asked for (y._slot, y._upd).
+        need: each slot asked for, once, with whether it is updated. An object written: its stripe's own row, updated.
+        An object hung under: its stripe's own row, shared, and one of the stripe's other rows updated (which: the
+        hung object's hash). At REPEATABLE READ or SERIALIZABLE also the type's row (slot -1) and the other rows of
+        each stripe written, shared: such a write fails if one of its rows was updated since its snapshot, by a
+        write to the whole type, to an object it touches, or one that hung a row under an object it writes.
+        got: the rows taken, by a sub-select for each slot, in the slots' order whatever they are taken for (so two
+        statements never wait for each other); with skip, only those nobody holds. bumped: those taken to update,
+        updated. One statement, where a function ran one for each run of slots: a statement in a trigger costs
+        a tenth of a millisecond."""
+        stripe = lambda x: f"(pg_catalog.hashtext({x}) & {STRIPES - 1}) * {BORN + 1}"
+        strict = "pg_catalog.current_setting('transaction_isolation') <> 'read committed'"
+        how = " SKIP LOCKED" if skip else ""
+        return f"""need AS MATERIALIZED (
+      SELECT y._slot, bool_or(y._upd) AS _upd
+      FROM (SELECT -1 AS _slot, false AS _upd WHERE {strict}
+            UNION ALL
+            SELECT {stripe("w._id")}, true FROM {write} w(_id) WHERE w._id IS NOT NULL
+            UNION ALL
+            SELECT {stripe("w._id")} + g._sub, false FROM {write} w(_id), generate_series(1, {BORN}) g(_sub)
+            WHERE {strict} AND w._id IS NOT NULL
+            UNION ALL
+            SELECT {stripe("u._above")}, false FROM {hangs} u(_above, _hung) WHERE u._above IS NOT NULL
+            UNION ALL
+            SELECT {stripe("u._above")} + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & {BORN - 1}), true
+            FROM {hangs} u(_above, _hung) WHERE u._above IS NOT NULL) y
+      WHERE {wanted}
+      GROUP BY y._slot),
+    got AS MATERIALIZED (
+      SELECT o._slot, o._upd,
+             CASE WHEN o._slot = -1 THEN (SELECT 1 FROM authz_int.locks l WHERE l.type = {type_sql} FOR SHARE{how})
+                  WHEN o._upd THEN (SELECT 1 FROM {TREE_LOCKS} t
+                                    WHERE t.type = {type_sql} AND t.slot = o._slot FOR UPDATE{how})
+                  ELSE (SELECT 1 FROM {TREE_LOCKS} t
+                        WHERE t.type = {type_sql} AND t.slot = o._slot FOR SHARE{how}) END AS _held
+      FROM (SELECT n._slot, n._upd FROM need n ORDER BY n._slot OFFSET 0) o),
+    bumped AS (
+      UPDATE {TREE_LOCKS} t SET n = t.n + 1 FROM got g
+      WHERE g._upd AND g._held = 1 AND t.type = {type_sql} AND t.slot = g._slot RETURNING 1)"""
+
+    def tree_locks_sql(self) -> list[str]:
+        """The lock rows of the narrow tree locks, and the two functions that take them."""
+        gone = "PERFORM authz_int.tree_locks_gone();"
+        # (the slots asked for and not held: one held shared may still be asked for to update)
+        lacking = "NOT (y._slot * 2 + 1 = ANY (p_held)) AND NOT (NOT y._upd AND y._slot * 2 = ANY (p_held))"
+        return [
+            f"""-- the lock rows of the types whose tree writes lock only what they touch: for each type, a row for each slot.
+-- Each page is left mostly empty, so that a row's next version fits beside it (no new index entry for each write);
+-- and vacuum never gives the table's end back, which would stop every tree write while it does
+CREATE TABLE {TREE_LOCKS} (type text NOT NULL, slot int NOT NULL, n bigint NOT NULL, PRIMARY KEY (type, slot))
+  WITH (fillfactor = 25, vacuum_truncate = false);""",
+            """-- A write that didn't get every lock row it asked for stops: the rows were there when the policy was applied,
+-- so it was applied again, or a migration of it ran, since the write began. To try again, at any isolation level
+CREATE FUNCTION authz_int.tree_locks_gone() RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  RAISE EXCEPTION 'the policy was applied while this write ran'
+    USING ERRCODE = 'serialization_failure', HINT = 'rowstile help AZ723';
+END $f$;""",
+            f"""-- A write to a type's whole tree (a rebuild, a write of more objects than the limit), and every tree write to
+-- a type that has no stripes: the type's row is updated, so that the writes queue behind each other and one whose
+-- snapshot is older than another's commit fails; with stripes, every stripe's own row is then locked, in order,
+-- which waits for the writes that hold some and holds the others
+CREATE FUNCTION authz_int.tree_lock_all(p_type text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_narrow boolean; v_n bigint;
+BEGIN
+  UPDATE authz_int.locks l SET n = l.n + 1 WHERE l.type = p_type RETURNING l.narrow INTO v_narrow;
+  IF NOT FOUND THEN
+    {gone}
+  END IF;
+  IF v_narrow THEN
+    SELECT count(*) INTO v_n FROM (SELECT 1 FROM {TREE_LOCKS} t WHERE t.type = p_type AND t.slot % {BORN + 1} = 0
+                                   ORDER BY t.slot FOR UPDATE) s;
+    IF v_n <> {STRIPES} THEN
+      {gone}
+    END IF;
+  END IF;
+END $f$;""",
+            f"""-- More of a tree write's locks, once its walk found more than it had locked (authz_int."<tree>_refresh" takes
+-- the first ones itself, in the statement that reads what to lock). p_write: the objects whose stored rows it writes;
+-- p_under and p_hung, side by side: the objects those it changed hang under, and which hangs there; p_held: the
+-- slots it holds (a slot twice, plus one when updated). The slots it lacks are taken in their order; with p_wait
+-- false only those nobody holds (SKIP LOCKED), and o_short says how many it didn't get: taking a slot below one it
+-- holds, a write must not wait, or two writes could wait for each other
+CREATE FUNCTION authz_int.tree_lock(p_type text, p_write text[], p_under text[], p_hung text[], p_held int[],
+                                    p_wait boolean, OUT o_held int[], OUT o_short int)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_asked bigint; v_got bigint; v_slots int[];
+BEGIN
+  IF p_wait THEN
+    WITH {self.tree_lock_ctes("p_type", "unnest(p_write)", "unnest(p_under, p_hung)", lacking, False)}
+    SELECT (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
+           ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
+    INTO v_asked, v_got, v_slots;
+    IF v_got <> v_asked THEN
+      {gone}
+    END IF;
+  ELSE
+    WITH {self.tree_lock_ctes("p_type", "unnest(p_write)", "unnest(p_under, p_hung)", lacking, True)}
+    SELECT (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
+           ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
+    INTO v_asked, v_got, v_slots;
+  END IF;
+  o_held := p_held || v_slots;
+  o_short := v_asked - v_got;
+END $f$;""",
+        ]
+
+    def narrow_sql(self) -> str:
+        """Which types' tree writes lock stripes: those whose trees are each of one type, with no condition that
+        reads other rows (a write to what such a condition reads checks every row again). Said in the type's row,
+        which is updated: a write that holds it the other way ends first, and one that asks for it afterwards finds
+        it changed."""
+        if not self.locked_types:
+            return ""
+        narrow = sorted(self.narrow_types - self.wide_types)
+        among = f"l.type IN ({', '.join(lit(x) for x in narrow)})" if narrow else "false"
+        rows = (
+            f"\nINSERT INTO {TREE_LOCKS} SELECT x.type, g.slot, 0 FROM unnest(ARRAY[{', '.join(lit(x) for x in narrow)}]) "
+            f"x(type), generate_series(0, {SLOTS - 1}) g(slot) ON CONFLICT DO NOTHING;"
+            if narrow
+            else ""
+        )
+        return (
+            "-- the types whose tree writes lock only the stripes of what they touch; the others' take their type's row\n"
+            f"UPDATE authz_int.locks l SET narrow = ({among}), n = l.n + 1 WHERE l.narrow IS DISTINCT FROM ({among});\n"
+            f"DELETE FROM {TREE_LOCKS} l WHERE NOT ({among});{rows}"
+        )
 
     def valid_sql(self, t: Type, alias: str) -> str:
         """The type's own `where`, for a row: rows that fail it pass nothing on."""
@@ -387,6 +531,9 @@ END $k$;"""
         changed = "\n         OR ".join(dict.fromkeys(col_changes + cond_changes)) or "false"
         described = ", ".join(f"{rel}" + (f" while {{{cond}}}" if cond else "") for _, rel, cond, _ in edge_list)
         reads = [c for c in tracked if reads_tables(c)]
+        # (a condition that reads other rows is checked again on every row when those change: such a tree's writes
+        # take the whole type, as do those of a tree of several types)
+        (self.wide_types if reads else self.narrow_types).add(t.name)
         locs = [self.cond_lines.get((t.name, c), t.loc) for c in conds] + ([t.loc] if t.where else [])
         first_line = min(locs + [ln for _, _, ln in link_wheres]) if (locs or link_wheres) else t.loc
 
@@ -540,23 +687,126 @@ END $f$;""")
             if shifts
             else recompute.replace("\n    ", "\n  ")
         )
-        sql.append(f"""-- recompute the given rows and everything linked below them; p_shift: only their own links changed
+        down = f"""WITH RECURSIVE down(id) AS (
+    SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+    UNION
+    SELECT e._child FROM down CROSS JOIN LATERAL (
+      {each_source(links, "_parent", "down.id")}) e)"""
+        walk = f"{down}\n  SELECT array_agg(id) INTO affected FROM down;"
+        # what the given rows hang under, and which hangs there, side by side (in one order, to compare two readings)
+        hangs = f"""(SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
+                 array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
+          FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
+            {each_source(links, "_child", "b._y")}) e
+          WHERE e._parent IS NOT NULL) h"""
+        if reads:
+            sql.append(f"""-- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION {f("_refresh")}(p_ids {pkt}[], p_shift boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 DECLARE affected {pkt}[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   {lock}
-  WITH RECURSIVE down(id) AS (
-    SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-    UNION
-    SELECT e._child FROM down CROSS JOIN LATERAL (
-      {each_source(links, "_parent", "down.id")}) e)
-  SELECT array_agg(id) INTO affected FROM down;
+  {walk}
   IF cardinality(affected) > {PLAN_FOR} THEN
     {PLAN_AGAIN}
   END IF;
   {body}{cache_refresh}
+  PERFORM authz_int.changed({lit(t.name)}, affected::text[], 'inheritance');
+END $f$;""")
+        else:
+            # The locks are those of what the write touches: the rows it writes, which are p_ids and everything
+            # below them, and the rows p_ids hang under (tree_lock_ctes says which lock rows, and how they are
+            # taken). What is below is only known for sure once it can't change. So one statement reads what the
+            # stored rows say is below (an index scan, no walk) and what p_ids hang under, and takes those locks;
+            # then the tree is walked, under them. Nearly always the walk finds what was locked and the write goes
+            # on: two statements, as under the type's lock. When it finds more (a row was hung below since), that
+            # is asked for without waiting, and the tree is walked again. If a row isn't free, the write would have
+            # to wait for a lock row below one it holds, and two writes could then wait for each other: it lets go
+            # of all it took (it took them in a block that is rolled back) and starts again, in order. p_plain:
+            # nothing is stored below p_ids (a row just made, a row with nothing in it), so there is no such block,
+            # which would be a subtransaction for each write: such a write waits.
+            # p_loops: a row may have been moved inside itself, which is looked for once the locks are held
+            loops = f"\n  IF p_loops THEN PERFORM {f('_check_loops')}($1); END IF;" if parents else ""
+            ctes = self.tree_lock_ctes(
+                lit(t.name),
+                "(SELECT x::text FROM hint i, unnest(i._ids) x)",
+                "(SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b))",
+                f"(SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= {TREE_LOCK_LIMIT}",
+                False,
+            )
+            more = (
+                f"authz_int.tree_lock({lit(t.name)}, authz__.affected::text[], authz__.under, authz__.hung, "
+                f"authz__.held, {{wait}}) l"
+            )
+
+            def rounds(short: str) -> str:
+                return f"""WITH hint AS MATERIALIZED (
+      SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+                   UNION SELECT s.descendant FROM {f("")} s WHERE s.ancestor = ANY ($1)) AS _ids),
+    hangs AS MATERIALIZED (
+      SELECT h._under, h._hung
+      FROM {hangs}),
+    narrow AS MATERIALIZED (
+      SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = {lit(t.name)}), false) AS _is),
+    {ctes}
+    SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
+           (SELECT count(*) FROM got g WHERE g._held = 1),
+           ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
+    INTO affected, under, hung, stripes, asked, taken, held
+    FROM hint i, hangs p;
+    IF NOT authz__.stripes OR cardinality(authz__.affected) > {TREE_LOCK_LIMIT} THEN
+      -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
+      PERFORM authz_int.tree_lock_all({lit(t.name)});
+      held := ARRAY[-1];
+    ELSIF authz__.taken <> authz__.asked THEN
+      PERFORM authz_int.tree_locks_gone();
+    END IF;
+    LOOP
+      locked := affected;
+      locked_under := under;
+      locked_hung := hung;
+      {down.replace(chr(10), chr(10) + "  ")}
+      SELECT (SELECT array_agg(d.id) FROM down d), h._under, h._hung INTO affected, under, hung
+      FROM {hangs.replace(chr(10), chr(10) + "  ")};
+      -- the walk, under the locks, found nothing that wasn't locked: nearly always
+      EXIT WHEN authz__.held = ARRAY[-1]
+                OR (authz__.affected <@ authz__.locked AND authz__.under IS NOT DISTINCT FROM authz__.locked_under
+                    AND authz__.hung IS NOT DISTINCT FROM authz__.locked_hung);
+      SELECT l.o_held, l.o_short INTO held, short
+      FROM {more.format(wait="false")};
+      IF authz__.short > 0 THEN
+        {short}
+      END IF;
+    END LOOP;"""
+
+            wait = f"SELECT l.o_held INTO held\n        FROM {more.format(wait='true')};"
+            sql.append(f"""-- recompute the given rows and everything linked below them; p_shift: only their own links changed
+CREATE FUNCTION {f("_refresh")}(p_ids {pkt}[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
+                               p_plain boolean DEFAULT false) RETURNS void
+LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
+<<authz__>>
+DECLARE
+  affected {pkt}[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
+  locked {pkt}[]; locked_under text[]; locked_hung text[];
+BEGIN
+  IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
+  IF p_plain THEN
+    {rounds(wait)}
+  ELSE
+    LOOP
+      BEGIN
+    {rounds("RAISE EXCEPTION USING ERRCODE = 'AZL01';").replace(chr(10), chr(10) + "    ")}
+        EXIT;
+      EXCEPTION WHEN SQLSTATE 'AZL01' THEN
+        NULL;  -- what this try took is let go: again, in order, from what is stored now
+      END;
+    END LOOP;
+  END IF;
+  IF cardinality(affected) > {PLAN_FOR} THEN
+    {PLAN_AGAIN}
+  END IF;{loops}
+  {body}
   PERFORM authz_int.changed({lit(t.name)}, affected::text[], 'inheritance');
 END $f$;""")
         sql.append(f"""-- recompute everything (backfill, TRUNCATE), {BATCH} rows at a time
@@ -634,11 +884,25 @@ BEGIN
 END $f$;""")
             cycle_check = f"\n  IF TG_OP <> 'DELETE' THEN PERFORM {f('_check_loops')}(ids); END IF;"
 
+        # (with narrow locks the refresh looks for loops itself, once it holds its locks)
+        may_loop = "TG_OP <> 'DELETE'" if parents else "false"
+        on_rows_refresh = (
+            f"{lock}{cycle_check}\n    PERFORM {f('_refresh')}(ids, shift);"
+            if reads
+            else (
+                "-- (nothing hangs under a row just made; under another, its links say: the stored rows don't hold\n"
+                "    -- what hangs under a row without inheriting from it)\n"
+                "    IF TG_OP = 'INSERT' THEN\n      plain := true;\n    ELSE\n"
+                "      plain := NOT EXISTS (SELECT 1 FROM unnest(authz__.ids) AS b(_y) CROSS JOIN LATERAL (\n"
+                f"        {each_source(links, '_parent', 'b._y')}) e);\n"
+                f"    END IF;\n    PERFORM {f('_refresh')}(ids, shift, {may_loop}, plain);"
+            )
+        )
         sql.append(f"""-- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION {f("_on_rows")}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 <<authz__>>
-DECLARE ids {pkt}[]; shift boolean := false;{" wrote boolean;" if reads else ""}
+DECLARE ids {pkt}[]; shift boolean := false;{" wrote boolean;" if reads else " plain boolean;"}
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT {key("n")} FROM new_rows n);
@@ -656,8 +920,7 @@ BEGIN
     ids := ARRAY(SELECT {key("o")} FROM old_rows o);
   END IF;
   IF cardinality(ids) > 0 THEN
-    {lock}{cycle_check}
-    PERFORM {f("_refresh")}(ids, shift);
+    {on_rows_refresh}
   END IF;{recheck_own_sql(f) if reads else ""}
   RETURN NULL;
 END $f$;

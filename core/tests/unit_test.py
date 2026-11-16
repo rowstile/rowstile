@@ -13583,6 +13583,7 @@ class ErrorCodes(unittest.TestCase):
         "'bad'",
         "'the policy does not match this database:%'",
         "USING ERRCODE = 'AZT00'",
+        "USING ERRCODE = 'AZL01'",
         "'given ",
         "'% policy test(s) failed'",
     )
@@ -13673,6 +13674,7 @@ class RuntimeAnswers(unittest.TestCase):
         "invalid_parameter_value": "22023",
         "check_violation": "23514",
         "object_not_in_prerequisite_state": "55000",
+        "serialization_failure": "40001",
     }
 
     def raised(self) -> dict[str, set[str]]:
@@ -16690,8 +16692,9 @@ class Guards(unittest.TestCase):
         }
     )
     # guards with no message of their own, in the text: a column rule's refusal, whose message is made in Python
-    # (principals.sh and children.sh ask for its words), and the named tests' end, never shown (AZT00)
-    NO_MESSAGE = 2
+    # (principals.sh and children.sh ask for its words), the named tests' end, never shown (AZT00), and a tree
+    # write's sign to itself that it lets go of its locks and starts again (AZL01), never shown either
+    NO_MESSAGE = 3
     # guards their own function catches, whose callers see another message: asked for by that one's words
     CAUGHT: ClassVar[dict[str, str]] = {"bad": "invalid token"}
     WINDOW = 200
@@ -16855,7 +16858,7 @@ class Features(unittest.TestCase):
         self.assertEqual(out, [], "a refusal no check asks for by its words")
         # every RAISE is found, and carries a code but the few ErrorCodes.UNCODED lists
         self.assertEqual(len(where), len(Guards().guards()))
-        self.assertEqual(sum(1 for c in where.values() if not c), 9)
+        self.assertEqual(sum(1 for c in where.values() if not c), 10)
 
     def test_the_page_shows_the_table(self) -> None:
         with open(self.PAGE, encoding="utf-8") as fh:

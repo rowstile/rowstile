@@ -1116,6 +1116,17 @@ CODES = {
         "that no longer hold. SQLSTATE 55000.",
         when="runtime",
     ),
+    "AZ723": Code(
+        "The policy was applied while a write ran",
+        "A write that changes who inherits from whom (a row of a tree made, moved, linked or deleted) takes lock rows "
+        "before it works out what is inherited, and found them gone or changed: the policy was applied, or a "
+        "migration of it ran, between the write's start and its locks. Nothing was written. Run the transaction "
+        "again: it then runs with the locks the policy has now. SQLSTATE 40001, a serialization failure, at any "
+        "isolation level: it is the one case in which a write in READ COMMITTED is to be tried again, and it "
+        "happens only while a policy is being applied. The SDKs leave it an error, a 500, as they leave any "
+        "serialization failure.",
+        when="runtime",
+    ),
     "AZ801": Code(
         "A sync line that names nothing to sync",
         "`sync schema.table : permission` keeps, for each row of a type's table, the keys that hold the permission "

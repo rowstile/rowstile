@@ -305,6 +305,9 @@ class Core:
         self.direct_checks: dict[str, str] = {}  # recursive permission view -> view of what its columns give
         self.direct_by_sql: dict[str, str] = {}  # such views' SQL -> their name (permissions with the same share one)
         self.locked_types: set[str] = set()  # types with closure tables (one lock row each)
+        # ...those with a tree whose writes may lock only what they touch, and those with one whose writes may not
+        self.narrow_types: set[str] = set()
+        self.wide_types: set[str] = set()
         self.cond_lines: dict[tuple[str, str], Loc] = {}  # (type, condition) -> loc, for apply-time errors
         self.columns: list[tuple[str, str, Loc]] = []  # (table, column, loc) to check exist
         self.pk_checks: list[tuple[str, str, str, Loc]] = []  # (table, pk, pktype, loc)

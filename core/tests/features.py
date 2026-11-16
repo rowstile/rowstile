@@ -1238,10 +1238,12 @@ FEATURES: list[Feature] = [
             "err.AZ604",
             "err.AZ605",
             "err.AZ713",
+            "err.AZ723",
         ),
         Doc(LANG, "Inheritance"),
         (
             T("scenario.sql", "moving Engineering into its own subfolder is refused"),
+            T("moves.sh", "a folder made while its type's lock rows go is refused, to try again"),
             T("scenario.sql", "a loop through links does not hang and changes nothing for carol"),
             T("moves.sh", "rows inside the moved folder were left alone"),
             T("concurrency.sh", "no loop"),
