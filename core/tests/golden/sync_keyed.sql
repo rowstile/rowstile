@@ -2070,7 +2070,7 @@ BEGIN
       locked_under := under;
       locked_hung := hung;
       WITH RECURSIVE down(id) AS (
-      SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL
+      SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL AND authz__.held IS DISTINCT FROM ARRAY[-1]
       UNION
       SELECT e._child FROM down CROSS JOIN LATERAL (
         (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
@@ -2159,7 +2159,7 @@ BEGIN
           locked_under := under;
           locked_hung := hung;
           WITH RECURSIVE down(id) AS (
-          SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL
+          SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL AND authz__.held IS DISTINCT FROM ARRAY[-1]
           UNION
           SELECT e._child FROM down CROSS JOIN LATERAL (
             (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
