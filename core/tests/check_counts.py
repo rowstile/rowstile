@@ -80,6 +80,7 @@ PLACES: dict[tuple[str, frozenset[str]], tuple[str, ...]] = {
         "interleavings (read committed, boxes)",
         "interleavings (read committed, docs keyed by folder)",
         "interleavings (read committed, docs after commit)",
+        "interleavings (read committed, docs without the sync index)",
     ),
     ("command", EVERY): ("apply", "cli", "capitals", "children", "migrations", "upgrade", "review"),
     ("command", BUT_SHORT): ("migrate vs apply",),
