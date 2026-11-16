@@ -149,7 +149,7 @@ function authz_int."file__edit__why"(p_id integer, p_depth int, p_seen text[], p
 function authz_int."file__forget"() | 74fbb1b3a02c shape=1d4919e2
 function authz_int."file__forget_all"() | 13306d294685 shape=f04ac5d0
 function authz_int."file__forget_id"() | daeb71bb76d8 shape=e82c8006
-function authz_int."file__mirror"() | 1a55e2477f4b shape=517db8fd
+function authz_int."file__mirror"() | f4d863792310 shape=517db8fd
 function authz_int."file__mirror_readers"() | 97cef76028df shape=3a276591
 function authz_int."file__owner__who"(p_id integer) | f64ee011b0af shape=3d76a7a8
 function authz_int."file__owner__why"(p_id integer, p_depth int, p_seen text[], p_asker text[]) | 4b4597c028ff shape=ea5ea7ad
@@ -170,7 +170,7 @@ function authz_int."folder__edit__why"(p_id integer, p_depth int, p_seen text[],
 function authz_int."folder__forget"() | 9340ab24d040 shape=9f2a83b9
 function authz_int."folder__forget_all"() | f4391701c6da shape=31970962
 function authz_int."folder__forget_id"() | c26c0004d851 shape=b6b853a6
-function authz_int."folder__mirror"() | 06e50787409c shape=6b757707
+function authz_int."folder__mirror"() | e18821e9d139 shape=6b757707
 function authz_int."folder__mirror_readers"() | b53212263ab0 shape=0ead0901
 function authz_int."folder__owner__who"(p_id integer) | d551fb73a3e1 shape=5faf0dbf
 function authz_int."folder__owner__why"(p_id integer, p_depth int, p_seen text[], p_asker text[]) | e064f6b7ddd2 shape=bab4a57a
@@ -200,7 +200,7 @@ function authz_int."note__col_audit_trunc"() | 978671ae3444 shape=79c692d3
 function authz_int."note__col_audit_upd"() | 377c3f2a93bc shape=ba0cdffd
 function authz_int."note__edit__who"(p_id integer) | edc180f729d5 shape=6bd1111b
 function authz_int."note__edit__why"(p_id integer, p_depth int, p_seen text[], p_asker text[]) | b73788044c18 shape=e9bef2f6
-function authz_int."note__mirror"() | 008c42e09c48 shape=d4645520
+function authz_int."note__mirror"() | 1df59780d890 shape=d4645520
 function authz_int."note__mirror_readers"() | 1cb21d32350d shape=d56d8c1f
 function authz_int."note__view__who"(p_id integer) | 412b2dadfbfa shape=0d7f95f2
 function authz_int."note__view__why"(p_id integer, p_depth int, p_seen text[], p_asker text[]) | ad0c7625a874 shape=e6881a25
