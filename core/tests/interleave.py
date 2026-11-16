@@ -33,7 +33,7 @@ transactions at once:
   - docs_plain: the docs app without its sync index, which takes lock rows of its own at each commit (all of them
     at a stricter level): here a write fails or waits only by the trees' own locks. The docs world's creates, moves,
     links and unlinks, and a move of a folder that has the other session's folder below it (15 pairs);
-  - docs_few: the same, where a write of more than two folders takes its whole type (the setting
+  - docs_few: the same, where a write of more than one folder takes its whole type (the setting
     tree_lock_limit): the moves of what is above do, the other writes lock what they touch (15 pairs);
   - shown: two trees of one type that differ, one through a column whose condition a seal changes, one through
     that column and a share that is a link (`authz.share` of a node into a node): a node created, moved,
@@ -606,16 +606,18 @@ DOCS_PLAIN = replace(
     # below it through a link, so they are not apart)
     apart=frozenset({("create", "create"), ("unlink", "unlink")}),
 )
-# The docs world without its sync index again, where a write of more than two folders takes its whole type (the
+# The docs world without its sync index again, where a write of more than one folder takes its whole type (the
 # setting tree_lock_limit, which each schedule's start writes): the moves of what is above do (a with c below it
 # and l through a link; b likewise), the other writes lock what they touch. So a write to the whole type runs
 # beside a write to a part of it, in every order and at every level: each waits for the other where they meet,
-# and the pairs to different parts (neither of more than two folders) still never wait.
+# and the pairs to different parts (each of one folder) still never wait. One, not two: at two the folders' second
+# tree, which stores a and c alone below a, would take that move by stripes and update them, and a stale writer
+# at a stricter level would fail on a stripe; at one the type's row alone tells it that the whole type was written.
 DOCS_FEW = replace(
     DOCS_PLAIN,
     name="docs_few",
     reset=DOCS_RESET
-    + "INSERT INTO authz.settings VALUES ('tree_lock_limit', '2') ON CONFLICT (key) DO UPDATE SET value = '2';\n",
+    + "INSERT INTO authz.settings VALUES ('tree_lock_limit', '1') ON CONFLICT (key) DO UPDATE SET value = '1';\n",
 )
 
 # --- shown: nodes shown in other nodes by sharing, two trees of one type that differ ------------------------------
