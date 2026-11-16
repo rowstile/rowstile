@@ -157,7 +157,8 @@ For one suite, start a container and run it inside:
 - Tree writes lock what they touch (`authz_int.tree_lock`, `trees.py`): a type's objects fall into stripes by the
   hash of their id, a write updates the stripe of each object whose stored rows it writes (what it changed and all
   below) and shares the stripe of each object those hang under, all in one order; a stricter isolation level fails
-  on a stripe updated since its snapshot. A rebuild, a write of more objects than the limit, and every write to a
+  on a stripe updated since its snapshot. A rebuild, a write of more objects than the limit (the setting
+  `tree_lock_limit`, read in the statement that takes the locks), and every write to a
   type with a tree of several types or a condition that reads other rows take the whole type
   (`authz_int.tree_lock_all`). The trees of one type ask for the same lock rows, those of what the type's trees
   link through together (`one_lock_set`, once every tree is known: `refresh_sql` and `on_rows_sql` write a tree's

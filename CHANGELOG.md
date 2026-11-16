@@ -71,6 +71,21 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   do: the next `apply` or migration writes the functions again, and each inheritance is worked out again with
   them (see Upgrading).
 
+- Tree writes to one type no longer wait for each other unless they meet. A write that changes who inherits from
+  whom (a folder made, moved, linked, shared into another or deleted) locked its whole type, so writes to
+  unrelated parts of a tree queued one behind the other. It now locks what it touches: the rows it changes with
+  everything below them, and the rows those hang under. Two writes that meet still wait in READ COMMITTED, and in
+  REPEATABLE READ and SERIALIZABLE the later one fails with a serialization error only when what it touches
+  changed since its snapshot (before: when any tree write to its type had). On GitHub runners (50,000 folders 20
+  levels deep, the two builds in turn on one machine, four runs), ten clients do 1.5 to 2.2 times the tree
+  writes they did, and fifty 1.6 to 2.3 times, writers all in one part of the tree included; one client alone does
+  about as many, a twentieth fewer in most runs; a write takes about half a millisecond longer, a move of 17,000
+  folders a tenth longer at most, and an admin's check while writes run about 0.3 ms longer. A write of more than
+  1,000 rows takes its whole type, as before, and so does every tree write to a type that inherits through another
+  type too or whose inheritance condition reads other rows. The number is a setting: `INSERT INTO authz.settings
+  VALUES ('tree_lock_limit', '5000')`, or `'0'` for one tree write at a time to a type
+  ([Limits](docs/reference/limits.md)).
+
 ### Fixed
 
 - A write rule that inherits through a link table asks about the row being written, whatever the link table's
@@ -191,6 +206,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Upgrading
 
+- Apply the policy with this release (`rowstile apply`, or the migrations `rowstile migrate` writes) for tree
+  writes to lock what they touch: each inheritance is worked out again, and `rowstile migrate` writes two
+  migrations, one that builds the new tables beside the ones in use and one that swaps them in. A write that runs
+  while the policy is applied ends with AZ723 (`40001`), to retry. An app that writes a tree in transactions of
+  several statements, or with one statement that writes several trees (a cascade to rows that are links, `MERGE`,
+  `INSERT ... ON CONFLICT DO UPDATE`), may now see a deadlock (`40P01`) where two such transactions meet: retry
+  it, as `40001` ([Retrying a write](docs/operations.md#retrying-a-write)).
 - A table the policy names can't have a name that starts with `authz__` (AZ113): the functions rowstile writes
   call their own variables `authz__.name`. Name a view of the table instead.
 - Apply the policy with this release (`rowstile apply`, or the migrations `rowstile migrate` writes) for the fix

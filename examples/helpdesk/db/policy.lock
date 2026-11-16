@@ -171,7 +171,7 @@ function authz.delete_role(p_role bigint) | b4c64d8168eb shape=7c823e86
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 8689b2108a84 shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | e98f52f28997 shape=1223ad2f
-function authz.lint() | b1c95dcff6ee shape=54cb1505
+function authz.lint() | a22a3adaf60e shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | f463a55c3b6a shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
@@ -492,10 +492,10 @@ function authz_int."team__oversee__who_base"(p_id uuid) | de6d6d27da75 shape=e97
 function authz_int."team__oversee__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | 5768aac6f3b3 shape=cacb1a3b
 function authz_int."team__parent__tree_check_loops"(p_ids uuid[]) | 66e33297e71b shape=1d6d765c tree=team__parent__tree
 function authz_int."team__parent__tree_compute"(p_ids uuid[]) | 8b0987c462cc shape=2956df39 tree=team__parent__tree
-function authz_int."team__parent__tree_on_rows"() | 997453f7e4b1 shape=cdbdd025 tree=team__parent__tree
+function authz_int."team__parent__tree_on_rows"() | c3032b964f30 shape=cdbdd025 tree=team__parent__tree
 function authz_int."team__parent__tree_on_truncate"() | 82352905632c shape=8d79087c tree=team__parent__tree
-function authz_int."team__parent__tree_rebuild"() | 05ea7361828a shape=2cb50913 tree=team__parent__tree
-function authz_int."team__parent__tree_refresh"(p_ids uuid[], p_shift boolean) | e7bbc490b112 shape=6d444722 tree=team__parent__tree
+function authz_int."team__parent__tree_rebuild"() | 544623fd8e2c shape=2cb50913 tree=team__parent__tree
+function authz_int."team__parent__tree_refresh"(p_ids uuid[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach uuid[]) | b38c793e8bef shape=26921e19 tree=team__parent__tree
 function authz_int."team__parent__tree_shift"(p_ids uuid[], p_below uuid[]) | f95da29c97a8 shape=fda60fe3 tree=team__parent__tree
 function authz_int."team__parent__tree_verify"() | 8f88d9e509b5 shape=ee629c2f tree=team__parent__tree
 function authz_int."team__view__who"(p_id uuid) | e48860078a0c shape=6114fae6
@@ -647,6 +647,10 @@ function authz_int.sync_refresh(p_hash text, p_force boolean) | 7e6482b18426 sha
 function authz_int.sync_spread(p_tx bigint, p_round int) | 234f30335c7b shape=53f27788
 function authz_int.takes_members(p_relation text) | 953cc1197032 shape=f124a374
 function authz_int.token_note(p_token text, p_n numeric) | bf3b1de8e7ea shape=f63a2312
+function authz_int.tree_lock(p_type text, p_write text[], p_under text[], p_hung text[], p_held int[], p_wait boolean, OUT o_held int[], OUT o_short int) | d0259ec145fd shape=82775bfa
+function authz_int.tree_lock_all(p_type text) | 8669729aa69e shape=c79f2bf0
+function authz_int.tree_lock_one(p_type text, p_id text, p_under text[], p_hung text[]) | 8a393e5e7545 shape=b85d6405
+function authz_int.tree_locks_gone() | 996db4e93f8b shape=f6bf2f92
 function authz_int.truncate_once(p_relid oid, p_key text, p_before boolean) | b8b9cd8950d0 shape=2dde8aeb
 function authz_int.url_decode(p_text text) | 161c6fdae846 shape=16ef925b
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
@@ -711,12 +715,13 @@ step mask_privileges | 26af74835f67
 step share_indexes | 7b6abf1f960f
 step sweep | 720e0c5ae09f
 step sync_base | d56d2648ef0a
-step sync_refresh | d2a952194463
+step sync_refresh | 4d6924acaba3
 step tables | 41b30dca0ebc
+step tree_locks | d60cd47d0e20
 table authz_gen.policy_lines | 7c09872a2861 shape=dcfedc96
 table authz_int."team__parent__tree" | ed6220be97e0 shape=ed6220be tree=team__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
-table authz_int.locks | a2f979053d93 shape=1779df2c
+table authz_int.locks | 0bf9a190269a shape=7547114a
 table authz_int.masked_columns | bd2eb3a8c56a shape=2067eb67
 table authz_int.perms | 15fd0bd4a465 shape=1d7ef71f
 table authz_int.role_grantable | 3bc3938dd417 shape=aa914205
@@ -730,10 +735,11 @@ table authz_int.sync_lost | 59ba131ae3a1 shape=59ba131a
 table authz_int.sync_moved | c49c430f9bba shape=6c60da1e
 table authz_int.sync_queued | 360d686b7075 shape=360d686b
 table authz_int.sync_todo | 5530cc58dc54 shape=80f2cd19
-table authz_int.trees | da4bedcde895 shape=02db6ec7
+table authz_int.tree_locks_1024_4 | c01c7cffc629 shape=c01c7cff
+table authz_int.trees | 14906d292b9d shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 792f565ea964 shape=b6d5b497
-tree team__parent__tree | 107c92df5b7a9893dd29b69608f9d1ab
+tree team__parent__tree | 37def2dba45d7e7258f9e534c9bcdcb4
 trigger "authz_comment_col_audit_del" ON "hd"."comments" | acd8165d405c
 trigger "authz_comment_col_audit_ins" ON "hd"."comments" | 5413fcc0e27f
 trigger "authz_comment_col_audit_row" ON "hd"."comments" | a636a0768e9d

@@ -309,6 +309,20 @@
       "when": 1794845499191,
       "tag": "0043_authz_tree_writes_plan_once",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1794869686120,
+      "tag": "0044_authz_build_narrow_tree_locks",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794869687120,
+      "tag": "0045_authz_narrow_tree_locks",
+      "breakpoints": true
     }
   ]
 }
