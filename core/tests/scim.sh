@@ -661,20 +661,6 @@ same "a function that is gone" \
 same "a principal whose row is gone" \
   "warning authz.scim: the principal service:7 is no row of a type that signs in: no key signs the provider in$AGAIN" \
   "$(own "BEGIN; DELETE FROM sc.services WHERE id = 7; $LINT; ROLLBACK;")"
-python3 - $T/scim.authz $T/fewer.authz <<'PY'
-import sys
-text = open(sys.argv[1], encoding="utf-8").read()
-changed = text.replace("  member : user = sc.team_members(team_id -> user_id)\n", "  member : user = sc.team_members(team_id -> user_id) where {user_id > 0}\n")
-assert changed != text
-open(sys.argv[2], "w", encoding="utf-8").write(changed)
-PY
-python3 compile_policy.py $T/fewer.authz > $T/fewer.sql || exit 1
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/fewer.sql >/dev/null || exit 1
-same "a policy applied since, in which the group is no relation with one table of members: lint says so, and the groups are not served" \
-  "warning authz.scim: the group team.member is no relation with one table of members in the policy now: groups are not served$AGAIN|501 the SCIM settings name no group to serve (authz.set_scim: group, a relation authz.sync_members takes) (rowstile help AZ721)" \
-  "$(own "$LINT")|$(ask "a.status || ' ' || (a.body->>'detail')" GET Groups)"
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/scim.sql >/dev/null || exit 1
-same "... the suite's policy applied again: the settings were kept, and hold" "none|200" "$(own "$LINT")|$(ask "a.status" GET Groups)"
 own "SELECT authz.set_scim('{}')" >/dev/null
 same "an endpoint turned off: lint says nothing of it" "none" "$(own "$LINT")"
 own "SELECT authz.set_scim('{$WITH_GROUPS}')" >/dev/null
@@ -715,6 +701,20 @@ is "a member added and one removed" "204" "a.status" \
   PATCH 'Groups/("1","red team")' "" "{\"Operations\": [{\"op\": \"add\", \"path\": \"members\", \"value\": [{\"value\": \"3\"}]}, {\"op\": \"remove\", \"path\": \"members[value eq \\\"1\\\"]\"}]}"
 same "... that team's rows are the list, the other team's as they were, and the user is who did it" 'blue 2, red team 3 1|team|(1,"red team")|member|1|1|["3"]' \
   "$(CXQ -c "SELECT string_agg(team_slug || ' ' || user_id, ', ' ORDER BY team_slug, user_id) FROM cx.team_members") $(CXQ -c "$SYNCED")"
+# (in this database, the suite's second: applying a policy makes the functions again, and what a coverage run counted in
+# them before would be lost)
+python3 - tests/composite.authz $T/fewer.authz <<'PY'
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+line = "  member : user        = cx.team_members([org_id, team_slug] -> user_id)\n"
+assert text.count(line) == 1
+open(sys.argv[2], "w", encoding="utf-8").write(text.replace(line, line.rstrip("\n") + " where {user_id > 0}\n"))
+PY
+python3 compile_policy.py $T/fewer.authz > $T/fewer.sql || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$CX" -f $T/fewer.sql >/dev/null || exit 1
+same "a policy applied since, in which the group is no relation with one table of members: lint says so, and the groups are not served" \
+  "warning authz.scim: the group team.member is no relation with one table of members in the policy now: groups are not served$AGAIN|501 the SCIM settings name no group to serve (authz.set_scim: group, a relation authz.sync_members takes) (rowstile help AZ721)" \
+  "$(CXQ -c "$LINT")|$(ask "a.status || ' ' || (a.body->>'detail')" GET Groups)"
 dropdb "$CX"
 
 if [ $fails -eq 0 ]; then echo "scim: all passed"; else echo "scim: $fails failed"; exit 1; fi
