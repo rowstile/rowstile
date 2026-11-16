@@ -492,10 +492,10 @@ function authz_int."team__oversee__who_base"(p_id uuid) | de6d6d27da75 shape=e97
 function authz_int."team__oversee__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | 5768aac6f3b3 shape=cacb1a3b
 function authz_int."team__parent__tree_check_loops"(p_ids uuid[]) | 66e33297e71b shape=1d6d765c tree=team__parent__tree
 function authz_int."team__parent__tree_compute"(p_ids uuid[]) | 8b0987c462cc shape=2956df39 tree=team__parent__tree
-function authz_int."team__parent__tree_on_rows"() | f2f3f672f74b shape=cdbdd025 tree=team__parent__tree
+function authz_int."team__parent__tree_on_rows"() | 997453f7e4b1 shape=cdbdd025 tree=team__parent__tree
 function authz_int."team__parent__tree_on_truncate"() | 82352905632c shape=8d79087c tree=team__parent__tree
 function authz_int."team__parent__tree_rebuild"() | 05ea7361828a shape=2cb50913 tree=team__parent__tree
-function authz_int."team__parent__tree_refresh"(p_ids uuid[], p_shift boolean) | fdf311f2a55f shape=6d444722 tree=team__parent__tree
+function authz_int."team__parent__tree_refresh"(p_ids uuid[], p_shift boolean) | e7bbc490b112 shape=6d444722 tree=team__parent__tree
 function authz_int."team__parent__tree_shift"(p_ids uuid[], p_below uuid[]) | f95da29c97a8 shape=fda60fe3 tree=team__parent__tree
 function authz_int."team__parent__tree_verify"() | 8f88d9e509b5 shape=ee629c2f tree=team__parent__tree
 function authz_int."team__view__who"(p_id uuid) | e48860078a0c shape=6114fae6
@@ -711,7 +711,7 @@ step mask_privileges | 26af74835f67
 step share_indexes | 7b6abf1f960f
 step sweep | 720e0c5ae09f
 step sync_base | d56d2648ef0a
-step sync_refresh | 2e4c630f4cb9
+step sync_refresh | d2a952194463
 step tables | 41b30dca0ebc
 table authz_gen.policy_lines | 7c09872a2861 shape=dcfedc96
 table authz_int."team__parent__tree" | ed6220be97e0 shape=ed6220be tree=team__parent__tree
@@ -730,10 +730,10 @@ table authz_int.sync_lost | 59ba131ae3a1 shape=59ba131a
 table authz_int.sync_moved | c49c430f9bba shape=6c60da1e
 table authz_int.sync_queued | 360d686b7075 shape=360d686b
 table authz_int.sync_todo | 5530cc58dc54 shape=80f2cd19
-table authz_int.trees | b2dea511757b shape=02db6ec7
+table authz_int.trees | da4bedcde895 shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 792f565ea964 shape=b6d5b497
-tree team__parent__tree | 0a55751a6c3e66630c20c719a5b318da
+tree team__parent__tree | 107c92df5b7a9893dd29b69608f9d1ab
 trigger "authz_comment_col_audit_del" ON "hd"."comments" | acd8165d405c
 trigger "authz_comment_col_audit_ins" ON "hd"."comments" | 5413fcc0e27f
 trigger "authz_comment_col_audit_row" ON "hd"."comments" | a636a0768e9d

@@ -295,6 +295,20 @@
       "when": 1794815508052,
       "tag": "0041_authz_scim_body_as_sent",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1794845498191,
+      "tag": "0042_authz_build_tree_writes_plan_once",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794845499191,
+      "tag": "0043_authz_tree_writes_plan_once",
+      "breakpoints": true
     }
   ]
 }
