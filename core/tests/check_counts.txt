@@ -6,7 +6,7 @@ apply 178
 capitals 112
 children 193
 cli 212
-concurrency 41
+concurrency 44
 confidence 66
 cookbook 103
 cuts half way 28
@@ -18,7 +18,7 @@ governance 300
 hand answers 439
 hand answers, kept names 439
 identity 150
-interleavings 1575
+interleavings 1764
 interleavings (read committed, boxes) 10
 interleavings (read committed, cross) 21
 interleavings (read committed, docs after commit) 36
@@ -26,6 +26,7 @@ interleavings (read committed, docs keyed by folder) 36
 interleavings (read committed, docs without the sync index) 15
 interleavings (read committed, docs) 36
 interleavings (read committed, parts) 21
+interleavings (read committed, shown) 21
 invariance of the fixed policies 27
 keep unchanged trees 17
 language server 149
@@ -46,5 +47,5 @@ small policies 4
 studio 244
 sync index 275
 tools 45
-unit 793
+unit 797
 upgrade 71

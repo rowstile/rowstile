@@ -102,10 +102,10 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder__parent__tree', 'e0034e8b40aad78e7537d3f26b6927c9', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('folder__parent__tree', 'f2b40caadf955d508dac5a7966527f18', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder__linked_into_parent__tree', 'b7c84ab54a6c868eb43996060cffe95c', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder__linked_into_parent__tree', '0ec1dda251e77a8e1127306bf0dda64e', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder__linked_into_parent__tree')) n(name, hash, oids, rel)
@@ -1139,11 +1139,11 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder__parent__tree', 'e0034e8b40aad78e7537d3f26b6927c9', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', 'f2b40caadf955d508dac5a7966527f18', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__linked_into_parent__tree', 'b7c84ab54a6c868eb43996060cffe95c', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__linked_into_parent__tree', '0ec1dda251e77a8e1127306bf0dda64e', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1974,44 +1974,50 @@ BEGIN
   RETURN true;
 END $f$;
 
--- recompute the given rows and everything linked below them; p_shift: only their own links changed
+-- recompute the given rows and everything linked below them; p_shift: only their own links changed;
+-- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids
+-- (its type has trees that differ: the lock rows are those of the type's trees together, so that the
+-- triggers of two trees, run by one statement, ask for the same ones)
 CREATE FUNCTION authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
-                               p_plain boolean DEFAULT false) RETURNS void
+                               p_plain boolean DEFAULT false, p_reach bigint[] DEFAULT NULL) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
 DECLARE
   affected bigint[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
-  locked bigint[]; locked_under text[]; locked_hung text[]; seen bigint[];
+  locked bigint[]; locked_under text[]; locked_hung text[]; seen bigint[]; reach bigint[]; roots bigint[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
+  roots := coalesce(p_reach, p_ids);
   IF p_plain THEN
-    IF cardinality(p_ids) = 1 AND p_ids[1] IS NOT NULL THEN
+    IF cardinality(authz__.roots) = 1 AND authz__.roots[1] IS NOT NULL THEN
       -- (one row, nothing hanging under it: the short way to the same lock rows)
       SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false)
       INTO under, hung, stripes
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                  array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
-          FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
-            (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
+          FROM unnest(authz__.roots) AS b(_y) CROSS JOIN LATERAL (
+            (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+      UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
           WHERE e._parent IS NOT NULL) h;
-      affected := p_ids;
+      reach := authz__.roots;
       IF authz__.stripes THEN
-        held := authz_int.tree_lock_one('folder', authz__.affected[1]::text, authz__.under, authz__.hung);
+        held := authz_int.tree_lock_one('folder', authz__.reach[1]::text, authz__.under, authz__.hung);
       END IF;
       asked := 0;
       taken := 0;
     ELSE
       WITH hint AS MATERIALIZED (
-        SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                     UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
+        SELECT ARRAY(SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL
+                     UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY (authz__.roots) LIMIT 1001)
                      UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
       hangs AS MATERIALIZED (
         SELECT h._under, h._hung
         FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                    array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
-            FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
-              (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
+            FROM unnest(authz__.roots) AS b(_y) CROSS JOIN LATERAL (
+              (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+        UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
             WHERE e._parent IS NOT NULL) h),
       narrow AS MATERIALIZED (
         SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is),
@@ -2044,10 +2050,10 @@ BEGIN
       SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
              (SELECT count(*) FROM got g WHERE g._held = 1),
              ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
-      INTO affected, under, hung, stripes, asked, taken, held
+      INTO reach, under, hung, stripes, asked, taken, held
       FROM hint i, hangs p;
     END IF;
-    IF NOT authz__.stripes OR cardinality(authz__.affected) > 1000 THEN
+    IF NOT authz__.stripes OR cardinality(authz__.reach) > 1000 THEN
       -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
       PERFORM authz_int.tree_lock_all('folder');
       held := ARRAY[-1];
@@ -2055,44 +2061,52 @@ BEGIN
       PERFORM authz_int.tree_locks_gone();
     END IF;
     LOOP
-      locked := affected;
+      locked := reach;
       locked_under := under;
       locked_hung := hung;
       WITH RECURSIVE down(id) AS (
-      SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+      SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL
       UNION
       SELECT e._child FROM down CROSS JOIN LATERAL (
-        (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)) e)
-      SELECT (SELECT array_agg(d.id) FROM down d), h._under, h._hung INTO affected, under, hung
+        (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
+        UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)) e),
+    mine(id) AS (
+      SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+      UNION
+      SELECT e._child FROM mine CROSS JOIN LATERAL (
+        (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = mine.id OFFSET 0)) e)
+      SELECT (SELECT array_agg(d.id) FROM down d), (SELECT array_agg(m.id) FROM mine m), h._under, h._hung INTO reach, affected, under, hung
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                    array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
-            FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
-              (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
+            FROM unnest(authz__.roots) AS b(_y) CROSS JOIN LATERAL (
+              (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+        UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
             WHERE e._parent IS NOT NULL) h;
       -- the walk, under the locks, found nothing that wasn't locked: nearly always
       EXIT WHEN authz__.held = ARRAY[-1]
-                OR (authz__.affected <@ authz__.locked AND authz__.under IS NOT DISTINCT FROM authz__.locked_under
+                OR (authz__.reach <@ authz__.locked AND authz__.under IS NOT DISTINCT FROM authz__.locked_under
                     AND authz__.hung IS NOT DISTINCT FROM authz__.locked_hung);
       SELECT l.o_held, l.o_short INTO held, short
-      FROM authz_int.tree_lock('folder', authz__.affected::text[], authz__.under, authz__.hung, authz__.held, false) l;
+      FROM authz_int.tree_lock('folder', authz__.reach::text[], authz__.under, authz__.hung, authz__.held, false) l;
       IF authz__.short > 0 THEN
         SELECT l.o_held INTO held
-        FROM authz_int.tree_lock('folder', authz__.affected::text[], authz__.under, authz__.hung, authz__.held, true) l;
+        FROM authz_int.tree_lock('folder', authz__.reach::text[], authz__.under, authz__.hung, authz__.held, true) l;
       END IF;
     END LOOP;
   ELSE
     LOOP
       BEGIN
     WITH hint AS MATERIALIZED (
-          SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                       UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
+          SELECT ARRAY(SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL
+                       UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY (authz__.roots) LIMIT 1001)
                        UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
         hangs AS MATERIALIZED (
           SELECT h._under, h._hung
           FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                      array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
-              FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
-                (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
+              FROM unnest(authz__.roots) AS b(_y) CROSS JOIN LATERAL (
+                (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+          UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
               WHERE e._parent IS NOT NULL) h),
         narrow AS MATERIALIZED (
           SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is),
@@ -2125,9 +2139,9 @@ BEGIN
         SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
                (SELECT count(*) FROM got g WHERE g._held = 1),
                ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
-        INTO affected, under, hung, stripes, asked, taken, held
+        INTO reach, under, hung, stripes, asked, taken, held
         FROM hint i, hangs p;
-        IF NOT authz__.stripes OR cardinality(authz__.affected) > 1000 THEN
+        IF NOT authz__.stripes OR cardinality(authz__.reach) > 1000 THEN
           -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
           PERFORM authz_int.tree_lock_all('folder');
           held := ARRAY[-1];
@@ -2135,28 +2149,35 @@ BEGIN
           PERFORM authz_int.tree_locks_gone();
         END IF;
         LOOP
-          locked := affected;
+          locked := reach;
           locked_under := under;
           locked_hung := hung;
           WITH RECURSIVE down(id) AS (
-          SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+          SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL
           UNION
           SELECT e._child FROM down CROSS JOIN LATERAL (
-            (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)) e)
-          SELECT (SELECT array_agg(d.id) FROM down d), h._under, h._hung INTO affected, under, hung
+            (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
+            UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)) e),
+        mine(id) AS (
+          SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+          UNION
+          SELECT e._child FROM mine CROSS JOIN LATERAL (
+            (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = mine.id OFFSET 0)) e)
+          SELECT (SELECT array_agg(d.id) FROM down d), (SELECT array_agg(m.id) FROM mine m), h._under, h._hung INTO reach, affected, under, hung
           FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                        array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
-                FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
-                  (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
+                FROM unnest(authz__.roots) AS b(_y) CROSS JOIN LATERAL (
+                  (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+            UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)) e
                 WHERE e._parent IS NOT NULL) h;
           -- the walk, under the locks, found nothing that wasn't locked: nearly always
           EXIT WHEN authz__.held = ARRAY[-1]
-                    OR (authz__.affected <@ authz__.locked AND authz__.under IS NOT DISTINCT FROM authz__.locked_under
+                    OR (authz__.reach <@ authz__.locked AND authz__.under IS NOT DISTINCT FROM authz__.locked_under
                         AND authz__.hung IS NOT DISTINCT FROM authz__.locked_hung);
           SELECT l.o_held, l.o_short INTO held, short
-          FROM authz_int.tree_lock('folder', authz__.affected::text[], authz__.under, authz__.hung, authz__.held, false) l;
+          FROM authz_int.tree_lock('folder', authz__.reach::text[], authz__.under, authz__.hung, authz__.held, false) l;
           IF authz__.short > 0 THEN
-            seen := affected;
+            seen := reach;
             RAISE EXCEPTION USING ERRCODE = 'AZL01';
           END IF;
         END LOOP;
@@ -2272,7 +2293,8 @@ BEGIN
       plain := true;
     ELSE
       plain := NOT EXISTS (SELECT 1 FROM unnest(authz__.ids) AS b(_y) CROSS JOIN LATERAL (
-        (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)) e);
+        (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)
+      UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)) e);
     END IF;
     PERFORM authz_int."folder__parent__tree_refresh"(ids, shift, TG_OP <> 'DELETE', plain);
   END IF;
@@ -2420,9 +2442,10 @@ BEGIN
   RETURN true;
 END $f$;
 
--- recompute the given rows and everything linked below them; p_shift: only their own links changed
+-- recompute the given rows and everything linked below them; p_shift: only their own links changed;
+-- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids
 CREATE FUNCTION authz_int."folder__linked_into_parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
-                               p_plain boolean DEFAULT false) RETURNS void
+                               p_plain boolean DEFAULT false, p_reach bigint[] DEFAULT NULL) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
@@ -9999,7 +10022,7 @@ BEGIN
   END LOOP;
 END $ch$;
 
-SELECT authz_int.sync_refresh('9909a980df7d84abc44a95d530456c48');
+SELECT authz_int.sync_refresh('ed6bdcb5145b08cd3166e94ff697dfe4');
 DO $sw$
 DECLARE n bigint; m bigint;
 BEGIN

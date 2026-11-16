@@ -12,7 +12,7 @@ DB=${1:-authz_concurrency}
 T=$(mktemp -d)
 . tests/races.sh
 # whatever way the suite ends: the sessions it left running, its databases and its files
-cleanup() { stop_sessions; for d in "$DB" "${DB}_cross" "${DB}_two" "${DB}_self" "${DB}_roles"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
+cleanup() { stop_sessions; for d in "$DB" "${DB}_cross" "${DB}_two" "${DB}_both" "${DB}_self" "${DB}_roles"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
 trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 fails=0
@@ -110,14 +110,15 @@ read -r y m p q t <<< "$(psql -X -Atq -F ' ' -d "$DB" -c "SELECT x.ids[1], x.ids
   SELECT array_agg(c.id ORDER BY c.s) AS ids FROM (SELECT DISTINCT ON (s) g AS id, hashtext(g::text) & ($STRIPES - 1) AS s
     FROM generate_series(1000, 1999) g ORDER BY s, g LIMIT 5) c) x")"
 slot() { psql -X -Atq -d "$DB" -c "SELECT (hashtext('$1') & ($STRIPES - 1)) * ($BORN + 1)"; }
-# a session of the suite's that holds a lock row until its end ($1 its name and its pipe, $2 the slot)
+# a session of the suite's that holds a lock row until its end ($1 its name and its pipe, $2 the slot; RACE_DB the
+# database, else DB, and LOCK_TYPE the type, else folder)
 holds() {
   mkfifo "$T/$1"
-  PGAPPNAME=authz_conc_$1 psql -X -q -d "$DB" < "$T/$1" > /dev/null 2>&1 &
+  PGAPPNAME=authz_conc_$1 psql -X -q -d "${RACE_DB:-$DB}" < "$T/$1" > /dev/null 2>&1 &
   eval "exec $3> \"$T/$1\""
-  echo "BEGIN; SELECT 1 FROM $LOCKS WHERE type = 'folder' AND slot = $2 FOR UPDATE;" >&"$3"
+  echo "BEGIN; SELECT 1 FROM $LOCKS WHERE type = '${LOCK_TYPE:-folder}' AND slot = $2 FOR UPDATE;" >&"$3"
   for _ in $(seq 240); do
-    [ "$(psql -X -Atq -d "$DB" -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
+    [ "$(psql -X -Atq -d "${RACE_DB:-$DB}" -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
           AND application_name = 'authz_conc_$1' AND state = 'idle in transaction'")" = 1 ] && return 0
     sleep 0.25
   done
@@ -129,7 +130,7 @@ lets_go() {
   printf 'ROLLBACK;\n\\q\n' >&"$2"
   eval "exec $2>&-"
   for _ in $(seq 240); do
-    [ "$(psql -X -Atq -d "$DB" -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
+    [ "$(psql -X -Atq -d "${RACE_DB:-$DB}" -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
           AND application_name = 'authz_conc_$1'")" = 0 ] && return 0
     sleep 0.25
   done
@@ -325,6 +326,56 @@ RACE_DB=$X go; wait
 if [ -z "$got" ]; then echo "ok    a project update that changes none doesn't wait for a folder's move"
 else echo "FAIL  a project update that changes none, while a folder is moved: $got"; fails=$((fails + 1)); fi
 dropdb "$X"; rm -f "$T/two.authz" "$T/two.sql"
+
+echo "-- two trees of one type whose links differ: a statement's first trigger asks for the lock rows of both"
+# A node's edit comes down from its parent; its view from its parent and from the nodes it is shown in. So the
+# type has two trees, and the triggers of the one through parent alone run first (by their names). A move of m,
+# which s is shown in, writes m in the first tree, and m and s in the second. Were each trigger to ask for its own
+# tree's lock rows, the move would take m's and then wait for s's, which stands before it: two such statements
+# could wait for each other. Nodes are chosen by where their lock rows stand: s first, then m, then the target.
+X="${DB}_both"
+dropdb --if-exists "$X" 2>/dev/null; createdb "$X" || exit 1
+cat > "$T/both.authz" <<'POLICY'
+app role app_user
+type user = bt.users
+type node = bt.nodes
+  owner  : user = owner_id
+  parent : node = parent_id
+  shown  : node = bt.shown(node_id -> in_id)
+  can edit = owner or parent.edit
+  can view = edit or parent.view or shown.view
+rules bt.nodes
+  select : view
+POLICY
+read -r s m t <<< "$(psql -X -Atq -F ' ' -d "$DB" -c "SELECT x.ids[1], x.ids[2], x.ids[3] FROM (
+  SELECT array_agg(c.id ORDER BY c.s) AS ids FROM (SELECT DISTINCT ON (s) g AS id, hashtext(g::text) & ($STRIPES - 1) AS s
+    FROM generate_series(1000, 1999) g ORDER BY s, g LIMIT 3) c) x")"
+python3 compile_policy.py "$T/both.authz" > "$T/both.sql" &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -c "CREATE SCHEMA bt" \
+    -c "CREATE TABLE bt.users (id bigint PRIMARY KEY)" \
+    -c "CREATE TABLE bt.nodes (id bigint PRIMARY KEY, parent_id bigint, owner_id bigint)" \
+    -c "CREATE TABLE bt.shown (node_id bigint NOT NULL, in_id bigint NOT NULL)" \
+    -c "INSERT INTO bt.users VALUES (1)" -f "$T/both.sql" \
+    -c "INSERT INTO bt.nodes (id, owner_id) VALUES ($s, 1), ($m, 1), ($t, 1)" \
+    -c "INSERT INTO bt.shown VALUES ($s, $m)" >/dev/null || { echo "setup failed (both)"; exit 1; }
+first=$(psql -X -Atq -d "$X" -c "SELECT tgname FROM pg_trigger WHERE tgrelid = 'bt.nodes'::regclass AND tgname LIKE '%\_tree\_upd' ORDER BY tgname LIMIT 1")
+[ "$first" = authz_node__parent__tree_upd ] && echo "ok    the triggers of the tree through parent alone run first" ||
+  { echo "FAIL  the first tree trigger on bt.nodes is $first: this check is of the other order"; fails=$((fails + 1)); }
+RACE_DB=$X LOCK_TYPE=node holds h3 "$(slot "$s")" 9
+PGAPPNAME=authz_conc_a psql -X -q -d "$X" -c "UPDATE bt.nodes SET parent_id = $t WHERE id = $m" > "$out" 2>&1 &
+RACE_DB=$X blocked authz_conc_a            # it waits for the lock row of s, which only the second tree's write is of
+free=$(psql -X -Atq -d "$X" -c "SELECT count(*) FROM (SELECT 1 FROM $LOCKS WHERE type = 'node'
+  AND slot IN ($(slot "$m"), $(slot "$t")) FOR UPDATE NOWAIT) x" 2>&1)
+[ "$free" = 2 ] && echo "ok    a move that waits for a lock row only its second tree needs holds none that stand after it" ||
+  { echo "FAIL  the move waits for a lock row of its second tree holding its first tree's: $(echo "$free" | head -c 200)"; fails=$((fails + 1)); }
+RACE_DB=$X lets_go h3 9
+wait
+got=$(psql -X -Atq -d "$X" -c "SELECT (SELECT parent_id FROM bt.nodes WHERE id = $m) = $t AND authz.verify()
+  AND EXISTS (SELECT 1 FROM authz_int.\"node__parent_shown__tree\" WHERE descendant = $s AND ancestor = $t)
+  AND NOT EXISTS (SELECT 1 FROM authz_int.\"node__parent__tree\" WHERE descendant = $s AND ancestor = $t)")
+[ "$got" = t ] && echo "ok    the move is in: what is shown in the moved node views through the target, and both trees match a rebuild" ||
+  { echo "FAIL  the trees after the move ($(head -c 200 "$out"))"; fails=$((fails + 1)); }
+dropdb "$X"; rm -f "$T/both.authz" "$T/both.sql"
 
 echo "-- conditions that read their tree's own table: checked again after a statement there that writes a row"
 # a folder inherits from the folder above unless that one is sealed; a shelf from its box unless the box is sealed,

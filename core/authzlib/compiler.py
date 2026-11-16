@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TypeAlias, TypedDict, assert_never
 
 from .parse import (
@@ -101,6 +101,21 @@ class NextTree(TypedDict):
     objects: list[tuple[str, str]]  # (kind, key) of what the first migration makes
     build: str  # the first migration's SQL
     catch_up: str  # the second's: what changed since the first one's snapshot
+
+
+@dataclass(frozen=True)
+class TreeReach:
+    """What a tree of one type reads to say which lock rows a write takes (TreeMixin.ensure_tree), and how the
+    functions that take them are written once the type's other trees are known (TreeMixin.one_lock_set)."""
+
+    name: str
+    # each of its link sources, by its relation and its place among the relation's sources: (the column asked,
+    # the value) -> a lookup of the links (_child, _parent) with that value
+    lookups: dict[tuple[str, int], Callable[[str, str], str]]
+    changed: tuple[str, ...]  # the changes to a row's own columns that are a write to the tree
+    # its refresh and its row triggers as written for the tree alone, and for the trees of its type together
+    own: tuple[str, str]
+    texts: Callable[[Sequence[TreeReach]], tuple[str, str]]
 
 
 def rule_name(rule: Rule) -> str:
@@ -308,6 +323,8 @@ class Core:
         # ...those with a tree whose writes may lock only what they touch, and those with one whose writes may not
         self.narrow_types: set[str] = set()
         self.wide_types: set[str] = set()
+        # type -> its trees of one type alone whose writes may lock only what they touch
+        self.tree_reach: dict[str, list[TreeReach]] = {}
         self.cond_lines: dict[tuple[str, str], Loc] = {}  # (type, condition) -> loc, for apply-time errors
         self.columns: list[tuple[str, str, Loc]] = []  # (table, column, loc) to check exist
         self.pk_checks: list[tuple[str, str, str, Loc]] = []  # (table, pk, pktype, loc)
