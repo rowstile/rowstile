@@ -102,13 +102,13 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('user__manager__tree', 'd456169c8b67832f56b0746a48a76f7e', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('user__manager__tree', '83b513bc672db9b041ba773a651ed063', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."users"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'user__manager__tree'), ('folder_project__folder_parent__tree', '541122641e4ba4f1ef4b7c8dd5511877', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__folder_parent__tree'), ('folder__parent__tree', 'e96c62944d1f6f2f51a9954d5fd48bbb', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__folder_parent__tree'), ('folder__parent__tree', 'f7495a99674435bfbcbe42deb49bcfc5', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree')) n(name, hash, oids, rel)
@@ -1197,7 +1197,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('user__manager__tree', 'd456169c8b67832f56b0746a48a76f7e', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('user__manager__tree', '83b513bc672db9b041ba773a651ed063', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."users"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
@@ -1205,7 +1205,7 @@ INSERT INTO authz_int.trees VALUES
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__parent__tree', 'e96c62944d1f6f2f51a9954d5fd48bbb', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', 'f7495a99674435bfbcbe42deb49bcfc5', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -2024,13 +2024,14 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mo
 <<authz__>>
 DECLARE
   affected bigint[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
-  locked bigint[]; locked_under text[]; locked_hung text[];
+  locked bigint[]; locked_under text[]; locked_hung text[]; seen bigint[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   IF p_plain THEN
     WITH hint AS MATERIALIZED (
       SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                   UNION SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1)) AS _ids),
+                   UNION SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1)
+                   UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
     hangs AS MATERIALIZED (
       SELECT h._under, h._hung
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
@@ -2109,7 +2110,8 @@ BEGIN
       BEGIN
     WITH hint AS MATERIALIZED (
           SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                       UNION SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1)) AS _ids),
+                       UNION SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1)
+                       UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
         hangs AS MATERIALIZED (
           SELECT h._under, h._hung
           FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
@@ -2179,12 +2181,16 @@ BEGIN
           SELECT l.o_held, l.o_short INTO held, short
           FROM authz_int.tree_lock('user', authz__.affected::text[], authz__.under, authz__.hung, authz__.held, false) l;
           IF authz__.short > 0 THEN
+            seen := affected;
             RAISE EXCEPTION USING ERRCODE = 'AZL01';
           END IF;
         END LOOP;
         EXIT;
       EXCEPTION WHEN SQLSTATE 'AZL01' THEN
-        NULL;  -- what this try took is let go: again, in order, from what is stored now
+        -- what this try took is let go. Again, in order: what is stored now and what the walk had found (seen keeps
+        -- its value: a block that is rolled back doesn't take its variables back). Without it a row that hangs
+        -- below without inheriting, which the stored rows never show, would be asked for without waiting each time
+        NULL;
       END;
     END LOOP;
   END IF;
@@ -2660,13 +2666,14 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mo
 <<authz__>>
 DECLARE
   affected text[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
-  locked text[]; locked_under text[]; locked_hung text[];
+  locked text[]; locked_under text[]; locked_hung text[]; seen text[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   IF p_plain THEN
     WITH hint AS MATERIALIZED (
       SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                   UNION SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1)) AS _ids),
+                   UNION SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1)
+                   UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
     hangs AS MATERIALIZED (
       SELECT h._under, h._hung
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
@@ -2748,7 +2755,8 @@ BEGIN
       BEGIN
     WITH hint AS MATERIALIZED (
           SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                       UNION SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1)) AS _ids),
+                       UNION SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1)
+                       UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
         hangs AS MATERIALIZED (
           SELECT h._under, h._hung
           FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
@@ -2821,12 +2829,16 @@ BEGIN
           SELECT l.o_held, l.o_short INTO held, short
           FROM authz_int.tree_lock('folder', authz__.affected::text[], authz__.under, authz__.hung, authz__.held, false) l;
           IF authz__.short > 0 THEN
+            seen := affected;
             RAISE EXCEPTION USING ERRCODE = 'AZL01';
           END IF;
         END LOOP;
         EXIT;
       EXCEPTION WHEN SQLSTATE 'AZL01' THEN
-        NULL;  -- what this try took is let go: again, in order, from what is stored now
+        -- what this try took is let go. Again, in order: what is stored now and what the walk had found (seen keeps
+        -- its value: a block that is rolled back doesn't take its variables back). Without it a row that hangs
+        -- below without inheriting, which the stored rows never show, would be asked for without waiting each time
+        NULL;
       END;
     END LOOP;
   END IF;

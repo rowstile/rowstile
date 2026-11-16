@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('doc__parent_shortcut__tree2', 'b2fdd49d9f06a5eae4e33460d4914acf', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('doc__parent_shortcut__tree2', 'ae68c0f794aa9f95df67fa93021a66a8', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'doc__parent_shortcut__tree2')) n(name, hash, oids, rel)
@@ -909,7 +909,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('doc__parent_shortcut__tree2', 'b2fdd49d9f06a5eae4e33460d4914acf', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('doc__parent_shortcut__tree2', 'ae68c0f794aa9f95df67fa93021a66a8', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -2287,13 +2287,14 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mo
 <<authz__>>
 DECLARE
   affected bigint[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
-  locked bigint[]; locked_under text[]; locked_hung text[];
+  locked bigint[]; locked_under text[]; locked_hung text[]; seen bigint[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   IF p_plain THEN
     WITH hint AS MATERIALIZED (
       SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                   UNION SELECT s.descendant FROM authz_int."doc__parent_shortcut__tree2" s WHERE s.ancestor = ANY ($1)) AS _ids),
+                   UNION SELECT s.descendant FROM authz_int."doc__parent_shortcut__tree2" s WHERE s.ancestor = ANY ($1)
+                   UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
     hangs AS MATERIALIZED (
       SELECT h._under, h._hung
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
@@ -2378,7 +2379,8 @@ BEGIN
       BEGIN
     WITH hint AS MATERIALIZED (
           SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                       UNION SELECT s.descendant FROM authz_int."doc__parent_shortcut__tree2" s WHERE s.ancestor = ANY ($1)) AS _ids),
+                       UNION SELECT s.descendant FROM authz_int."doc__parent_shortcut__tree2" s WHERE s.ancestor = ANY ($1)
+                       UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
         hangs AS MATERIALIZED (
           SELECT h._under, h._hung
           FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
@@ -2454,12 +2456,16 @@ BEGIN
           SELECT l.o_held, l.o_short INTO held, short
           FROM authz_int.tree_lock('doc', authz__.affected::text[], authz__.under, authz__.hung, authz__.held, false) l;
           IF authz__.short > 0 THEN
+            seen := affected;
             RAISE EXCEPTION USING ERRCODE = 'AZL01';
           END IF;
         END LOOP;
         EXIT;
       EXCEPTION WHEN SQLSTATE 'AZL01' THEN
-        NULL;  -- what this try took is let go: again, in order, from what is stored now
+        -- what this try took is let go. Again, in order: what is stored now and what the walk had found (seen keeps
+        -- its value: a block that is rolled back doesn't take its variables back). Without it a row that hangs
+        -- below without inheriting, which the stored rows never show, would be asked for without waiting each time
+        NULL;
       END;
     END LOOP;
   END IF;
