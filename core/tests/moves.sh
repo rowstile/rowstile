@@ -115,4 +115,35 @@ got=$(psql -X -q -At -d "$L" -v VERBOSITY=verbose -c "UPDATE lp.orgs SET setting
   [ "$(psql -X -q -At -d "$L" -c "SELECT settings_id IS NULL AND authz.verify() FROM lp.orgs")" = t ] &&
   echo "ok    the write that would close the loop is refused, by its words, and the tables match a rebuild" ||
   { echo "FAIL  a loop round four tables: $got"; fails=$((fails + 1)); }
+echo "-- 6. a trigger of the app's that writes the folder again, before the statement is done"
+# (rowstile's own triggers get each write's rows; what they leave must be what the table holds at the end)
+PSQL >/dev/null <<'SQL'
+CREATE FUNCTION app.move_on() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+  IF NEW.name LIKE 'on to %' THEN
+    UPDATE app.folders SET parent_id = substr(NEW.name, 7)::bigint, name = 'moved on' WHERE id = NEW.id;
+  ELSIF NEW.name = 'out' THEN
+    UPDATE app.folders SET parent_id = NULL, name = 'taken out' WHERE id = NEW.id;
+  ELSIF NEW.name = 'gone' THEN
+    DELETE FROM app.folders WHERE id = NEW.id;
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER move_on AFTER INSERT OR UPDATE ON app.folders FOR EACH ROW EXECUTE FUNCTION app.move_on();
+SQL
+F=$(PSQL -c "SELECT id FROM app.folders WHERE parent_id = 1000 ORDER BY id LIMIT 1")   # many folders below it
+G=$(PSQL -c "SELECT id FROM app.folders WHERE parent_id = 1000 AND id <> $F ORDER BY id LIMIT 1")   # beside it
+PSQL -c "UPDATE app.folders SET parent_id = 2000, name = 'on to $G' WHERE id = $F"
+check "a folder moved, then moved on by the trigger: it is where the trigger put it, and the tables match a rebuild" \
+  "SELECT parent_id = $G AND authz.verify() FROM app.folders WHERE id = $F"
+PSQL -c "UPDATE app.folders SET parent_id = 1000, name = 'out' WHERE id = $F"
+check "... moved, then taken out of any folder by the trigger" "SELECT parent_id IS NULL AND authz.verify() FROM app.folders WHERE id = $F"
+PSQL -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (9001, 1, $F, 5, 'on to $G')"
+check "... made in a folder, then moved by the trigger" "SELECT parent_id = $G AND authz.verify() FROM app.folders WHERE id = 9001"
+PSQL -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (9002, 1, $F, 5, 'gone')"
+check "... made in a folder, then deleted by the trigger" "SELECT NOT EXISTS (SELECT 1 FROM app.folders WHERE id = 9002) AND authz.verify()"
+PSQL -c "UPDATE app.folders SET parent_id = $F, name = 'gone' WHERE id = 9001"
+check "... moved, then deleted by the trigger" "SELECT NOT EXISTS (SELECT 1 FROM app.folders WHERE id = 9001) AND authz.verify()"
+PSQL -c "DROP TRIGGER move_on ON app.folders" -c "DROP FUNCTION app.move_on()"
+
 [ $fails -eq 0 ] && echo "all move checks passed" || { echo "$fails move checks failed"; exit 1; }
