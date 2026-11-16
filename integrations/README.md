@@ -54,6 +54,12 @@ with its address. A body that is no JSON is 400 in SCIM's words, and an error 50
 app's log. The app's own `user(request)` isn't asked about a provider's request, in an app mounted in another
 too, and a sync engine answers as the async one does.
 
+`nextjs/` mounts the TypeScript SDK's (`app/scim/v2/[...scim]/route.ts`, `tests/scim.test.ts`) and sends the
+same requests, each twice: through the server, as a provider reaches it, and to the same handlers in the
+test's own process, where what runs of the SDK is measured. Beside the above: a HEAD is the database's to
+refuse, a server with a pool of one connection answers, the address of what was made is on the host a proxy
+handed on, and each driver's `scim()` asks the database the same way (Prisma, pg, postgres.js, Drizzle).
+
 The Next.js suite (`integrations/nextjs`) also runs checks 1, 2, 4 to 7 and 9 through Neon's serverless driver, on
 the Node.js runtime and on the edge (`edge/`, an app of its own), behind Neon's `wsproxy`, and check 10 through a
 BullMQ queue on Redis: a preview.

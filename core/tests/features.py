@@ -102,6 +102,7 @@ NEXT_NEXT = "integrations/nextjs/tests/next.test.ts"
 REACT = "integrations/nextjs/tests/react.test.tsx"
 NEXT_NEON = "integrations/nextjs/tests/neon.test.ts"
 NEXT_JOBS = "integrations/nextjs/tests/jobs.test.ts"
+NEXT_SCIM = "integrations/nextjs/tests/scim.test.ts"
 GO = "integrations/go/app/conformance_test.go"
 GO_SDK = "integrations/go/app/sdk_test.go"
 GO_POLICY = "integrations/go/policychange/policychange_test.go"
@@ -466,6 +467,11 @@ FEATURES: list[Feature] = [
             Check(FASTAPI_SCIM, "test_scim_a_patch_changes_the_members_and_the_policy_follows"),
             Check(FASTAPI_SCIM, "test_scim_a_user_made_is_answered_with_where_it_is"),
             Check(FASTAPI_SCIM, "test_scim_requests_are_not_user_requests"),
+            # the TypeScript SDK's route for Next.js: the same requests, through the server and to the handlers
+            Check(NEXT_SCIM, "only the provider's key is answered"),
+            Check(NEXT_SCIM, "a PATCH changes the members and the policy follows"),
+            Check(NEXT_SCIM, "a user made is answered with where it is"),
+            Check(NEXT_SCIM, "requests are not user requests: user() is never asked"),
         ),
         (T(DIFF, "authz.scim("),),
     ),

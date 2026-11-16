@@ -10,11 +10,12 @@
  *     export const PATCH = route(async (req, { params }) => { ... });   // Refused: 403, NotFound: 404
  *     export const rename = action(async (id: number, name: string) => { ... });   // { ok, value } or { ok: false, problem }
  *     export const { GET, POST } = authzRoutes({ calls: db.$authz, changes: changes(pool) });   // for @rowstile/react
+ *     export const { GET, POST, PUT, PATCH, DELETE } = scimRoutes({ calls: db.$authz });   // an identity provider's users and groups
  */
 import { connection } from "next/server.js";   // next has no exports map: Node needs the file name
 import {
   beforeSignIn, problemOf, problemResponse, translate,
-  type AuthzCalls, type Principal, type Problem,
+  type AuthzCalls, type Principal, type Problem, type ScimAnswer,
 } from "@rowstile/client";
 
 async function keepOutOfCaches(p: Principal): Promise<void> {
@@ -205,6 +206,82 @@ function events(req: Request, changes: ((onChange: () => void) => () => void) | 
   return new Response(stream, {
     headers: { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive" },
   });
+}
+
+export interface ScimOptions {
+  /** The runtime's functions: db.$authz (Prisma), authz(pool) (pg), ... Each request is asked in a transaction of
+   *  its own, which signs nobody in. */
+  calls: { scim(method: string, path: string, query: string, body: string | null, token: string | null): Promise<ScimAnswer> };
+}
+
+const SCIM = { "content-type": "application/scim+json" };
+// the route's own two answers, in SCIM's words
+const SCIM_NO_TEXT = JSON.stringify({ schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"], status: "400",
+  scimType: "invalidSyntax", detail: "the request is no text: bytes that are no UTF-8, or a NUL" });
+const SCIM_FAILED = JSON.stringify({ schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"], status: "500",
+  detail: "the request failed: the app's log says why" });
+
+/** Where the request came in, for the address of what it made. Next.js builds a request's URL from the server's own
+ *  host name and port, and keeps the host and the scheme the provider asked in x-forwarded-host and x-forwarded-proto
+ *  (what the proxies in front handed on, the first of each; without a proxy, the request's own). */
+function askedAt(req: Request, url: URL): string {
+  const first = (name: string) => req.headers.get(name)?.split(",")[0].trim();
+  const host = first("x-forwarded-host");
+  return host ? `${first("x-forwarded-proto") || url.protocol.slice(0, -1)}://${host}` : url.origin;
+}
+
+/** An identity provider's SCIM requests (Okta, Microsoft Entra ID), for a catch-all route
+ *  (app/scim/v2/[...scim]/route.ts): its users and groups, answered by the database (authz.scim, once
+ *  authz.set_scim said what it reads). Each handler passes the request on (the method, the path below the route, the
+ *  query string and the body as they were sent, the bearer token) and sends back what the database answers, with the
+ *  address of what was made and, for a 401, WWW-Authenticate.
+ *
+ *  The token alone says who asks: it is an API key of the principal the settings name. user() isn't asked about these
+ *  requests and their transaction signs nobody in, whatever session the request also carries; so keep the route out
+ *  of what a proxy.ts or middleware.ts of the app's asks a session for. The body goes on unread: the database says when
+ *  it is no JSON, once it knows who asks. Only a request that is no text (bytes that are no UTF-8, a NUL) is answered
+ *  here, 400. An error (settings that no longer hold, the app's own function failing) is answered 500 in SCIM's words
+ *  and logged with console.error: the provider sees none of the database's words. */
+export function scimRoutes(options: ScimOptions) {
+  const { calls } = options;
+  const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });   // (ignoreBOM: a mark stays, as it was sent)
+  const handler = async (req: Request, context: { params: Promise<Record<string, string | string[] | undefined>> }): Promise<Response> => {
+    const url = new URL(req.url);
+    // the path below the route: as many of the address's last parts as the route's catch-all segment took (read
+    // from the address itself, whose escapes are read here once)
+    const taken = Object.values(await context.params).find(Array.isArray)?.length ?? 0;
+    const parts = (url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname).split("/");
+    const [scheme, ...token] = (req.headers.get("authorization") ?? "").split(" ");
+    const sent = new Uint8Array(await req.arrayBuffer());
+    let asked: [method: string, path: string, query: string, body: string | null, token: string | null];
+    try {
+      asked = [
+        req.method,
+        parts.slice(parts.length - taken).map(decodeURIComponent).join("/"),
+        url.search.slice(1),
+        sent.length ? text.decode(sent) : null,     // as it was sent: the database reads it, once it knows who asks
+        scheme.toLowerCase() === "bearer" ? token.join(" ").trim() : null,
+      ];
+      if (asked.some((part) => part?.includes("\0"))) throw new TypeError("a NUL, which no text of the database holds");
+    } catch {                                      // that, bytes that are no UTF-8 or an escape that is none: nothing to pass on
+      return new Response(SCIM_NO_TEXT, { status: 400, headers: SCIM });
+    }
+    let answer: ScimAnswer;
+    try {
+      answer = await calls.scim(...asked);
+    } catch (e) {
+      console.error(`rowstile: authz.scim failed (${asked[0]} ${JSON.stringify(asked[1])})`, e);
+      return new Response(SCIM_FAILED, { status: 500, headers: SCIM });
+    }
+    const headers = new Headers(answer.body === null ? undefined : SCIM);
+    if (answer.location !== null) {                 // what was made: the route's own address, then where the database says it is
+      headers.set("location", askedAt(req, url) + parts.slice(0, parts.length - taken).join("/") + "/" +
+        answer.location.split("/").map(encodeURIComponent).join("/"));
+    }
+    if (answer.status === 401) headers.set("www-authenticate", "Bearer");
+    return new Response(answer.body, { status: answer.status, headers });
+  };
+  return { GET: handler, POST: handler, PUT: handler, PATCH: handler, DELETE: handler };
 }
 
 export { keepOutOfCaches };

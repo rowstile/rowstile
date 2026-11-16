@@ -42,8 +42,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `user(request)` isn't asked about these requests and their transaction signs nobody in. The body goes on as it
   was sent: the database says when it is no JSON, once the key says who asks, so nothing a stranger sends is an
   error. An error is answered 500 in SCIM's words and logged (the logger `rowstile`). On another framework,
-  `rowstile.sqlalchemy.scim()` and `scim_sync()` ask the database the same way. The TypeScript SDK's route
-  follows: the limits page still says there is no endpoint to mount
+  `rowstile.sqlalchemy.scim()` and `scim_sync()` ask the database the same way. The TypeScript SDK has it
+  for Next.js: `export const { GET, POST, PUT, PATCH, DELETE } = scimRoutes({ calls: db.$authz })` in a
+  catch-all route (`app/scim/v2/[...scim]/route.ts`) answers the same way, an error logged with
+  `console.error`; the address of what was made is on the host the provider asked (`x-forwarded-host`). On
+  another framework, `scim(method, path, query, body, token)` of each driver's calls (`db.$authz`,
+  `authz(pool)`) asks the database. The limits page still says there is no endpoint to mount: the stack
+  pages follow
   ([App code](docs/reference/app-code.md)).
 
 ### Changed
