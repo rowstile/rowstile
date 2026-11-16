@@ -63,11 +63,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   or migration writes the functions again.
 - A write to a tree (a folder made, moved, linked or deleted, where folders inherit from folders) is faster. The
   functions that keep the stored inheritance take arrays, and Postgres planned each of their statements again on
-  every write; they now plan them once for a connection. On a GitHub runner (50,000 folders 20 levels deep, the
-  two builds in turn on the one machine, two rounds), one client does 236 tree writes a second where it did 199,
-  ten clients 287 where they did 229, fifty 229 where they did 188: a fifth to a quarter more. A write of more
-  than a thousand rows still gets plans made for it, as a big move needs. Nothing to do: the next `apply` or
-  migration writes the functions again, and each inheritance is worked out again with them (see Upgrading).
+  every write; they now plan them once for a connection. On GitHub runners (50,000 folders 20 levels deep, the two
+  builds in turn on one machine, two rounds, run twice), one client does 236 tree writes a second where it did 177
+  to 199, and ten clients 270 to 287 where they did 229 to 241; at fifty clients one run gave a fifth more (229
+  against 188) and the other the same (196 against 200). A write of more than a thousand rows still gets plans
+  made for it, as a big move needs: one of 17,000 folders takes what it took (0.82 s against 0.79). Nothing to
+  do: the next `apply` or migration writes the functions again, and each inheritance is worked out again with
+  them (see Upgrading).
 
 ### Fixed
 
