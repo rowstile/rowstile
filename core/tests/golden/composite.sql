@@ -102,13 +102,13 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('user__manager__tree', '83b513bc672db9b041ba773a651ed063', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('user__manager__tree', '4bd6c2d305473712e2b8188da383dc0d', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."users"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'user__manager__tree'), ('folder_project__folder_parent__tree', '541122641e4ba4f1ef4b7c8dd5511877', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__folder_parent__tree'), ('folder__parent__tree', 'f7495a99674435bfbcbe42deb49bcfc5', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__folder_parent__tree'), ('folder__parent__tree', '708fb179a7103401b05a1fe607f0a1ab', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree')) n(name, hash, oids, rel)
@@ -1197,7 +1197,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('user__manager__tree', '83b513bc672db9b041ba773a651ed063', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('user__manager__tree', '4bd6c2d305473712e2b8188da383dc0d', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."users"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
@@ -1205,7 +1205,7 @@ INSERT INTO authz_int.trees VALUES
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__parent__tree', 'f7495a99674435bfbcbe42deb49bcfc5', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', '708fb179a7103401b05a1fe607f0a1ab', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -2030,7 +2030,7 @@ BEGIN
   IF p_plain THEN
     WITH hint AS MATERIALIZED (
       SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                   UNION SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1)
+                   UNION (SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
                    UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
     hangs AS MATERIALIZED (
       SELECT h._under, h._hung
@@ -2110,7 +2110,7 @@ BEGIN
       BEGIN
     WITH hint AS MATERIALIZED (
           SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                       UNION SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1)
+                       UNION (SELECT s.descendant FROM authz_int."user__manager__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
                        UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
         hangs AS MATERIALIZED (
           SELECT h._under, h._hung
@@ -2672,7 +2672,7 @@ BEGIN
   IF p_plain THEN
     WITH hint AS MATERIALIZED (
       SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                   UNION SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1)
+                   UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
                    UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
     hangs AS MATERIALIZED (
       SELECT h._under, h._hung
@@ -2755,7 +2755,7 @@ BEGIN
       BEGIN
     WITH hint AS MATERIALIZED (
           SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                       UNION SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1)
+                       UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT 1001)
                        UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
         hangs AS MATERIALIZED (
           SELECT h._under, h._hung

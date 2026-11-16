@@ -718,7 +718,8 @@ END $f$;""")
             # The locks are those of what the write touches: the rows it writes, which are p_ids and everything
             # below them, and the rows p_ids hang under (tree_lock_ctes says which lock rows, and how they are
             # taken). What is below is only known for sure once it can't change. So one statement reads what the
-            # stored rows say is below (an index scan, no walk) and what p_ids hang under, and takes those locks;
+            # stored rows say is below (an index scan, no walk; one row past the limit at most: a write that big
+            # takes the whole type, whatever else is below) and what p_ids hang under, and takes those locks;
             # then the tree is walked, under them. Nearly always the walk finds what was locked and the write goes
             # on: two statements, as under the type's lock. When it finds more (a row was hung below since), that
             # is asked for without waiting, and the tree is walked again. If a row isn't free, the write would have
@@ -743,7 +744,7 @@ END $f$;""")
             def rounds(short: str) -> str:
                 return f"""WITH hint AS MATERIALIZED (
       SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                   UNION SELECT s.descendant FROM {f("")} s WHERE s.ancestor = ANY ($1)
+                   UNION (SELECT s.descendant FROM {f("")} s WHERE s.ancestor = ANY ($1) LIMIT {TREE_LOCK_LIMIT + 1})
                    UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
     hangs AS MATERIALIZED (
       SELECT h._under, h._hung
