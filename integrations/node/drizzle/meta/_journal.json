@@ -267,6 +267,13 @@
       "when": 1794786631455,
       "tag": "0037_authz_a_column_wins",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794792951168,
+      "tag": "0038_authz_scim_groups",
+      "breakpoints": true
     }
   ]
 }
