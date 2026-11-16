@@ -45,6 +45,11 @@ test "found, new, old and p_id are the row's columns wherever a condition names 
   as user 1 sees 1 {SELECT WHERE authz.can('find', 2, 'view') AND NOT authz.can('find', 3, 'view')}
   as user 1 sees 1 {SELECT FROM authz.explain('find', 2, 'view') e WHERE e LIKE 'yes  user % holds view on find 2'}
   as user 2 sees 1 {SELECT WHERE ARRAY(SELECT w FROM authz.who('find', 5, 'view') w ORDER BY w) = '{2,3}'}
+  as user 2 sees 1 {SELECT WHERE ARRAY(SELECT w FROM authz.who('find', 5, 'edit') w ORDER BY w) = '{2}'}
+  as user 2 sees 1 {SELECT WHERE ARRAY(SELECT w FROM authz.who('find', 5, 'share') w ORDER BY w) = '{2}'}
+  as user 2 sees 1 {SELECT FROM authz.explain('find', 5, 'edit') e WHERE e LIKE 'yes  user % holds edit on find 5'}
+  as user 2 sees 1 {SELECT FROM authz.explain('find', 6, 'edit') e WHERE e LIKE 'no   user % does not hold edit on find 6'}
+  as user 2 sees 1 {SELECT FROM authz.explain('find', 5, 'share') e WHERE e LIKE 'yes  user % holds share on find 5'}
   as user 1 allowed {INSERT INTO app.finds (id, owner_id) VALUES (10, 1)}
   as user 1 refused {INSERT INTO app.finds (id, owner_id, found) VALUES (11, 1, false)}
   as user 2 allowed {UPDATE app.finds SET new = false WHERE id = 5}
