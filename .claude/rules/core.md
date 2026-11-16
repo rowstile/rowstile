@@ -20,6 +20,9 @@ What each part of `core/` holds, how its suites run, and the rules the compiler 
     - `output.py` — assembles the final SQL (`compile()`), RLS policies, `can/list/perms`, sharing API, masked views
     - `insight.py` — `who`, `explain`, `list_shares`
     - `identity.py` — scopes, API keys, JWT login, view_as, sync_members, audit helper
+    - `scim.py` — the SCIM endpoint answered in SQL: `authz.scim` (a request's parts in, a status and a body out;
+      groups so far) and `authz.set_scim` (what it reads, checked when set); a refusal is an answer, an error only
+      what the app must see (settings that no longer hold, the app's function failing)
     - `governance.py` — audit/feed triggers, requests, break_glass, reviews, invariants, diff (`diff_parts`)
     - `hardening.py` — `authz.lint()`
     - `devtools.py` — graph (Mermaid), clients (py, ts; with `Refused`, `NotFound`, `refusal`, `expect`, `who_among`;

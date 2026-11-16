@@ -111,6 +111,9 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ717](AZ717.md): A share of yours is in the way
 - [AZ718](AZ718.md): The review's deadline passed
 - [AZ719](AZ719.md): A key set with no key to check tokens with
+- [AZ720](AZ720.md): SCIM settings that don't hold
+- [AZ721](AZ721.md): A SCIM request the endpoint doesn't serve
+- [AZ722](AZ722.md): SCIM settings that no longer hold
 
 ## The sync index (a preview)
 

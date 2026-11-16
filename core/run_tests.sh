@@ -218,15 +218,17 @@ unit policy 7 policy_errors
 fi
 
 identities() {
-step "identities: scopes, API keys, JWT, view as, group sync, signed sessions"
+step "identities: scopes, API keys, JWT, view as, group sync, the SCIM endpoint, signed sessions"
 tests/identity.sh
 record $? "identity"
 tests/principals.sh
 record $? "principals"
+tests/scim.sh
+record $? "scim"
 tests/sessions.sh
 record $? "signed sessions"
 }
-unit policy 38 identities
+unit policy 42 identities
 
 governance() {
 step "governance: audit trail, change feed, requests, break glass, reviews, invariants, policy diff"

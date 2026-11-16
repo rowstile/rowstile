@@ -3,7 +3,7 @@ read-only impersonation, and syncing group members from an identity provider."""
 
 from .compiler import Core
 from .governance import trigger_if_partitioned
-from .parse import Type, cols
+from .parse import Relation, TableSource, Type, cols
 from .sqlutil import below_too, lit, q, qt
 
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
@@ -363,27 +363,33 @@ LANGUAGE sql {DEF} AS $f$
           p_subject_type, p_subject_id, p_subject_relation, p_detail,
           nullif(current_setting('authz_ctx.reason', true), '')) $f$;"""
 
-    def identity_api_sql(self) -> str:
-        u = self.T("user")
-        imp = "impersonate" in u.perms
-        sync_cases: list[str] = []
+    def member_tables(self) -> list[tuple[Type, Relation, TableSource]]:
+        """The relations authz.sync_members takes, each with its one table of members: a relation read from one table
+        that links the group to users, without where and without a column for the member's type."""
+        out = []
         for t in self.types.values():
             for r in t.relations.values():
-                srcs = [
+                tables = [
                     s
                     for s in r.sources
                     if s.kind == "table" and ("user", None) in s.subjects and not s.where and not s.type_col
                 ]
-                if len(srcs) != 1:
-                    continue
-                src = srcs[0]
-                # a user's key is one column, so the subject is one column
-                obj = src.obj_col
-                tbl, sc = qt(src.table), q(cols(self.source_columns(src))[0])
-                ocs = ", ".join(q(c) for c in cols(obj))
-                vals = ", ".join(f"($2::{t.keytype}).{q(c)}" for c, _ in t.key) if t.composite else f"$2::{t.pktype}"
-                this = self.key_is(t, "s", "$2", obj) if t.composite else f"s.{q(cols(obj)[0])} = $2::{t.pktype}"
-                sync_cases.append(f"""    WHEN {lit(t.name + "." + r.name)} THEN
+                if len(tables) == 1:
+                    out.append((t, r, tables[0]))
+        return out
+
+    def identity_api_sql(self) -> str:
+        u = self.T("user")
+        imp = "impersonate" in u.perms
+        sync_cases: list[str] = []
+        for t, r, src in self.member_tables():
+            # a user's key is one column, so the subject is one column
+            obj = src.obj_col
+            tbl, sc = qt(src.table), q(cols(self.source_columns(src))[0])
+            ocs = ", ".join(q(c) for c in cols(obj))
+            vals = ", ".join(f"($2::{t.keytype}).{q(c)}" for c, _ in t.key) if t.composite else f"$2::{t.pktype}"
+            this = self.key_is(t, "s", "$2", obj) if t.composite else f"s.{q(cols(obj)[0])} = $2::{t.pktype}"
+            sync_cases.append(f"""    WHEN {lit(t.name + "." + r.name)} THEN
       WITH want AS (SELECT DISTINCT x::{u.pktype} AS m FROM unnest($4) x),
       del AS (DELETE FROM {tbl} s WHERE {this} AND s.{sc} NOT IN (SELECT m FROM want) RETURNING 1),
       ins AS (INSERT INTO {tbl} ({ocs}, {sc}) SELECT {vals}, w.m FROM want w

@@ -2616,6 +2616,7 @@ class DocsGen(Gen):
             ),
             lambda: f"DELETE FROM app.team_members WHERE user_id = {r.choice(self.users)};",
             lambda: self.sync(r.choice(teams)),
+            lambda: self.scim(r.choice(teams)),
             lambda: (
                 f"UPDATE app.teams SET parent_id = {r.choice(teams + [None, None]) or 'NULL'} WHERE id = {r.choice(teams)};"
             ),
@@ -2650,6 +2651,44 @@ class DocsGen(Gen):
             f"IF (SELECT coalesce(array_agg(user_id::text ORDER BY user_id), '{{}}') FROM app.team_members "
             f"WHERE team_id = {team}) IS DISTINCT FROM {listed} THEN "
             f"RAISE EXCEPTION 'sync_members left another list than %', {listed}; END IF; END $s$;"
+        )
+
+    def scim(self, team: int) -> str:
+        """A team's members as an identity provider sends them, through the SCIM endpoint (authz.scim): a PUT of the
+        whole group, a PATCH that replaces its members, or a PATCH that adds one member and then removes another.
+        The provider is a user the settings name, signed in by a key made for it here. Then the team's rows are what
+        the request says (and the checks after the change judge what they give)."""
+        r = self.r
+        members = sorted(r.sample(self.users, r.randint(0, 3)), key=int)
+        listed = "ARRAY[" + ", ".join(f"'{m}'" for m in members) + "]::text[]"
+        provider, kind = r.choice(self.users), r.choice(["put", "replace", "one by one"])
+        values = [{"value": m} for m in members]
+        now = f"(SELECT coalesce(array_agg(user_id::text ORDER BY user_id), '{{}}') FROM app.team_members WHERE team_id = {team})"
+        if kind == "put":
+            method, body = "PUT", {"displayName": f"t{team}", "members": values}
+        elif kind == "replace":
+            method, body = "PATCH", {"Operations": [{"op": "replace", "path": "members", "value": values}]}
+        else:
+            added, removed = r.choice(self.users), r.choice(self.users)
+            listed = f"ARRAY(SELECT x FROM unnest({now} || ARRAY['{added}']) x WHERE x <> '{removed}' GROUP BY x ORDER BY x::int)"
+            method, body = (
+                "PATCH",
+                {
+                    "Operations": [
+                        {"op": "Add", "path": "members", "value": [{"value": added}]},
+                        {"op": "remove", "path": f'members[value eq "{removed}"]'},
+                    ]
+                },
+            )
+        settings = json.dumps({"principal": f"user:{provider}", "group": "team.member", "group_name": "name"})
+        return (
+            "DO $s$ DECLARE v_want text[]; v_key text; v_status int; BEGIN "
+            f"v_want := {listed}; PERFORM authz.set_scim('{settings}'); "
+            f"PERFORM set_config('authz.user_id', '{provider}', true); v_key := authz.create_api_key('the provider'); "
+            f"SELECT a.status INTO v_status FROM authz.scim('{method}', 'Groups/{team}', '', '{json.dumps(body)}', v_key) a; "
+            "PERFORM authz.sign_out(); "
+            f"IF v_status NOT IN (200, 204) OR {now} IS DISTINCT FROM v_want THEN "
+            "RAISE EXCEPTION 'authz.scim answered %, and left another list than %', v_status, v_want; END IF; END $s$;"
         )
 
 

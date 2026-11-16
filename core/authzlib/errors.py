@@ -25,7 +25,9 @@ class Code:
     text: str  # what it means and what to do
     wrong: str = ""  # a policy that makes the mistake (after PRELUDE)
     right: str = ""  # the same policy, fixed
-    when: str = "compile"  # compile | tests (found when the tests are compiled) | apply | deploy | command | runtime
+    # compile | tests (found when the tests are compiled) | apply | deploy | command | runtime | scim (an answer
+    # of authz.scim's, never an error)
+    when: str = "compile"
     files: tuple[tuple[str, str], ...] = ()  # included files the examples need: ((name, text), ...)
 
 
@@ -1064,6 +1066,49 @@ CODES = {
         "and a request that met it would be left an error, a 500. SQLSTATE 22023.",
         when="runtime",
     ),
+    "AZ720": Code(
+        "SCIM settings that don't hold",
+        "`authz.set_scim` names what the SCIM endpoint (`authz.scim`) reads, as one JSON object that replaces the "
+        "stored settings: `principal` (whose API key signs the identity provider in, as `type:id`), `group` (a "
+        "relation `authz.sync_members` takes, as `type.relation`) with `group_name`, `group_external_id` and "
+        "`group_function`, `user_name`, `user_external_id`, `user_active` and `user_function`, and `page`. Each is "
+        "checked when it is set, and the message says which one doesn't hold and why: a name that is no setting, a "
+        "principal no row is or whose type doesn't sign in, a relation with no single table of members, a column "
+        "the table doesn't have (or, for `user_active`, one that is no boolean), a function that isn't "
+        "`(text, jsonb) RETURNS text`, written with its schema and owned by the policy's owner (it is called with "
+        "the owner's rights, so a function another role may rewrite is refused), a page that is no number from 1 "
+        "to 1000. Nothing is stored then: the settings stay as they were. The call is the owner's (an "
+        "administrator's, a deploy step's), not a request's: the SDKs give this error no answer of its own, and a "
+        "request that met it would be left an error, a 500. SQLSTATE 22023.",
+        when="runtime",
+    ),
+    "AZ721": Code(
+        "A SCIM request the endpoint doesn't serve",
+        "`authz.scim` answers an identity provider's request with a status and a body, and a refusal is an answer "
+        "too, never an error: its body is SCIM's own error (RFC 7644, 3.12), whose `detail` ends with this code. "
+        "401: the bearer token is not an API key of the principal the settings name (`authz.set_scim`), or that "
+        "key was revoked, expired, or its principal is no longer active. 403: the key is limited to scopes that "
+        "write nothing, and the request changes something. 404: no such group, or a path nothing is served at. "
+        "405: a method the path doesn't take. 400, with SCIM's `scimType`: a filter other than `attribute eq "
+        '"value"` joined by `and` (`invalidFilter`), a PATCH without `Operations` or with an `op` that is none of '
+        "add, remove and replace (`invalidSyntax`), a remove without a path (`noTarget`), a path that is nothing a "
+        "PATCH changes here (`invalidPath`), a member that is no user, a group without a name (`invalidValue`). "
+        "501: the settings name no group, or no function of the app's to make, change or delete one "
+        "(`group_function`). A refusal changes nothing: a request is done whole or not at all. What the app's own "
+        "function refuses is answered 400 with its words, and a name or a key another row has 409 (`uniqueness`), "
+        "without this code.",
+        when="scim",
+    ),
+    "AZ722": Code(
+        "SCIM settings that no longer hold",
+        "`authz.scim` met a setting, stored earlier with `authz.set_scim`, that is no longer true of the database: "
+        "a column that was dropped or renamed, a function of the app's that is gone or was given to a role that "
+        "isn't the policy's owner (it is called with the owner's rights, so it is called only while the owner owns "
+        "it), or a function that answered something else than the key of the row it made or changed. The message "
+        "says which. Nothing was written. It is the app's mistake, not the identity provider's: the SDKs leave it "
+        "an error, a 500. Put right what the settings name, or set them again. SQLSTATE 55000.",
+        when="runtime",
+    ),
     "AZ801": Code(
         "A sync line that names nothing to sync",
         "`sync schema.table : permission` keeps, for each row of a type's table, the keys that hold the permission "
@@ -1254,6 +1299,8 @@ def page(code: str) -> str:
         "command": "by the command, against a database",
         "runtime": "to the app, by the `authz.*` functions and the policy's rules: the code is in the error's HINT "
         f"(`rowstile help {code}`), and the SDKs' errors carry it as `code`",
+        "scim": "to the identity provider, in an answer of `authz.scim`: the code ends the `detail` of SCIM's error "
+        f"body (`rowstile help {code}`)",
     }[c.when]
     out += [f"Reported {found}.", ""]
     if c.wrong:

@@ -233,6 +233,8 @@ GENERATED_FUNCTIONS = (
     "set_jwks",
     "view_as",
     "sync_members",
+    "scim",
+    "set_scim",
     "changes_since",
     "changes_position",
     "trim_changes",
