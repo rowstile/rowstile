@@ -496,6 +496,14 @@ export interface Share {
   [column: string]: unknown;
 }
 
+/** What authz.scim answers a SCIM request: the status, the body (JSON, as text; none for a 204) and, for what was
+ *  made, where it is below the route. */
+export interface ScimAnswer {
+  status: number;
+  body: string | null;
+  location: string | null;
+}
+
 /** What the React kit's routes need; each driver's package gives it (Prisma: db.$authz). */
 export interface AuthzCalls {
   can<T extends ObjectType>(type: T, id: Id, perm: Permission<T>): Promise<boolean>;
@@ -532,6 +540,11 @@ export function calls(q: Queryable): AuthzCalls & {
    *  up on the search_path, once. */
   tableName(table: string): Promise<string>;
   check(): Promise<void>;
+  /** An identity provider's SCIM request, as a route got it, answered by the database (authz.scim): the method,
+   *  the path below the route, the query string and the body as they were sent (null: no body), the bearer token
+   *  (null: none). Asked as nobody, whoever the code acts for: the token alone says who asks. Call it outside a
+   *  transaction, so that it is asked in one of its own. */
+  scim(method: string, path: string, query: string, body: string | null, token: string | null): Promise<ScimAnswer>;
 } {
   const one = async (text: string, values: unknown[]) => (await q.query(text, values)).rows[0];
   const names = new Map<string, string>();        // a table as the app names it -> as the policy does
@@ -591,6 +604,12 @@ export function calls(q: Queryable): AuthzCalls & {
     check: () => actingAs(null, async () => {
       const problems = checkProblems(await c.connectionCheck());
       if (problems.length) throw new ConnectionProblem(problems);
+    }),
+    // the body goes in as it was sent and comes back as text: every driver passes a text alike, and nothing here reads it
+    scim: (method: string, path: string, query: string, body: string | null, token: string | null) => actingAs(null, async () => {
+      const r = await one("SELECT status, body::text AS body, location FROM authz.scim($1::text, $2::text, $3::text, $4::text, $5::text)",
+        [method, path, query, body, token]);
+      return { status: Number(r.status), body: r.body as string | null, location: r.location as string | null };
     }),
   };
   return c as any;

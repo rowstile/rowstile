@@ -43,7 +43,9 @@ export const digest = job(["service", 1], async () => ({ count: await db.project
   in to). A login refused (AZ703) and settings changed by hand (AZ702) have its SQLSTATE, 28000, but are not it.
 - `calls(queryable)`: the runtime's functions over anything with `query(text, values)`; with them
   `tableName(table)`, the table as the policy names it, with its schema (`public.Note` for `Note`), as a
-  refusal's `table` names it.
+  refusal's `table` names it, and `scim(method, path, query, body, token)`: an identity provider's SCIM
+  request as a route got it, answered by the database (a status, a body as text, a location), in a
+  transaction of its own that signs nobody in. `@rowstile/next` has the route for Next.js (`scimRoutes`).
 - `Register`: the interface the generated names fill in (`rowstile client`), so a wrong permission name
   doesn't type-check.
 - `electricShape(shape, options)` and `syncPrincipal(q)` (a preview): a route handler in front of Electric, the

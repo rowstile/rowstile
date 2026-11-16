@@ -8,7 +8,8 @@ This package is rowstile for Next.js (App Router). Importing it keeps signed-in 
 `route(handler)` answers a refusal with 403 and a hidden row with 404 (and what a call names that isn't there
 404, a missing or wrong argument 400, a call that needs someone signed in 401, a move inside itself 409).
 `action(fn)` gives a server action's
-refusal back as a value. `authzRoutes()` is what the React kit calls, and `checkAtStart()` stops a server
+refusal back as a value. `authzRoutes()` is what the React kit calls, `scimRoutes()` answers an identity
+provider's SCIM requests, and `checkAtStart()` stops a server
 whose connection skips row-level security. It goes with a driver package, most often `@rowstile/prisma`.
 
 ```sh
@@ -66,6 +67,15 @@ export async function register() {
 - `authzRoutes({ calls, changes })` in `app/api/authz/[...authz]/route.ts` serves `@rowstile/react`:
   permissions for a list, shares, access requests, live updates. A request that names no type, or a body
   that isn't a JSON object, is 400.
+- `scimRoutes({ calls: db.$authz })` in a catch-all route (`app/scim/v2/[...scim]/route.ts`), whose `GET`,
+  `POST`, `PUT`, `PATCH` and `DELETE` it gives, answers an identity provider's SCIM requests (Okta, Microsoft
+  Entra ID). The database answers each one, once the owner said what the endpoint reads
+  (`authz.set_scim`). The bearer token alone says who asks: `user()` isn't asked about these requests
+  and their transaction signs nobody in, so keep the route out of what a `proxy.ts` of yours asks a session
+  for. The body goes on as it was sent: the database says when it is no JSON, once the key says who asks. An
+  error is answered 500 in SCIM's words and logged with `console.error`. The address of what was made
+  (`Location`) is the route's own, on the host the provider asked (`x-forwarded-host`, which Next.js sets
+  from the request when no proxy did).
 
 ## More
 
