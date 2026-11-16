@@ -93,6 +93,7 @@ MIGR = "docs/reference/migrations.md"
 FASTAPI = "integrations/fastapi/tests/test_conformance.py"
 FASTAPI_SDK = "integrations/fastapi/tests/test_sdk.py"
 FASTAPI_JOBS = "integrations/fastapi/tests/test_jobs.py"
+FASTAPI_SCIM = "integrations/fastapi/tests/test_scim.py"
 DJANGO = "integrations/django/tests/test_conformance.py"
 DJANGO_SDK = "integrations/django/tests/test_sdk.py"
 NEXT = "integrations/nextjs/tests/conformance.test.ts"
@@ -460,6 +461,11 @@ FEATURES: list[Feature] = [
             T("scim.sh", "Bulk is not served"),
             T("scim.sh", "a column the settings name that is gone"),
             T("scim.sh", "a policy applied since, in which the group is no relation with one table of members"),
+            # the Python SDK's route for FastAPI: what it passes on and what it sends back
+            Check(FASTAPI_SCIM, "test_scim_only_the_providers_key_is_answered"),
+            Check(FASTAPI_SCIM, "test_scim_a_patch_changes_the_members_and_the_policy_follows"),
+            Check(FASTAPI_SCIM, "test_scim_a_user_made_is_answered_with_where_it_is"),
+            Check(FASTAPI_SCIM, "test_scim_requests_are_not_user_requests"),
         ),
         (T(DIFF, "authz.scim("),),
     ),

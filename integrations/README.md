@@ -45,6 +45,15 @@ only with its code, Postgres's own refusal in any language, and one spelling for
 its own (`tests/test_jobs.py`, preview): a job started by a request acts for its service, or for the user who
 asked, given to it as an argument, and the next job on the worker's one connection never acts for the one before.
 
+`fastapi/` also mounts the SDK's route for an identity provider's SCIM requests (`tests/test_scim.py`): what the
+database answers is `core/tests/scim.sh`'s to check, and these check what a route passes on and sends back. A
+request without the provider's API key is 401, whatever else it says of who asks. The requests a provider sends
+before it starts are answered, the query string as it was sent. One PATCH that adds a member of a group and
+removes another changes the members' rows, and the notes each of the two reads follow. A user made is answered 201
+with its address. A body that is no JSON is 400 in SCIM's words, and an error 500, with the database's words in the
+app's log. The app's own `user(request)` isn't asked about a provider's request, in an app mounted in another
+too, and a sync engine answers as the async one does.
+
 The Next.js suite (`integrations/nextjs`) also runs checks 1, 2, 4 to 7 and 9 through Neon's serverless driver, on
 the Node.js runtime and on the edge (`edge/`, an app of its own), behind Neon's `wsproxy`, and check 10 through a
 BullMQ queue on Redis: a preview.

@@ -35,6 +35,8 @@ def make_app(url: str | None = None, check_connection: bool = True, pool_size: i
     app.state.engine, app.state.Session = engine, Session
     authz = Rowstile(app, engine, user=session_user, check_connection=check_connection)
     app.state.authz = authz
+    # an identity provider's users and groups (SCIM: Okta, Microsoft Entra ID): the database answers each request
+    authz.mount_scim("/scim/v2")
 
     @app.get("/projects")
     async def projects() -> list[int]:
