@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', 'fa00b0d803b5a569ff525b5106373efe', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', '60b1e140a66726c9229bdfccfb6fa4d0', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'domain_email_org_setting__domain_email_org_settings__tree')) n(name, hash, oids, rel)
@@ -741,7 +741,124 @@ INSERT INTO authz_int.perms VALUES
   ('email', 'edit'),
   ('domain', 'edit');
 
-CREATE TABLE authz_int.locks (type text PRIMARY KEY, n bigint NOT NULL);
+-- a row for each type with a tree, updated by a write to the type's whole tree; narrow: its other tree
+-- writes lock the stripes of what they touch (trees.py)
+CREATE TABLE authz_int.locks (type text PRIMARY KEY, n bigint NOT NULL, narrow boolean NOT NULL DEFAULT false);
+
+-- the lock rows of the types whose tree writes lock only what they touch: for each type, a row for each slot.
+-- Each page is left mostly empty, so that a row's next version fits beside it (no new index entry for each write);
+-- and vacuum never gives the table's end back, which would stop every tree write while it does
+CREATE TABLE authz_int.tree_locks_1024_4 (type text NOT NULL, slot int NOT NULL, n bigint NOT NULL, PRIMARY KEY (type, slot))
+  WITH (fillfactor = 25, vacuum_truncate = false);
+
+-- A write that didn't get every lock row it asked for stops: the rows were there when the policy was applied,
+-- so it was applied again, or a migration of it ran, since the write began. To try again, at any isolation level
+CREATE FUNCTION authz_int.tree_locks_gone() RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  RAISE EXCEPTION 'the policy was applied while this write ran'
+    USING ERRCODE = 'serialization_failure', HINT = 'rowstile help AZ723';
+END $f$;
+
+-- A write to a type's whole tree (a rebuild, a write of more objects than the limit), and every tree write to
+-- a type that has no stripes: the type's row is updated, so that the writes queue behind each other and one whose
+-- snapshot is older than another's commit fails; with stripes, every stripe's own row is then locked, in order,
+-- which waits for the writes that hold some and holds the others
+CREATE FUNCTION authz_int.tree_lock_all(p_type text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_narrow boolean; v_n bigint;
+BEGIN
+  UPDATE authz_int.locks l SET n = l.n + 1 WHERE l.type = p_type RETURNING l.narrow INTO v_narrow;
+  IF NOT FOUND THEN
+    PERFORM authz_int.tree_locks_gone();
+  END IF;
+  IF v_narrow THEN
+    SELECT count(*) INTO v_n FROM (SELECT 1 FROM authz_int.tree_locks_1024_4 t WHERE t.type = p_type AND t.slot % 5 = 0
+                                   ORDER BY t.slot FOR UPDATE) s;
+    IF v_n <> 1024 THEN
+      PERFORM authz_int.tree_locks_gone();
+    END IF;
+  END IF;
+END $f$;
+
+-- More of a tree write's locks, once its walk found more than it had locked (authz_int."<tree>_refresh" takes
+-- the first ones itself, in the statement that reads what to lock). p_write: the objects whose stored rows it writes;
+-- p_under and p_hung, side by side: the objects those it changed hang under, and which hangs there; p_held: the
+-- slots it holds (a slot twice, plus one when updated). The slots it lacks are taken in their order; with p_wait
+-- false only those nobody holds (SKIP LOCKED), and o_short says how many it didn't get: taking a slot below one it
+-- holds, a write must not wait, or two writes could wait for each other
+CREATE FUNCTION authz_int.tree_lock(p_type text, p_write text[], p_under text[], p_hung text[], p_held int[],
+                                    p_wait boolean, OUT o_held int[], OUT o_short int)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_asked bigint; v_got bigint; v_slots int[];
+BEGIN
+  IF p_wait THEN
+    WITH need AS MATERIALIZED (
+      SELECT y._slot, bool_or(y._upd) AS _upd
+      FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5, true FROM unnest(p_write) w(_id) WHERE w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5 + g._sub, false FROM unnest(p_write) w(_id), generate_series(1, 4) g(_sub)
+            WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed' AND w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5, false FROM unnest(p_under, p_hung) u(_above, _hung) WHERE u._above IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
+            FROM unnest(p_under, p_hung) u(_above, _hung) WHERE u._above IS NOT NULL) y
+      WHERE NOT (y._slot * 2 + 1 = ANY (p_held)) AND NOT (NOT y._upd AND y._slot * 2 = ANY (p_held))
+      GROUP BY y._slot),
+    got AS MATERIALIZED (
+      SELECT o._slot, o._upd,
+             CASE WHEN o._slot = -1 THEN (SELECT 1 FROM authz_int.locks l WHERE l.type = p_type FOR SHARE)
+                  WHEN o._upd THEN (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                                    WHERE t.type = p_type AND t.slot = o._slot FOR UPDATE)
+                  ELSE (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                        WHERE t.type = p_type AND t.slot = o._slot FOR SHARE) END AS _held
+      FROM (SELECT n._slot, n._upd FROM need n ORDER BY n._slot OFFSET 0) o),
+    bumped AS (
+      UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
+      WHERE g._upd AND g._held = 1 AND t.type = p_type AND t.slot = g._slot RETURNING 1)
+    SELECT (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
+           ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
+    INTO v_asked, v_got, v_slots;
+    IF v_got <> v_asked THEN
+      PERFORM authz_int.tree_locks_gone();
+    END IF;
+  ELSE
+    WITH need AS MATERIALIZED (
+      SELECT y._slot, bool_or(y._upd) AS _upd
+      FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5, true FROM unnest(p_write) w(_id) WHERE w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5 + g._sub, false FROM unnest(p_write) w(_id), generate_series(1, 4) g(_sub)
+            WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed' AND w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5, false FROM unnest(p_under, p_hung) u(_above, _hung) WHERE u._above IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
+            FROM unnest(p_under, p_hung) u(_above, _hung) WHERE u._above IS NOT NULL) y
+      WHERE NOT (y._slot * 2 + 1 = ANY (p_held)) AND NOT (NOT y._upd AND y._slot * 2 = ANY (p_held))
+      GROUP BY y._slot),
+    got AS MATERIALIZED (
+      SELECT o._slot, o._upd,
+             CASE WHEN o._slot = -1 THEN (SELECT 1 FROM authz_int.locks l WHERE l.type = p_type FOR SHARE SKIP LOCKED)
+                  WHEN o._upd THEN (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                                    WHERE t.type = p_type AND t.slot = o._slot FOR UPDATE SKIP LOCKED)
+                  ELSE (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                        WHERE t.type = p_type AND t.slot = o._slot FOR SHARE SKIP LOCKED) END AS _held
+      FROM (SELECT n._slot, n._upd FROM need n ORDER BY n._slot OFFSET 0) o),
+    bumped AS (
+      UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
+      WHERE g._upd AND g._held = 1 AND t.type = p_type AND t.slot = g._slot RETURNING 1)
+    SELECT (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
+           ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
+    INTO v_asked, v_got, v_slots;
+  END IF;
+  o_held := p_held || v_slots;
+  o_short := v_asked - v_got;
+END $f$;
 
 -- a row for each row a share, a key or a request named (authz_int.mark_row), until that row is gone
 CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));
@@ -750,7 +867,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('domain_email_org_setting__domain_email_org_settings__tree', 'fa00b0d803b5a569ff525b5106373efe', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('domain_email_org_setting__domain_email_org_settings__tree', '60b1e140a66726c9229bdfccfb6fa4d0', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1494,7 +1611,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mo
 DECLARE a_t text[]; a_i text[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('domain', 'email', 'org', 'setting');
+  PERFORM authz_int.tree_lock_all('domain'); PERFORM authz_int.tree_lock_all('email'); PERFORM authz_int.tree_lock_all('org'); PERFORM authz_int.tree_lock_all('setting');
   WITH RECURSIVE down(_t, _i) AS (
     SELECT x.t, x.i FROM unnest($1, $2) AS x(t, i) WHERE x.i IS NOT NULL
     UNION
@@ -1517,7 +1634,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE a_t text[]; a_i text[];
 BEGIN
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('domain', 'email', 'org', 'setting');
+  PERFORM authz_int.tree_lock_all('domain'); PERFORM authz_int.tree_lock_all('email'); PERFORM authz_int.tree_lock_all('org'); PERFORM authz_int.tree_lock_all('setting');
   DELETE FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree";
   FOR a_t, a_i IN SELECT array_agg(k.t), array_agg(k.i) FROM (SELECT x.t, x.i, row_number() OVER () AS n FROM (SELECT 'domain'::text AS t, x."id"::text AS i FROM "lp"."domains" x UNION ALL SELECT 'email'::text AS t, x."id"::text AS i FROM "lp"."emails" x UNION ALL SELECT 'org'::text AS t, x."id"::text AS i FROM "lp"."orgs" x UNION ALL SELECT 'setting'::text AS t, x."id"::text AS i FROM "lp"."settings" x) x) k GROUP BY (k.n - 1) / 10000 LOOP
     INSERT INTO authz_int."domain_email_org_setting__domain_email_org_settings__tree" SELECT * FROM authz_int."domain_email_org_setting__domain_email_org_settings__t_4c2a3980"(a_t, a_i);
@@ -1596,7 +1713,7 @@ BEGIN
     ids := ARRAY(SELECT o."id"::text FROM old_rows o);
   END IF;
   IF cardinality(ids) > 0 THEN
-    UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('domain', 'email', 'org', 'setting');
+    PERFORM authz_int.tree_lock_all('domain'); PERFORM authz_int.tree_lock_all('email'); PERFORM authz_int.tree_lock_all('org'); PERFORM authz_int.tree_lock_all('setting');
     IF TG_OP <> 'DELETE' THEN PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_7d188895"(array_fill('domain'::text, ARRAY[cardinality(ids)]), ids); END IF;
     PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_07bd0a7e"(array_fill('domain'::text, ARRAY[cardinality(ids)]), ids);
   END IF;
@@ -1631,7 +1748,7 @@ BEGIN
     ids := ARRAY(SELECT o."id"::text FROM old_rows o);
   END IF;
   IF cardinality(ids) > 0 THEN
-    UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('domain', 'email', 'org', 'setting');
+    PERFORM authz_int.tree_lock_all('domain'); PERFORM authz_int.tree_lock_all('email'); PERFORM authz_int.tree_lock_all('org'); PERFORM authz_int.tree_lock_all('setting');
     IF TG_OP <> 'DELETE' THEN PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_7d188895"(array_fill('email'::text, ARRAY[cardinality(ids)]), ids); END IF;
     PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_07bd0a7e"(array_fill('email'::text, ARRAY[cardinality(ids)]), ids);
   END IF;
@@ -1665,7 +1782,7 @@ BEGIN
     ids := ARRAY(SELECT o."id"::text FROM old_rows o);
   END IF;
   IF cardinality(ids) > 0 THEN
-    UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('domain', 'email', 'org', 'setting');
+    PERFORM authz_int.tree_lock_all('domain'); PERFORM authz_int.tree_lock_all('email'); PERFORM authz_int.tree_lock_all('org'); PERFORM authz_int.tree_lock_all('setting');
     IF TG_OP <> 'DELETE' THEN PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_7d188895"(array_fill('org'::text, ARRAY[cardinality(ids)]), ids); END IF;
     PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_07bd0a7e"(array_fill('org'::text, ARRAY[cardinality(ids)]), ids);
   END IF;
@@ -1699,7 +1816,7 @@ BEGIN
     ids := ARRAY(SELECT o."id"::text FROM old_rows o);
   END IF;
   IF cardinality(ids) > 0 THEN
-    UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('domain', 'email', 'org', 'setting');
+    PERFORM authz_int.tree_lock_all('domain'); PERFORM authz_int.tree_lock_all('email'); PERFORM authz_int.tree_lock_all('org'); PERFORM authz_int.tree_lock_all('setting');
     IF TG_OP <> 'DELETE' THEN PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_7d188895"(array_fill('setting'::text, ARRAY[cardinality(ids)]), ids); END IF;
     PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_07bd0a7e"(array_fill('setting'::text, ARRAY[cardinality(ids)]), ids);
   END IF;
@@ -1721,6 +1838,10 @@ DO $b$ BEGIN
     PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_1002258f"();
   END IF;
 END $b$;
+
+-- the types whose tree writes lock only the stripes of what they touch; the others' take their type's row
+UPDATE authz_int.locks l SET narrow = (false), n = l.n + 1 WHERE l.narrow IS DISTINCT FROM (false);
+DELETE FROM authz_int.tree_locks_1024_4 l WHERE NOT (false);
 
 -- trees kept but no longer used (none, normally) go with the holding schema
 DROP SCHEMA authz_keep CASCADE;

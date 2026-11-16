@@ -705,11 +705,16 @@ ORDER BY 1;
 ROWS = r"""
 SELECT format('SELECT %L || E''\n'' || coalesce(string_agg(x, E''\n'' ORDER BY x), '''') FROM (SELECT %s AS x FROM %s t) s;',
               'rows ' || c.oid::regclass::text,
-              CASE WHEN c.relname = 'trees' THEN 't.name || '' '' || t.hash' ELSE 't::text' END, c.oid::regclass)
+              CASE WHEN c.relname = 'trees' THEN 't.name || '' '' || t.hash'
+                   WHEN c.relname = 'locks' THEN 'CASE WHEN t.narrow THEN t.type || '' narrow'' END'
+                   WHEN c.relname LIKE 'tree\_locks\_%' THEN 't.type || '' '' || t.slot'
+                   ELSE 't::text' END, c.oid::regclass)
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname IN ('authz_int', 'authz_gen', 'authz_sync') AND c.relkind = 'r' AND c.relname NOT IN ('locks', 'session_key', 'row_marks')
+WHERE n.nspname IN ('authz_int', 'authz_gen', 'authz_sync') AND c.relkind = 'r' AND c.relname NOT IN ('session_key', 'row_marks')
 ORDER BY 1;
 """
+# (the lock rows are compared without what each write to a tree counts up in them: the types whose tree writes lock
+# stripes, and which stripes there are; a lock row kept for a type that has no tree any more says nothing)
 # (row_marks holds a row for each row shared on or to, written as shares, keys and requests are made: a migration keeps
 # it, applying whole starts it empty, and either way the marks only serve to conflict, whatever rows are there)
 

@@ -87,8 +87,14 @@ $HOLD;
 COMMIT;
 SQL
 held authz_conc_a
-PGAPPNAME=authz_conc_b psql -X -q -d "$DB" -c "UPDATE app.folders SET parent_id = 20 WHERE id = 6" > "$out.b" 2>&1 &
-blocked authz_conc_b
+# the second move touches nothing the first does, so it doesn't wait for it (a wait would end it: lock_timeout)
+PGAPPNAME=authz_conc_b PGOPTIONS="-c lock_timeout=5s" psql -X -q -d "$DB" \
+  -c "UPDATE app.folders SET parent_id = 20 WHERE id = 6" > "$out.b" 2>&1
+if [ ! -s "$out.b" ] && until_waits authz_conc_a PgSleep; then
+  echo "ok    the second move is done while the first one's transaction is still open"
+else
+  echo "FAIL  a move waited for a move to another part of the tree: $(head -c 300 "$out.b")"; fails=$((fails + 1))
+fi
 go; wait
 check "both moves are in" "SELECT (SELECT parent_id FROM app.folders WHERE id = 4) = 2 AND (SELECT parent_id FROM app.folders WHERE id = 6) = 20"
 check "inheritance tables match a rebuild" "SELECT authz.verify()"

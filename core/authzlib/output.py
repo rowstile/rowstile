@@ -1745,7 +1745,10 @@ END $gi$;"""
             )
             if perms
             else "",
-            "CREATE TABLE authz_int.locks (type text PRIMARY KEY, n bigint NOT NULL);",
+            "-- a row for each type with a tree, updated by a write to the type's whole tree; narrow: its other tree\n"
+            "-- writes lock the stripes of what they touch (trees.py)\n"
+            "CREATE TABLE authz_int.locks (type text PRIMARY KEY, n bigint NOT NULL, narrow boolean NOT NULL DEFAULT false);",
+            *self.tree_locks_sql(),
             "-- a row for each row a share, a key or a request named (authz_int.mark_row), until that row is gone\n"
             "CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));",
             "-- each inheritance table's definition and the tables it reads, to keep it on the next apply if they are the same\n"
@@ -1886,6 +1889,7 @@ END $w$;"""
             ),
             ("objects", "share_internal", share_internal),
             *[("tree", name, sql) for name, sql in zip(self.tree_names, self.tree_sql, strict=True)],
+            ("changed", "tree_locks", self.narrow_sql()),
             (
                 "full",
                 "keep",

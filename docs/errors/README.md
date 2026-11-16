@@ -114,6 +114,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ720](AZ720.md): SCIM settings that don't hold
 - [AZ721](AZ721.md): A SCIM request the endpoint doesn't serve
 - [AZ722](AZ722.md): SCIM settings that no longer hold
+- [AZ723](AZ723.md): The policy was applied while a write ran
 
 ## The sync index (a preview)
 

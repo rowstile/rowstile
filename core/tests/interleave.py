@@ -11,7 +11,7 @@ one that changes a tree, or that the tree's rows decide, and is written so that 
 what lies above what the other writes. Every pair of a world's kinds (a kind with itself included) runs in every
 order of its six steps the server allows, with each session at each of the levels asked for (the nine pairs of
 the three by default: one session in READ COMMITTED beside one in SERIALIZABLE too, which SERIALIZABLE's own
-checks can't see). Six worlds, each in a database of its own, so that every way a tree is kept is written by two
+checks can't see). Seven worlds, each in a database of its own, so that every way a tree is kept is written by two
 transactions at once:
   - docs: the docs app (core/example/), a tree of one type on plain tables: a folder created, moved, linked into
     another, unlinked, deleted, its id changed, and a folder shared and unshared, which `authz.share` and the
@@ -29,6 +29,9 @@ transactions at once:
     condition reads the tree's own table: a box or a shelf created, the two moved (a loop through both), a box
     sealed (a write to the tree's own table that changes what the condition says of other rows), and a box's id
     changed (10 pairs);
+  - docs_plain: the docs app without its sync index, which takes lock rows of its own at each commit (all of them
+    at a stricter level): here a write fails or waits only by the trees' own locks. The docs world's creates, moves,
+    links and unlinks, and a move of a folder that has the other session's folder below it (15 pairs);
   - docs_by and docs_after: the docs world with its sync index keyed by folder (a move writes what the folders below
     inherit, and no file's readers nor keys), and kept after commit by a worker, which runs after each schedule (36
     pairs each).
@@ -129,6 +132,8 @@ class World:
     perms: tuple[tuple[str, str], ...]
     kinds: tuple[str, ...]
     op: Callable[[str, int], Op]  # session s's write of a kind
+    # the pairs whose two writes are to different parts of the tree: neither may wait for the other
+    apart: frozenset[tuple[str, str]] = frozenset()
 
     def answers_sql(self) -> str:
         return "SELECT json_build_array({})".format(
@@ -250,6 +255,9 @@ DOCS = World(
     perms=(("folder", "view"), ("folder", "edit"), ("folder", "share"), ("file", "view"), ("file", "edit")),
     kinds=("create", "move", "link", "unlink", "delete", "rekey", "share", "unshare"),
     op=docs_op,
+    # the two creates are under c and under l, and nothing is below either new folder; the two unlinks take l out
+    # of a and c out of b, and neither is above the other
+    apart=frozenset({("create", "create"), ("unlink", "unlink")}),
 )
 
 # --- cross: folders and projects, one tree of two types (tests/cross.authz) ------------------------------------
@@ -562,7 +570,36 @@ DOCS_BY = replace(
 DOCS_AFTER = replace(
     DOCS, name="docs_after", policy=("docs.authz", core_file("example/docs.authz") + SYNC_LINES + "sync after commit\n")
 )
-WORLDS = {w.name: w for w in (DOCS, CROSS, PARTS, BOXES, DOCS_BY, DOCS_AFTER)}
+
+
+def plain_op(kind: str, s: int) -> Op:
+    """Session s's write of a kind, in the docs world without its sync index: the docs world's creates, moves, links
+    and unlinks, and a move of what is above the other session's folder. The first session takes a (which has c
+    below it, and l through a link) into Handbook; the second takes b (l below it, c through a link) into Design
+    docs. So a create under c, or a move, a link or an unlink of c, meets the move of b only through what is below
+    b: a write that locked what it changed and not what is below it would let them pass each other."""
+    if kind != "above":
+        return docs_op(kind, s)
+    moved, parent = (A, 2) if s == 1 else (B, 4)
+    return Op(kind, f"UPDATE app.folders SET parent_id = {parent} WHERE id = {moved}", "5")
+
+
+# The docs world as an app without the sync index has it: nothing is kept at commit, so a commit takes no lock, and a
+# write at REPEATABLE READ or SERIALIZABLE fails only on what the trees' own locks see (with the sync index, whose
+# commit takes all its lock rows at those levels, any write since the snapshot fails it). The pairs to different
+# parts are held to their commits too, and this world is where a build without one of the trees' locks is caught.
+DOCS_PLAIN = replace(
+    DOCS,
+    name="docs_plain",
+    policy=("docs.authz", core_file("example/docs.authz")),
+    setup="",
+    kinds=("create", "above", "move", "link", "unlink"),
+    op=plain_op,
+    # (the two moves of what is above take a into Handbook and b into Design docs: each has the other's folder
+    # below it through a link, so they are not apart)
+    apart=frozenset({("create", "create"), ("unlink", "unlink")}),
+)
+WORLDS = {w.name: w for w in (DOCS, CROSS, PARTS, BOXES, DOCS_BY, DOCS_AFTER, DOCS_PLAIN)}
 
 
 class Outcome(NamedTuple):
@@ -885,6 +922,26 @@ def serial(runs: Sequence[Run], alone: dict[int, Run], initial: str) -> list[str
     ]
 
 
+def together(runs: Sequence[Run], steps: Sequence[str]) -> list[str]:
+    """Two writes to different parts of a tree, in every order: the schedules in which one waited for the other, or
+    failed on what the other wrote, at one of the steps judged. The write: a tree's locks are taken there. The
+    commit too, in a world that keeps nothing at commit (where the sync index is kept then, under lock rows of its
+    own, which a stricter level takes all of, a commit may wait or fail). Two SERIALIZABLE transactions may still
+    fail by that level's own check, which sees that both read and wrote one table: its words are others."""
+    problems: list[str] = []
+    for run in runs:
+        for n, step in itertools.product((1, 2), steps):
+            if f"{n} {step} (waits)" in run.events:
+                problems.append(f"{run.text()}: session {n}'s {step} waited for a write to another part of the tree")
+            out = run.outcomes.get((n, step))
+            if out and (out.code == "40P01" or (out.code == "40001" and "concurrent update" in out.message)):
+                problems.append(
+                    f"{run.text()}: session {n}'s {step} failed on a write to another part of the tree: {out.code} "
+                    f"{out.message}"
+                )
+    return problems
+
+
 def setup(world: World, db: str) -> float:
     """A database with the world's tables and its policy; returns the server's deadlock_timeout, in seconds."""
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
@@ -926,6 +983,8 @@ def interleave(world: World, db: str, pairs: Sequence[tuple[str, str]], chosen: 
                     }
                     problems += [f"{alone[s].text()}: {p}" for s in alone for p in alone[s].problems]
                     problems += serial(runs, alone, sched.initial)
+                if (k1, k2) in world.apart:
+                    problems += together(runs, ("write",) if "\nsync role " in world.policy[1] else ("write", "commit"))
                 n += len(runs)
                 waited += sum(run.waited for run in runs)
                 codes = [out.code for run in runs for out in run.outcomes.values()]
@@ -969,7 +1028,7 @@ def main() -> None:
     ap.add_argument(
         "--levels", default=",".join(LEVELS), help="comma-separated isolation levels: each session at each of them"
     )
-    ap.add_argument("--worlds", default=",".join(WORLDS), help="comma-separated worlds (default: all six)")
+    ap.add_argument("--worlds", default=",".join(WORLDS), help="comma-separated worlds (default: all seven)")
     ap.add_argument("--pairs", default="", help="comma-separated pairs, as create-move (default: every one)")
     args = ap.parse_args()
     chosen = [x.strip() for x in args.levels.split(",") if x.strip()]

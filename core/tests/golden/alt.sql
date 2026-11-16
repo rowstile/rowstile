@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('doc__parent_shortcut__tree2', '519285f1497c9faf4ba84d49f79f3e1f', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('doc__parent_shortcut__tree2', 'b2fdd49d9f06a5eae4e33460d4914acf', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'doc__parent_shortcut__tree2')) n(name, hash, oids, rel)
@@ -783,7 +783,124 @@ INSERT INTO authz_int.perms VALUES
   ('doc', 'mine'),
   ('doc', 'view');
 
-CREATE TABLE authz_int.locks (type text PRIMARY KEY, n bigint NOT NULL);
+-- a row for each type with a tree, updated by a write to the type's whole tree; narrow: its other tree
+-- writes lock the stripes of what they touch (trees.py)
+CREATE TABLE authz_int.locks (type text PRIMARY KEY, n bigint NOT NULL, narrow boolean NOT NULL DEFAULT false);
+
+-- the lock rows of the types whose tree writes lock only what they touch: for each type, a row for each slot.
+-- Each page is left mostly empty, so that a row's next version fits beside it (no new index entry for each write);
+-- and vacuum never gives the table's end back, which would stop every tree write while it does
+CREATE TABLE authz_int.tree_locks_1024_4 (type text NOT NULL, slot int NOT NULL, n bigint NOT NULL, PRIMARY KEY (type, slot))
+  WITH (fillfactor = 25, vacuum_truncate = false);
+
+-- A write that didn't get every lock row it asked for stops: the rows were there when the policy was applied,
+-- so it was applied again, or a migration of it ran, since the write began. To try again, at any isolation level
+CREATE FUNCTION authz_int.tree_locks_gone() RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  RAISE EXCEPTION 'the policy was applied while this write ran'
+    USING ERRCODE = 'serialization_failure', HINT = 'rowstile help AZ723';
+END $f$;
+
+-- A write to a type's whole tree (a rebuild, a write of more objects than the limit), and every tree write to
+-- a type that has no stripes: the type's row is updated, so that the writes queue behind each other and one whose
+-- snapshot is older than another's commit fails; with stripes, every stripe's own row is then locked, in order,
+-- which waits for the writes that hold some and holds the others
+CREATE FUNCTION authz_int.tree_lock_all(p_type text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_narrow boolean; v_n bigint;
+BEGIN
+  UPDATE authz_int.locks l SET n = l.n + 1 WHERE l.type = p_type RETURNING l.narrow INTO v_narrow;
+  IF NOT FOUND THEN
+    PERFORM authz_int.tree_locks_gone();
+  END IF;
+  IF v_narrow THEN
+    SELECT count(*) INTO v_n FROM (SELECT 1 FROM authz_int.tree_locks_1024_4 t WHERE t.type = p_type AND t.slot % 5 = 0
+                                   ORDER BY t.slot FOR UPDATE) s;
+    IF v_n <> 1024 THEN
+      PERFORM authz_int.tree_locks_gone();
+    END IF;
+  END IF;
+END $f$;
+
+-- More of a tree write's locks, once its walk found more than it had locked (authz_int."<tree>_refresh" takes
+-- the first ones itself, in the statement that reads what to lock). p_write: the objects whose stored rows it writes;
+-- p_under and p_hung, side by side: the objects those it changed hang under, and which hangs there; p_held: the
+-- slots it holds (a slot twice, plus one when updated). The slots it lacks are taken in their order; with p_wait
+-- false only those nobody holds (SKIP LOCKED), and o_short says how many it didn't get: taking a slot below one it
+-- holds, a write must not wait, or two writes could wait for each other
+CREATE FUNCTION authz_int.tree_lock(p_type text, p_write text[], p_under text[], p_hung text[], p_held int[],
+                                    p_wait boolean, OUT o_held int[], OUT o_short int)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_asked bigint; v_got bigint; v_slots int[];
+BEGIN
+  IF p_wait THEN
+    WITH need AS MATERIALIZED (
+      SELECT y._slot, bool_or(y._upd) AS _upd
+      FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5, true FROM unnest(p_write) w(_id) WHERE w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5 + g._sub, false FROM unnest(p_write) w(_id), generate_series(1, 4) g(_sub)
+            WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed' AND w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5, false FROM unnest(p_under, p_hung) u(_above, _hung) WHERE u._above IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
+            FROM unnest(p_under, p_hung) u(_above, _hung) WHERE u._above IS NOT NULL) y
+      WHERE NOT (y._slot * 2 + 1 = ANY (p_held)) AND NOT (NOT y._upd AND y._slot * 2 = ANY (p_held))
+      GROUP BY y._slot),
+    got AS MATERIALIZED (
+      SELECT o._slot, o._upd,
+             CASE WHEN o._slot = -1 THEN (SELECT 1 FROM authz_int.locks l WHERE l.type = p_type FOR SHARE)
+                  WHEN o._upd THEN (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                                    WHERE t.type = p_type AND t.slot = o._slot FOR UPDATE)
+                  ELSE (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                        WHERE t.type = p_type AND t.slot = o._slot FOR SHARE) END AS _held
+      FROM (SELECT n._slot, n._upd FROM need n ORDER BY n._slot OFFSET 0) o),
+    bumped AS (
+      UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
+      WHERE g._upd AND g._held = 1 AND t.type = p_type AND t.slot = g._slot RETURNING 1)
+    SELECT (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
+           ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
+    INTO v_asked, v_got, v_slots;
+    IF v_got <> v_asked THEN
+      PERFORM authz_int.tree_locks_gone();
+    END IF;
+  ELSE
+    WITH need AS MATERIALIZED (
+      SELECT y._slot, bool_or(y._upd) AS _upd
+      FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5, true FROM unnest(p_write) w(_id) WHERE w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5 + g._sub, false FROM unnest(p_write) w(_id), generate_series(1, 4) g(_sub)
+            WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed' AND w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5, false FROM unnest(p_under, p_hung) u(_above, _hung) WHERE u._above IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
+            FROM unnest(p_under, p_hung) u(_above, _hung) WHERE u._above IS NOT NULL) y
+      WHERE NOT (y._slot * 2 + 1 = ANY (p_held)) AND NOT (NOT y._upd AND y._slot * 2 = ANY (p_held))
+      GROUP BY y._slot),
+    got AS MATERIALIZED (
+      SELECT o._slot, o._upd,
+             CASE WHEN o._slot = -1 THEN (SELECT 1 FROM authz_int.locks l WHERE l.type = p_type FOR SHARE SKIP LOCKED)
+                  WHEN o._upd THEN (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                                    WHERE t.type = p_type AND t.slot = o._slot FOR UPDATE SKIP LOCKED)
+                  ELSE (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                        WHERE t.type = p_type AND t.slot = o._slot FOR SHARE SKIP LOCKED) END AS _held
+      FROM (SELECT n._slot, n._upd FROM need n ORDER BY n._slot OFFSET 0) o),
+    bumped AS (
+      UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
+      WHERE g._upd AND g._held = 1 AND t.type = p_type AND t.slot = g._slot RETURNING 1)
+    SELECT (SELECT count(*) FROM need), (SELECT count(*) FROM got g WHERE g._held = 1),
+           ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
+    INTO v_asked, v_got, v_slots;
+  END IF;
+  o_held := p_held || v_slots;
+  o_short := v_asked - v_got;
+END $f$;
 
 -- a row for each row a share, a key or a request named (authz_int.mark_row), until that row is gone
 CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));
@@ -792,7 +909,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('doc__parent_shortcut__tree2', '519285f1497c9faf4ba84d49f79f3e1f', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('doc__parent_shortcut__tree2', 'b2fdd49d9f06a5eae4e33460d4914acf', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1522,7 +1639,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mo
 DECLARE affected bigint[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
+  PERFORM authz_int.tree_lock_all('doc');
   WITH RECURSIVE down(id) AS (
     SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
     UNION
@@ -1548,7 +1665,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE batch bigint[];
 BEGIN
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
+  PERFORM authz_int.tree_lock_all('doc');
   DELETE FROM authz_int."doc__parent__tree";
   FOR batch IN SELECT array_agg(k.k) FROM (SELECT "doc_no" AS k, row_number() OVER () AS n FROM "alt"."docs") k GROUP BY (k.n - 1) / 10000 LOOP
     INSERT INTO authz_int."doc__parent__tree" (descendant, ancestor)
@@ -1592,7 +1709,7 @@ END $f$;
 CREATE FUNCTION authz_int."doc__parent__tree_recheck"() RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
+  PERFORM authz_int.tree_lock_all('doc');
   PERFORM authz_int."doc__parent__tree_refresh"(ARRAY(
     SELECT coalesce(c.id, k.id) FROM authz_int."doc__parent__tree_conds" c FULL JOIN authz_int."doc__parent__tree_cond_cache" k ON k.id = c.id
     WHERE c.v IS DISTINCT FROM k.v));
@@ -1674,7 +1791,7 @@ BEGIN
     ids := ARRAY(SELECT o."doc_no" FROM old_rows o);
   END IF;
   IF cardinality(ids) > 0 THEN
-    UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
+    PERFORM authz_int.tree_lock_all('doc');
   IF TG_OP <> 'DELETE' THEN PERFORM authz_int."doc__parent__tree_check_loops"(ids); END IF;
     PERFORM authz_int."doc__parent__tree_refresh"(ids, shift);
   END IF;
@@ -1797,7 +1914,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mo
 DECLARE affected bigint[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
+  PERFORM authz_int.tree_lock_all('doc');
   WITH RECURSIVE down(id) AS (
     SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
     UNION
@@ -1824,7 +1941,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE batch bigint[];
 BEGIN
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
+  PERFORM authz_int.tree_lock_all('doc');
   DELETE FROM authz_int."doc__parent_shortcut__tree";
   FOR batch IN SELECT array_agg(k.k) FROM (SELECT "doc_no" AS k, row_number() OVER () AS n FROM "alt"."docs") k GROUP BY (k.n - 1) / 10000 LOOP
     INSERT INTO authz_int."doc__parent_shortcut__tree" (descendant, ancestor)
@@ -1868,7 +1985,7 @@ END $f$;
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_recheck"() RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
+  PERFORM authz_int.tree_lock_all('doc');
   PERFORM authz_int."doc__parent_shortcut__tree_refresh"(ARRAY(
     SELECT coalesce(c.id, k.id) FROM authz_int."doc__parent_shortcut__tree_conds" c FULL JOIN authz_int."doc__parent_shortcut__tree_cond_cache" k ON k.id = c.id
     WHERE c.v IS DISTINCT FROM k.v));
@@ -1950,7 +2067,7 @@ BEGIN
     ids := ARRAY(SELECT o."doc_no" FROM old_rows o);
   END IF;
   IF cardinality(ids) > 0 THEN
-    UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
+    PERFORM authz_int.tree_lock_all('doc');
   IF TG_OP <> 'DELETE' THEN PERFORM authz_int."doc__parent_shortcut__tree_check_loops"(ids); END IF;
     PERFORM authz_int."doc__parent_shortcut__tree_refresh"(ids, shift);
   END IF;
@@ -2163,25 +2280,194 @@ BEGIN
 END $f$;
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
-CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
+CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_refresh"(p_ids bigint[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
+                               p_plain boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
-DECLARE affected bigint[];
+<<authz__>>
+DECLARE
+  affected bigint[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
+  locked bigint[]; locked_under text[]; locked_hung text[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
-  WITH RECURSIVE down(id) AS (
-    SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-    UNION
-    SELECT e._child FROM down CROSS JOIN LATERAL (
-      (SELECT x.* FROM (SELECT 0 AS _link, r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
-      UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
-      UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._parent = down.id OFFSET 0)) e)
-  SELECT array_agg(id) INTO affected FROM down;
+  IF p_plain THEN
+    WITH hint AS MATERIALIZED (
+      SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+                   UNION SELECT s.descendant FROM authz_int."doc__parent_shortcut__tree2" s WHERE s.ancestor = ANY ($1)) AS _ids),
+    hangs AS MATERIALIZED (
+      SELECT h._under, h._hung
+      FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
+                 array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
+          FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
+            (SELECT x.* FROM (SELECT 0 AS _link, r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+      UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+      UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._child = b._y OFFSET 0)) e
+          WHERE e._parent IS NOT NULL) h),
+    narrow AS MATERIALIZED (
+      SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'doc'), false) AS _is),
+    need AS MATERIALIZED (
+      SELECT y._slot, bool_or(y._upd) AS _upd
+      FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5, true FROM (SELECT x::text FROM hint i, unnest(i._ids) x) w(_id) WHERE w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(w._id) & 1023) * 5 + g._sub, false FROM (SELECT x::text FROM hint i, unnest(i._ids) x) w(_id), generate_series(1, 4) g(_sub)
+            WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed' AND w._id IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5, false FROM (SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b)) u(_above, _hung) WHERE u._above IS NOT NULL
+            UNION ALL
+            SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
+            FROM (SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b)) u(_above, _hung) WHERE u._above IS NOT NULL) y
+      WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= 1000
+      GROUP BY y._slot),
+    got AS MATERIALIZED (
+      SELECT o._slot, o._upd,
+             CASE WHEN o._slot = -1 THEN (SELECT 1 FROM authz_int.locks l WHERE l.type = 'doc' FOR SHARE)
+                  WHEN o._upd THEN (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                                    WHERE t.type = 'doc' AND t.slot = o._slot FOR UPDATE)
+                  ELSE (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                        WHERE t.type = 'doc' AND t.slot = o._slot FOR SHARE) END AS _held
+      FROM (SELECT n._slot, n._upd FROM need n ORDER BY n._slot OFFSET 0) o),
+    bumped AS (
+      UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
+      WHERE g._upd AND g._held = 1 AND t.type = 'doc' AND t.slot = g._slot RETURNING 1)
+    SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
+           (SELECT count(*) FROM got g WHERE g._held = 1),
+           ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
+    INTO affected, under, hung, stripes, asked, taken, held
+    FROM hint i, hangs p;
+    IF NOT authz__.stripes OR cardinality(authz__.affected) > 1000 THEN
+      -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
+      PERFORM authz_int.tree_lock_all('doc');
+      held := ARRAY[-1];
+    ELSIF authz__.taken <> authz__.asked THEN
+      PERFORM authz_int.tree_locks_gone();
+    END IF;
+    LOOP
+      locked := affected;
+      locked_under := under;
+      locked_hung := hung;
+      WITH RECURSIVE down(id) AS (
+      SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+      UNION
+      SELECT e._child FROM down CROSS JOIN LATERAL (
+        (SELECT x.* FROM (SELECT 0 AS _link, r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
+        UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
+        UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._parent = down.id OFFSET 0)) e)
+      SELECT (SELECT array_agg(d.id) FROM down d), h._under, h._hung INTO affected, under, hung
+      FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
+                   array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
+            FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
+              (SELECT x.* FROM (SELECT 0 AS _link, r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+        UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+        UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._child = b._y OFFSET 0)) e
+            WHERE e._parent IS NOT NULL) h;
+      -- the walk, under the locks, found nothing that wasn't locked: nearly always
+      EXIT WHEN authz__.held = ARRAY[-1]
+                OR (authz__.affected <@ authz__.locked AND authz__.under IS NOT DISTINCT FROM authz__.locked_under
+                    AND authz__.hung IS NOT DISTINCT FROM authz__.locked_hung);
+      SELECT l.o_held, l.o_short INTO held, short
+      FROM authz_int.tree_lock('doc', authz__.affected::text[], authz__.under, authz__.hung, authz__.held, false) l;
+      IF authz__.short > 0 THEN
+        SELECT l.o_held INTO held
+        FROM authz_int.tree_lock('doc', authz__.affected::text[], authz__.under, authz__.hung, authz__.held, true) l;
+      END IF;
+    END LOOP;
+  ELSE
+    LOOP
+      BEGIN
+    WITH hint AS MATERIALIZED (
+          SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+                       UNION SELECT s.descendant FROM authz_int."doc__parent_shortcut__tree2" s WHERE s.ancestor = ANY ($1)) AS _ids),
+        hangs AS MATERIALIZED (
+          SELECT h._under, h._hung
+          FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
+                     array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
+              FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
+                (SELECT x.* FROM (SELECT 0 AS _link, r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+          UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+          UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._child = b._y OFFSET 0)) e
+              WHERE e._parent IS NOT NULL) h),
+        narrow AS MATERIALIZED (
+          SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'doc'), false) AS _is),
+        need AS MATERIALIZED (
+          SELECT y._slot, bool_or(y._upd) AS _upd
+          FROM (SELECT -1 AS _slot, false AS _upd WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed'
+                UNION ALL
+                SELECT (pg_catalog.hashtext(w._id) & 1023) * 5, true FROM (SELECT x::text FROM hint i, unnest(i._ids) x) w(_id) WHERE w._id IS NOT NULL
+                UNION ALL
+                SELECT (pg_catalog.hashtext(w._id) & 1023) * 5 + g._sub, false FROM (SELECT x::text FROM hint i, unnest(i._ids) x) w(_id), generate_series(1, 4) g(_sub)
+                WHERE pg_catalog.current_setting('transaction_isolation') <> 'read committed' AND w._id IS NOT NULL
+                UNION ALL
+                SELECT (pg_catalog.hashtext(u._above) & 1023) * 5, false FROM (SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b)) u(_above, _hung) WHERE u._above IS NOT NULL
+                UNION ALL
+                SELECT (pg_catalog.hashtext(u._above) & 1023) * 5 + 1 + ((pg_catalog.hashtext(u._hung) >> 12) & 3), true
+                FROM (SELECT z.a, z.b FROM hangs p, unnest(p._under, p._hung) z(a, b)) u(_above, _hung) WHERE u._above IS NOT NULL) y
+          WHERE (SELECT n._is FROM narrow n) AND (SELECT cardinality(i._ids) FROM hint i) <= 1000
+          GROUP BY y._slot),
+        got AS MATERIALIZED (
+          SELECT o._slot, o._upd,
+                 CASE WHEN o._slot = -1 THEN (SELECT 1 FROM authz_int.locks l WHERE l.type = 'doc' FOR SHARE)
+                      WHEN o._upd THEN (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                                        WHERE t.type = 'doc' AND t.slot = o._slot FOR UPDATE)
+                      ELSE (SELECT 1 FROM authz_int.tree_locks_1024_4 t
+                            WHERE t.type = 'doc' AND t.slot = o._slot FOR SHARE) END AS _held
+          FROM (SELECT n._slot, n._upd FROM need n ORDER BY n._slot OFFSET 0) o),
+        bumped AS (
+          UPDATE authz_int.tree_locks_1024_4 t SET n = t.n + 1 FROM got g
+          WHERE g._upd AND g._held = 1 AND t.type = 'doc' AND t.slot = g._slot RETURNING 1)
+        SELECT i._ids, p._under, p._hung, (SELECT n._is FROM narrow n), (SELECT count(*) FROM need),
+               (SELECT count(*) FROM got g WHERE g._held = 1),
+               ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
+        INTO affected, under, hung, stripes, asked, taken, held
+        FROM hint i, hangs p;
+        IF NOT authz__.stripes OR cardinality(authz__.affected) > 1000 THEN
+          -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
+          PERFORM authz_int.tree_lock_all('doc');
+          held := ARRAY[-1];
+        ELSIF authz__.taken <> authz__.asked THEN
+          PERFORM authz_int.tree_locks_gone();
+        END IF;
+        LOOP
+          locked := affected;
+          locked_under := under;
+          locked_hung := hung;
+          WITH RECURSIVE down(id) AS (
+          SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+          UNION
+          SELECT e._child FROM down CROSS JOIN LATERAL (
+            (SELECT x.* FROM (SELECT 0 AS _link, r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
+            UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
+            UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._parent = down.id OFFSET 0)) e)
+          SELECT (SELECT array_agg(d.id) FROM down d), h._under, h._hung INTO affected, under, hung
+          FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
+                       array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
+                FROM unnest($1) AS b(_y) CROSS JOIN LATERAL (
+                  (SELECT x.* FROM (SELECT 0 AS _link, r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+            UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._child = b._y OFFSET 0)
+            UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._child = b._y OFFSET 0)) e
+                WHERE e._parent IS NOT NULL) h;
+          -- the walk, under the locks, found nothing that wasn't locked: nearly always
+          EXIT WHEN authz__.held = ARRAY[-1]
+                    OR (authz__.affected <@ authz__.locked AND authz__.under IS NOT DISTINCT FROM authz__.locked_under
+                        AND authz__.hung IS NOT DISTINCT FROM authz__.locked_hung);
+          SELECT l.o_held, l.o_short INTO held, short
+          FROM authz_int.tree_lock('doc', authz__.affected::text[], authz__.under, authz__.hung, authz__.held, false) l;
+          IF authz__.short > 0 THEN
+            RAISE EXCEPTION USING ERRCODE = 'AZL01';
+          END IF;
+        END LOOP;
+        EXIT;
+      EXCEPTION WHEN SQLSTATE 'AZL01' THEN
+        NULL;  -- what this try took is let go: again, in order, from what is stored now
+      END;
+    END LOOP;
+  END IF;
   IF cardinality(affected) > 1000 THEN
     -- (a write this big gets plans of its own; the setting is as it was when this function ends)
     PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
   END IF;
+  IF p_loops THEN PERFORM authz_int."doc__parent_shortcut__tree2_check_loops"($1); END IF;
   IF NOT (p_shift AND authz_int."doc__parent_shortcut__tree2_shift"(p_ids, affected)) THEN
     DELETE FROM authz_int."doc__parent_shortcut__tree2" WHERE descendant = ANY (affected);
     INSERT INTO authz_int."doc__parent_shortcut__tree2" (descendant, ancestor)
@@ -2196,7 +2482,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE batch bigint[];
 BEGIN
-  UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
+  PERFORM authz_int.tree_lock_all('doc');
   DELETE FROM authz_int."doc__parent_shortcut__tree2";
   FOR batch IN SELECT array_agg(k.k) FROM (SELECT "doc_no" AS k, row_number() OVER () AS n FROM "alt"."docs") k GROUP BY (k.n - 1) / 10000 LOOP
     INSERT INTO authz_int."doc__parent_shortcut__tree2" (descendant, ancestor)
@@ -2255,7 +2541,7 @@ CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_on_rows"() RETURNS trigge
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
-DECLARE ids bigint[]; shift boolean := false;
+DECLARE ids bigint[]; shift boolean := false; plain boolean;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT n."doc_no" FROM new_rows n);
@@ -2273,9 +2559,17 @@ BEGIN
     ids := ARRAY(SELECT o."doc_no" FROM old_rows o);
   END IF;
   IF cardinality(ids) > 0 THEN
-    UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('doc');
-  IF TG_OP <> 'DELETE' THEN PERFORM authz_int."doc__parent_shortcut__tree2_check_loops"(ids); END IF;
-    PERFORM authz_int."doc__parent_shortcut__tree2_refresh"(ids, shift);
+    -- (nothing hangs under a row just made; under another, its links say: the stored rows don't hold
+    -- what hangs under a row without inheriting from it)
+    IF TG_OP = 'INSERT' THEN
+      plain := true;
+    ELSE
+      plain := NOT EXISTS (SELECT 1 FROM unnest(authz__.ids) AS b(_y) CROSS JOIN LATERAL (
+        (SELECT x.* FROM (SELECT 0 AS _link, r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)
+      UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)
+      UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._parent = b._y OFFSET 0)) e);
+    END IF;
+    PERFORM authz_int."doc__parent_shortcut__tree2_refresh"(ids, shift, TG_OP <> 'DELETE', plain);
   END IF;
   RETURN NULL;
 END $f$;
@@ -2360,6 +2654,10 @@ DO $b$ BEGIN
     PERFORM authz_int."doc__parent_shortcut__tree2_rebuild"();
   END IF;
 END $b$;
+
+-- the types whose tree writes lock only the stripes of what they touch; the others' take their type's row
+UPDATE authz_int.locks l SET narrow = (false), n = l.n + 1 WHERE l.narrow IS DISTINCT FROM (false);
+DELETE FROM authz_int.tree_locks_1024_4 l WHERE NOT (false);
 
 -- trees kept but no longer used (none, normally) go with the holding schema
 DROP SCHEMA authz_keep CASCADE;
