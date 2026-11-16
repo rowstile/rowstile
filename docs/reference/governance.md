@@ -131,6 +131,9 @@ makes reads through the rules slow. Each finding has a severity. These are error
 
 These are warnings:
 
+- A setting of the SCIM endpoint (`authz.set_scim`) that no longer holds: a column that was dropped, renamed or
+  given another type, a function that is gone or was given to another role, a principal whose row is gone, a
+  group that is no relation with one table of members in the policy now. A request that meets it fails (AZ722). <!-- checked: tests/scim.sh "a column the settings name that is gone"; tests/scim.sh "... one that is of another type now"; tests/scim.sh "a function that is gone"; tests/scim.sh "a principal whose row is gone"; tests/scim.sh "a policy applied since, in which the group is no relation with one table of members: lint says so, and the groups are not served" -->
 - A SECURITY DEFINER function the app role may call, which seems to use a governed table. <!-- checked: tests/governance.sh "and says of the function what it does" -->
 - A column that gives a relation, which anyone who may update the row may change (no rule on the column). <!-- checked: tests/governance.sh "lint finds a column that gives a relation and that an editor may change" -->
 - A column that moves a row under another of its type, with nothing checking where it moves to (no `after` rule). <!-- checked: tests/governance.sh "lint finds a move nothing checks the destination of" -->

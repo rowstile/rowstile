@@ -30,12 +30,14 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   Entra ID and Okta write it (members added, removed, replaced), replaced, and made, renamed and deleted through a
   function the app gives. Members are written as `authz.sync_members` writes them, with its line in the audit
   trail. Users are read and found by `userName`, `externalId` or `id`, and made, changed, deactivated and deleted
-  through a function the app gives, which gets the user as the request leaves it and never a password.
+  through a function the app gives, which gets the user as the request leaves it and never a password. Lists
+  answer by pages (`startIndex`, `count`), and `ServiceProviderConfig`, `ResourceTypes` and `Schemas` say what
+  is served.
   `authz.set_scim(settings)`, the owner's, names what it reads: the principal whose API key signs the provider
   in, the relation that holds the groups, the columns of its table and of the users', the app's functions; each
-  is checked when set (AZ720). A request without that key is answered 401, and a refusal is SCIM's error body
-  (AZ721). The discovery endpoints, paging and the SDKs' routes follow: the limits page still says there is no
-  endpoint to mount
+  is checked when set (AZ720), and `authz.lint()` says when one no longer holds. A request without that key is
+  answered 401, and a refusal is SCIM's error body (AZ721). The SDKs' routes follow: the limits page still says
+  there is no endpoint to mount
   ([App code](docs/reference/app-code.md)).
 
 ### Changed

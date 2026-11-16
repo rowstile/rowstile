@@ -585,6 +585,100 @@ is "... and a PATCH gives the app's function what it changed, with the userName"
 same "... which the function kept" "Renamed" "$(own "SELECT profile->>'displayName' FROM sc.users WHERE id = 100")"
 own "SELECT authz.set_scim('{$WITH_GROUPS}')" >/dev/null
 
+echo "-- lists by pages (startIndex and count), as Okta reads them"
+own "SELECT authz.set_scim('{$WITH_USERS, \"user_function\": \"sc.scim_user\", \"page\": 3}')" >/dev/null
+is "the first page: count of them at most, and how many there are in all" "200|5|2|1|1,2" "$LIST" GET Users 'startIndex=1&count=2'
+is "the next page" "200|5|2|3|3,4" "$LIST" GET Users 'startIndex=3&count=2'
+is "the last one, shorter" "200|5|1|5|100" "$LIST" GET Users 'startIndex=5&count=2'
+is "past the last: none, and how many there are still" "200|5|0|9|" "$LIST" GET Users 'startIndex=9&count=2'
+is "a startIndex under 1 is 1, and a count over the setting page is the page" "200|5|3|1|1,2,3" "$LIST" GET Users 'startIndex=0&count=100'
+is "a count of 0: how many there are, and none of them" "200|5|0|1|" "$LIST" GET Users 'count=0'
+is "a count under 0 is 0" "200|5|0|2|" "$LIST" GET Users 'startIndex=2&count=-5'
+is "with a filter, the pages are of what it finds" "200|1|1|1|2" "$LIST" GET Users 'filter=userName%20eq%20%22bob%40example.com%22&startIndex=1&count=100'
+is "... and past them there is none" "200|1|0|2|" "$LIST" GET Users 'filter=userName%20eq%20%22bob%40example.com%22&startIndex=2&count=100'
+is "the groups by pages" "200|3|1|2|11" "$LIST" GET Groups 'startIndex=2&count=1&excludedAttributes=members'
+is "the three numbers of a list are numbers" "number|number|number" \
+  "concat_ws('|', jsonb_typeof(a.body->'totalResults'), jsonb_typeof(a.body->'itemsPerPage'), jsonb_typeof(a.body->'startIndex'))" GET Users 'startIndex=2&count=2'
+is "a startIndex that is no number" "400 invalidValue: startIndex and count are whole numbers (rowstile help AZ721)" "$ERR" GET Users 'startIndex=first'
+is "... nor a count" "400 invalidValue: startIndex and count are whole numbers (rowstile help AZ721)" "$ERR" GET Groups 'count=1.5'
+
+echo "-- what the endpoint says of itself: ServiceProviderConfig, ResourceTypes, Schemas"
+CORE_URN="urn:ietf:params:scim:schemas:core:2.0"
+is "what it serves: PATCH and filters (the page at most); no Bulk, no sorting, no ETags, no password change; a bearer token" \
+  "200|true|true|3|false|false|false|false|oauthbearertoken|$CORE_URN:ServiceProviderConfig" \
+  "concat_ws('|', a.status, a.body#>>'{patch,supported}', a.body#>>'{filter,supported}', a.body#>>'{filter,maxResults}', a.body#>>'{bulk,supported}', a.body#>>'{sort,supported}', a.body#>>'{etag,supported}', a.body#>>'{changePassword,supported}', a.body#>>'{authenticationSchemes,0,type}', a.body#>>'{schemas,0}')" \
+  GET ServiceProviderConfig
+is "the resource types: users and groups, where each is served and its schema" \
+  "200|2|User /Users $CORE_URN:User, Group /Groups $CORE_URN:Group" \
+  "concat_ws('|', a.status, a.body->>'totalResults', (SELECT string_agg(concat_ws(' ', r->>'id', r->>'endpoint', r->>'schema'), ', ' ORDER BY i) FROM jsonb_array_elements(a.body->'Resources') WITH ORDINALITY x(r, i)))" \
+  GET ResourceTypes
+is "one of them" "200|Group|/Groups|ResourceType" "concat_ws('|', a.status, a.body->>'name', a.body->>'endpoint', a.body#>>'{meta,resourceType}')" GET ResourceTypes/Group
+is "the schemas, as a list" "200|2|$CORE_URN:User,$CORE_URN:Group|$CORE_URN:Schema" \
+  "concat_ws('|', a.status, a.body->>'totalResults', (SELECT string_agg(r->>'id', ',' ORDER BY i) FROM jsonb_array_elements(a.body->'Resources') WITH ORDINALITY x(r, i)), a.body#>>'{Resources,0,schemas,0}')" \
+  GET /Schemas
+is "a user's schema: its userName, required and one user's; then what the column for the user as the provider wrote it keeps" \
+  "200|userName string true server readWrite|userName,active,displayName,name,emails|formatted,familyName,givenName|true" \
+  "concat_ws('|', a.status, (SELECT concat_ws(' ', x->>'name', x->>'type', x->>'required', x->>'uniqueness', x->>'mutability') FROM jsonb_array_elements(a.body->'attributes') x LIMIT 1), (SELECT string_agg(x->>'name', ',' ORDER BY i) FROM jsonb_array_elements(a.body->'attributes') WITH ORDINALITY y(x, i)), (SELECT string_agg(s->>'name', ',' ORDER BY i) FROM jsonb_array_elements(a.body#>'{attributes,3,subAttributes}') WITH ORDINALITY y(s, i)), a.body#>>'{attributes,4,multiValued}')" \
+  GET "Schemas/$CORE_URN:User"
+is "a group's schema: its displayName and its members, each the id of a user" "200|displayName,members|value|true" \
+  "concat_ws('|', a.status, (SELECT string_agg(x->>'name', ',' ORDER BY i) FROM jsonb_array_elements(a.body->'attributes') WITH ORDINALITY y(x, i)), a.body#>>'{attributes,1,subAttributes,0,name}', a.body#>>'{attributes,1,multiValued}')" \
+  GET "Schemas/$CORE_URN:Group"
+is "a schema the endpoint doesn't have" "404 -: nothing is served at Schemas/urn:ietf:params:scim:schemas:extension:enterprise:2.0:User (rowstile help AZ721)" "$ERR" \
+  GET "Schemas/urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+is "... nor a type" "404 -: nothing is served at ResourceTypes/Device (rowstile help AZ721)" "$ERR" GET ResourceTypes/Device
+is "nothing is below ServiceProviderConfig" "404 -: nothing is served at ServiceProviderConfig/patch (rowstile help AZ721)" "$ERR" GET ServiceProviderConfig/patch
+is "what the endpoint says of itself is read alone" "405 -: PUT is no request ServiceProviderConfig takes (rowstile help AZ721)" "$ERR" PUT ServiceProviderConfig "" '{"patch": {"supported": false}}'
+is "... and by the provider alone" "$UNAUTHORIZED" "$ERR" GET ServiceProviderConfig "" "" "$OTHER"
+NOT_SERVED="is not served: no Bulk, no /Me, no search by POST (ServiceProviderConfig says what is) (rowstile help AZ721)"
+is "Bulk is not served" "501 -: Bulk $NOT_SERVED" "$ERR" POST Bulk "" '{"Operations": []}'
+is "... nor /Me" "501 -: Me $NOT_SERVED" "$ERR" GET Me
+is "... nor a search by POST, of everything or of the users" "501 -: .search $NOT_SERVED|501 -: Users/.search $NOT_SERVED" \
+  "$ERR || '|' || (SELECT b.status || ' ' || coalesce(b.body->>'scimType', '-') || ': ' || (b.body->>'detail') FROM authz.scim('POST', 'Users/.search', '', '{}', :'t') b)" \
+  POST .search "" '{"filter": "userName eq \"x\""}'
+own "SELECT authz.set_scim('{$WITH_GROUPS, \"user_name\": \"email\"}')" >/dev/null
+is "with no column for it, a user's schema says what rowstile reads of a user, no more" "200|userName,active" \
+  "concat_ws('|', a.status, (SELECT string_agg(x->>'name', ',' ORDER BY i) FROM jsonb_array_elements(a.body->'attributes') WITH ORDINALITY y(x, i)))" \
+  GET "Schemas/$CORE_URN:User"
+own "SELECT authz.set_scim('{$WITH_GROUPS}')" >/dev/null
+is "settings that open no users: the groups are the one type, and theirs the one schema" "1 Group|1 $CORE_URN:Group|100" \
+  "concat_ws('|', (a.body->>'totalResults') || ' ' || (a.body#>>'{Resources,0,id}'), (SELECT (b.body->>'totalResults') || ' ' || (b.body#>>'{Resources,0,id}') FROM authz.scim('GET', 'Schemas', '', NULL, :'t') b), (SELECT c.body#>>'{filter,maxResults}' FROM authz.scim('GET', 'ServiceProviderConfig', '', NULL, :'t') c))" \
+  GET ResourceTypes
+
+echo "-- authz.lint() says when a setting no longer holds"
+LINT="SELECT coalesce(string_agg(severity || ' ' || object || ': ' || problem, ' / ' ORDER BY problem), 'none') FROM authz.lint() WHERE object = 'authz.scim'"
+AGAIN=". Set the endpoint's settings again (authz.set_scim), or put right what they name"
+own "SELECT authz.set_scim('{$WITH_USERS, \"user_function\": \"sc.scim_user\"}')" >/dev/null
+same "settings that hold: lint says nothing of the endpoint" "none" "$(own "$LINT")"
+same "a column the settings name that is gone" \
+  "warning authz.scim: group_external_id names the column scim_id of sc.teams, which is not there now: requests that read it fail$AGAIN" \
+  "$(own "BEGIN; ALTER TABLE sc.teams RENAME COLUMN scim_id TO external_id; $LINT; ROLLBACK;")"
+same "... one that is of another type now" \
+  "warning authz.scim: user_active names the column active of sc.users, which is text now: requests that read it fail$AGAIN" \
+  "$(own "BEGIN; ALTER TABLE sc.users ALTER COLUMN active DROP DEFAULT; ALTER TABLE sc.users ALTER COLUMN active TYPE text; $LINT; ROLLBACK;")"
+same "a function that is gone" \
+  "warning authz.scim: user_function names the function sc.scim_user, which is gone or is no longer the policy's owner's: requests that call it fail$AGAIN" \
+  "$(own "BEGIN; DROP FUNCTION sc.scim_user(text, jsonb); $LINT; ROLLBACK;")"
+same "a principal whose row is gone" \
+  "warning authz.scim: the principal service:7 is no row of a type that signs in: no key signs the provider in$AGAIN" \
+  "$(own "BEGIN; DELETE FROM sc.services WHERE id = 7; $LINT; ROLLBACK;")"
+python3 - $T/scim.authz $T/fewer.authz <<'PY'
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+changed = text.replace("  member : user = sc.team_members(team_id -> user_id)\n", "  member : user = sc.team_members(team_id -> user_id) where {user_id > 0}\n")
+assert changed != text
+open(sys.argv[2], "w", encoding="utf-8").write(changed)
+PY
+python3 compile_policy.py $T/fewer.authz > $T/fewer.sql || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/fewer.sql >/dev/null || exit 1
+same "a policy applied since, in which the group is no relation with one table of members: lint says so, and the groups are not served" \
+  "warning authz.scim: the group team.member is no relation with one table of members in the policy now: groups are not served$AGAIN|501 the SCIM settings name no group to serve (authz.set_scim: group, a relation authz.sync_members takes) (rowstile help AZ721)" \
+  "$(own "$LINT")|$(ask "a.status || ' ' || (a.body->>'detail')" GET Groups)"
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/scim.sql >/dev/null || exit 1
+same "... the suite's policy applied again: the settings were kept, and hold" "none|200" "$(own "$LINT")|$(ask "a.status" GET Groups)"
+own "SELECT authz.set_scim('{}')" >/dev/null
+same "an endpoint turned off: lint says nothing of it" "none" "$(own "$LINT")"
+own "SELECT authz.set_scim('{$WITH_GROUPS}')" >/dev/null
+
 echo "-- settings that no longer hold are an error for the app to see, never an answer"
 own "ALTER TABLE sc.teams RENAME COLUMN scim_id TO external_id" >/dev/null
 expect_code "a column the settings name that is gone" \

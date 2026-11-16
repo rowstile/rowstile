@@ -346,6 +346,10 @@ class Core:
         """authz.lint()'s findings about the sync role (sync.py; none without sync lines)."""
         raise NotImplementedError
 
+    def scim_lint_sql(self) -> str:
+        """authz.lint()'s findings about the SCIM endpoint's settings (scim.py)."""
+        raise NotImplementedError
+
     def sync_extra_grants_sql(self) -> str:
         """extra_grants_sql's rows for authz_sync (sync.py; none without sync lines)."""
         raise NotImplementedError
