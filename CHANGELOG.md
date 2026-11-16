@@ -61,6 +61,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   machine), an ordinary member opens a file in 2.2 ms where it took 2.8, and a folder in 2.4 ms where it took 3.0:
   a fifth less. An admin's reads, `authz.list` and writes take what they took. Nothing to do: the next `apply`
   or migration writes the functions again.
+- A write to a tree (a folder made, moved, linked or deleted, where folders inherit from folders) is faster. The
+  functions that keep the stored inheritance take arrays, and Postgres planned each of their statements again on
+  every write; they now plan them once for a connection. On a GitHub runner (50,000 folders 20 levels deep, the
+  two builds in turn on the one machine, two rounds), one client does 236 tree writes a second where it did 199,
+  ten clients 287 where they did 229, fifty 229 where they did 188: a fifth to a quarter more. A write of more
+  than a thousand rows still gets plans made for it, as a big move needs. Nothing to do: the next `apply` or
+  migration writes the functions again, and each inheritance is worked out again with them (see Upgrading).
 
 ### Fixed
 

@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('doc__parent_shortcut__tree2', '30f0c8bd4add6fabfcf86d381238db21', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('doc__parent_shortcut__tree2', '519285f1497c9faf4ba84d49f79f3e1f', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'doc__parent_shortcut__tree2')) n(name, hash, oids, rel)
@@ -792,7 +792,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('doc__parent_shortcut__tree2', '30f0c8bd4add6fabfcf86d381238db21', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('doc__parent_shortcut__tree2', '519285f1497c9faf4ba84d49f79f3e1f', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1517,7 +1517,7 @@ CREATE TABLE authz_int."doc__parent__tree_reads" (rel regclass PRIMARY KEY);
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION authz_int."doc__parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE affected bigint[];
 BEGIN
@@ -1530,6 +1530,10 @@ BEGIN
       (SELECT x.* FROM (SELECT 0 AS _link, r."doc_no" AS _child, r."up" AS _parent FROM "alt"."docs" r WHERE r."up" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
       UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)) e)
   SELECT array_agg(id) INTO affected FROM down;
+  IF cardinality(affected) > 1000 THEN
+    -- (a write this big gets plans of its own; the setting is as it was when this function ends)
+    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
+  END IF;
   DELETE FROM authz_int."doc__parent__tree" WHERE descendant = ANY (affected);
   INSERT INTO authz_int."doc__parent__tree" (descendant, ancestor)
   SELECT o_descendant, o_ancestor FROM authz_int."doc__parent__tree_compute"(affected);
@@ -1647,7 +1651,7 @@ END $f$;
 
 -- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."doc__parent__tree_on_rows"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
 DECLARE ids bigint[]; shift boolean := false; wrote boolean;
@@ -1692,7 +1696,7 @@ COMMENT ON TRIGGER "authz_doc__parent__tree_trunc" ON "alt"."docs" IS 'rowstile:
 
 -- links stored in alt.doc_links
 CREATE FUNCTION authz_int."doc__parent__tree_on_links1"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current
@@ -1788,7 +1792,7 @@ CREATE TABLE authz_int."doc__parent_shortcut__tree_reads" (rel regclass PRIMARY 
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE affected bigint[];
 BEGIN
@@ -1802,6 +1806,10 @@ BEGIN
       UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
       UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._parent = down.id OFFSET 0)) e)
   SELECT array_agg(id) INTO affected FROM down;
+  IF cardinality(affected) > 1000 THEN
+    -- (a write this big gets plans of its own; the setting is as it was when this function ends)
+    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
+  END IF;
   DELETE FROM authz_int."doc__parent_shortcut__tree" WHERE descendant = ANY (affected);
   INSERT INTO authz_int."doc__parent_shortcut__tree" (descendant, ancestor)
   SELECT o_descendant, o_ancestor FROM authz_int."doc__parent_shortcut__tree_compute"(affected);
@@ -1919,7 +1927,7 @@ END $f$;
 
 -- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_on_rows"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
 DECLARE ids bigint[]; shift boolean := false; wrote boolean;
@@ -1964,7 +1972,7 @@ COMMENT ON TRIGGER "authz_doc__parent_shortcut__tree_trunc" ON "alt"."docs" IS '
 
 -- links stored in alt.doc_links
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_on_links1"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current
@@ -2156,7 +2164,7 @@ END $f$;
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 DECLARE affected bigint[];
 BEGIN
@@ -2170,6 +2178,10 @@ BEGIN
       UNION ALL (SELECT x.* FROM (SELECT 0 AS _link, s."child" AS _child, s."parent" AS _parent FROM "alt"."doc_links" s WHERE s."parent" IS NOT NULL AND s."child" IS NOT NULL) x WHERE x._parent = down.id OFFSET 0)
       UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, g.object_id::bigint AS _child, g.subject_id::bigint AS _parent FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '') x WHERE x._parent = down.id OFFSET 0)) e)
   SELECT array_agg(id) INTO affected FROM down;
+  IF cardinality(affected) > 1000 THEN
+    -- (a write this big gets plans of its own; the setting is as it was when this function ends)
+    PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
+  END IF;
   IF NOT (p_shift AND authz_int."doc__parent_shortcut__tree2_shift"(p_ids, affected)) THEN
     DELETE FROM authz_int."doc__parent_shortcut__tree2" WHERE descendant = ANY (affected);
     INSERT INTO authz_int."doc__parent_shortcut__tree2" (descendant, ancestor)
@@ -2240,7 +2252,7 @@ END $f$;
 
 -- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_on_rows"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
 DECLARE ids bigint[]; shift boolean := false;
@@ -2279,7 +2291,7 @@ COMMENT ON TRIGGER "authz_doc__parent_shortcut__tree2_trunc" ON "alt"."docs" IS 
 
 -- links stored in alt.doc_links
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree2_on_links1"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 BEGIN
   -- one refresh for old and new links together: each refresh expects the rest to be current
