@@ -159,7 +159,12 @@ For one suite, start a container and run it inside:
   below) and shares the stripe of each object those hang under, all in one order; a stricter isolation level fails
   on a stripe updated since its snapshot. A rebuild, a write of more objects than the limit, and every write to a
   type with a tree of several types or a condition that reads other rows take the whole type
-  (`authz_int.tree_lock_all`). A new write path takes its locks through `_refresh`, never beside it.
+  (`authz_int.tree_lock_all`). The trees of one type ask for the same lock rows, those of what the type's trees
+  link through together (`one_lock_set`, once every tree is known: `refresh_sql` and `on_rows_sql` write a tree's
+  functions for itself, then for its type's trees where they differ), so that a statement's second trigger asks
+  for what its first took (`tests/concurrency.sh` holds a move to it); a tree's hash and its refresh's arguments
+  are the same either way, so a tree made beside another changes that one's functions, not its rows. A new write
+  path takes its locks through `_refresh`, never beside it.
   `tests/interleave.py` and `tests/stress.sh` (`run_tests.sh --proofs`) must stay green for any locking change, and
   a pair of writes to different parts of a tree is named in its world's `apart` (neither may wait).
 - Two ways to evaluate a permission, which must agree (the random-change tests check): views (`set_sql`) and

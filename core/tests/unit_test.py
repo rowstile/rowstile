@@ -4230,6 +4230,141 @@ def replaced(text: str, old: str, new: str) -> str:
     return text.replace(old, new)
 
 
+class OneLockSet(unittest.TestCase):
+    """The trees of one type ask for the same lock rows, whichever tree's trigger asks (trees.one_lock_set): a
+    statement on the type's table runs every tree's trigger, and the second must find its lock rows taken
+    (tests/concurrency.sh holds a move to that, with a session that holds a lock row)."""
+
+    # a node's edit comes down from its parent unless it is sealed; its view from its parent and from what it is
+    # shown in: a tree through parent, which a seal writes, and one through parent and shown, which it doesn't
+    TWO = """app role app_user
+type user = app.users
+type node = app.nodes
+  owner  : user = owner_id
+  parent : node = parent_id
+  shown  : node = app.shown(node_id -> in_id)
+  can edit = owner or (parent.edit and {not sealed})
+  can view = edit or parent.view or shown.view
+"""
+    # ... and the type with the first tree alone
+    ALONE = TWO.replace(" or shown.view", "").replace("  shown  : node = app.shown(node_id -> in_id)\n", "")
+    SEALED = "(SELECT coalesce((not sealed), false) FROM (SELECT n.*) r) IS DISTINCT FROM"
+
+    def functions(self, text: str) -> dict[str, str]:
+        sql = Compiler(parse_policy(text)).compile("the policy")
+        return {f.name: f.body for f in kept_names.functions(sql)}
+
+    def test_each_tree_of_a_type_asks_for_the_lock_rows_of_all(self) -> None:
+        fns = self.functions(self.TWO)
+        for tree in ("node__parent__tree", "node__parent_shown__tree"):
+            body = fns[f'authz_int."{tree}_refresh"']
+            # what the rows hang under and what hangs below them, through either tree's links; the first guess of what
+            # is below is the tree's own stored rows
+            self.assertIn(f'FROM authz_int."{tree}" s WHERE s.ancestor = ANY (authz__.roots)', body, tree)
+            walk = search(r"WITH RECURSIVE down\(id\) AS \((.*?)\) e\),\n\s*mine\(id\) AS \((.*?)\) e\)\n", body, re.S)
+            self.assertIn("FROM unnest(authz__.roots) AS x", walk[1], tree)
+            self.assertIn('FROM "app"."shown" s', walk[1], tree)
+            self.assertRegex(body, r'(?s)AS _hung\s+FROM unnest\(authz__\.roots\) AS b\(_y\).*?FROM "app"\."shown" s')
+            # ... and the rows the tree itself writes: those below the rows it was given, through its own links
+            self.assertIn("FROM unnest($1) AS x", walk[2], tree)
+            self.assertEqual('FROM "app"."shown" s' in walk[2], tree == "node__parent_shown__tree")
+            self.assertIn("INTO reach, affected, under, hung", body, tree)
+            self.assertIn(", authz__.reach::text[], authz__.under, authz__.hung, authz__.held, false) l;", body, tree)
+            self.assertNotIn("authz__.affected::text[]", body, tree)
+            # nothing hangs under the statement's rows: through either tree's links
+            rows = fns[f'authz_int."{tree}_on_rows"']
+            self.assertRegex(rows, r'(?s)plain := NOT EXISTS \(.*?FROM "app"\."shown" s.*?x\._parent = b\._y', tree)
+        # no function of one tree names anything of the other's (its table, a function): a migration may run one
+        # while the other is being made again (tests/migrate_test.py swaps in two trees of one type)
+        for name, body in fns.items():
+            for tree, other in (
+                ("node__parent__tree", "node__parent_shown__tree"),
+                ("node__parent_shown__tree", "node__parent__tree"),
+            ):
+                if name.startswith(f'authz_int."{tree}_') or name == f'authz_int."{tree}"':
+                    self.assertNotRegex(body, rf'"{other}["_]', name)
+        # a seal is a write to the first tree alone: the second asks for the lock rows of the rows sealed too, so
+        # that a statement that seals some rows and moves others asks twice for the same ones
+        first, second = (
+            fns['authz_int."node__parent__tree_on_rows"'],
+            fns['authz_int."node__parent_shown__tree_on_rows"'],
+        )
+        self.assertEqual((first.count(self.SEALED), second.count(self.SEALED)), (1, 1))
+        self.assertRegex(second, r"(?s)reach := ARRAY\(.*?" + re.escape(self.SEALED))
+        self.assertIn("unnest(coalesce(authz__.reach, authz__.ids)) AS b(_y)", second)
+        self.assertIn(", plain, reach);", second)
+        self.assertNotIn("reach", first)
+        self.assertIn(", plain);", first)
+
+    def test_a_tree_that_reads_all_its_type_reads_is_written_for_itself(self) -> None:
+        # the docs app's folders: the tree through parent and the links reads all the other does (a statement more
+        # in a write, or a walk more in a statement, would cost every write to a folder)
+        fns = self.functions(read(POLICIES["docs"]))
+        wider, narrower = (
+            fns['authz_int."folder__linked_into_parent__tree_refresh"'],
+            fns['authz_int."folder__parent__tree_refresh"'],
+        )
+        self.assertNotIn("authz__.roots", wider)
+        self.assertNotIn("mine(id)", wider)
+        self.assertIn("INTO affected, under, hung", wider)
+        self.assertIn("mine(id)", narrower)
+        self.assertIn('FROM "app"."folder_links" s', narrower)
+        # ... and a type with one tree
+        alone = self.functions(self.ALONE)
+        self.assertNotIn("authz__.roots", alone['authz_int."node__parent__tree_refresh"'])
+        self.assertNotIn('"app"."shown"', alone['authz_int."node__parent__tree_on_rows"'])
+
+    def test_a_tree_keeps_its_hash_and_its_refresh_s_arguments_beside_another(self) -> None:
+        # what a tree stores is the same with another tree beside it: applying keeps its rows, and a migration
+        # replaces its functions in place (each keeps its arguments)
+        def kept(text: str) -> tuple[str, list[str]]:
+            c = Compiler(parse_policy(text))
+            c.compile("the policy")
+            return c.tree_keep["node__parent__tree"]
+
+        alone = self.ALONE
+        self.assertEqual(kept(self.TWO), kept(alone))
+        head = r'CREATE FUNCTION authz_int\."node__parent__tree_refresh"\((.*?)\) RETURNS void'
+        both, one = (
+            search(head, Compiler(parse_policy(text)).compile("the policy"), re.S)[1] for text in (self.TWO, alone)
+        )
+        self.assertEqual(both, one)
+        self.assertIn("p_reach bigint[] DEFAULT NULL", one)
+        m = one_migration(self.TWO, migrate.lock_of(database.migratable(alone, {})[1]))
+        self.assertEqual(m.rebuilt, ["node__parent_shown__tree"])
+        for fn in ('"node__parent__tree_refresh"(p_ids bigint[]', '"node__parent__tree_on_rows"()'):
+            self.assertIn(f"CREATE OR REPLACE FUNCTION authz_int.{fn}", m.sql)
+        self.assertNotIn('CREATE TABLE authz_int."node__parent__tree" ', m.sql)
+
+    def test_a_type_in_a_tree_of_several_types_takes_its_row_in_every_tree(self) -> None:
+        # folders in folders or projects (a tree of both types), and a folder's own tree through another column: the
+        # tree of both takes the types whole, so the folder's own does too, or the two would take their locks in an
+        # order of their own
+        text = """app role app_user
+type user = app.users
+type folder = app.folders
+  parent : folder, project = (parent_type, parent_id)
+  up     : folder = up_id
+  owner  : user = owner_id
+  can view = owner or parent.view
+  can tidy = owner or up.tidy
+type project = app.projects
+  inside : folder = folder_id
+  can view = inside.view
+type shelf = app.shelves
+  on    : shelf = on_id
+  owner : user = owner_id
+  can view = owner or on.view
+"""
+        c = Compiler(parse_policy(text))
+        sql = c.compile("the policy")
+        self.assertEqual(
+            sorted(c.trees.values()), ["folder__up__tree", "folder_project__inside_parent__tree", "shelf__on__tree"]
+        )
+        self.assertEqual(c.narrow_types - c.wide_types, {"shelf"})
+        self.assertIn("SET narrow = (l.type IN ('shelf'))", sql)
+
+
 class Migrations(unittest.TestCase):
     """What rowstile migrate writes, without a database (tests/migrate_test.py applies them)."""
 

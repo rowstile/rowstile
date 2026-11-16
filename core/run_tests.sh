@@ -397,6 +397,12 @@ python3 tests/interleave.py --levels "read committed" --worlds docs_plain --db a
 record "${PIPESTATUS[0]}" "interleavings (read committed, docs without the sync index)"
 }
 unit policy 25 interleavings_docs_plain
+interleavings_shown() {
+step "every order of two tree writes, in READ COMMITTED (shown: two trees of one type, a share that is a link)"
+python3 tests/interleave.py --levels "read committed" --worlds shown --db authz_interleave_rc | quiet_ok
+record "${PIPESTATUS[0]}" "interleavings (read committed, shown)"
+}
+unit policy 20 interleavings_shown
 fi
 
 moves() {

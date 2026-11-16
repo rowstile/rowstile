@@ -1247,6 +1247,7 @@ FEATURES: list[Feature] = [
             T("scenario.sql", "a loop through links does not hang and changes nothing for carol"),
             T("moves.sh", "rows inside the moved folder were left alone"),
             T("concurrency.sh", "no loop"),
+            T("concurrency.sh", "a move that waits for a lock row only its second tree needs holds none"),
             T("policy_errors.py", "a deny that doesn't cover what is below"),
             T("policy_errors.py", "a deny on a permission that inherits through a relation to another type too"),
             T("unit_test.py", "class Denies("),
@@ -1254,6 +1255,7 @@ FEATURES: list[Feature] = [
         (
             T(DIFF, "class CrossGen("),
             T("interleave.py", "inheritance tables exact after each"),
+            T("interleave.py", 'name="shown"'),
             T("small.py", "def denies("),
             T("genpolicy.py", "def across("),
             T("stress.sh", "the inheritance tables match a rebuild"),

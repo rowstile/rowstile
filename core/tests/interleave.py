@@ -2,7 +2,7 @@
 """interleave: every order of the steps of two tree writes, each session at each isolation level.
 
     python3 tests/interleave.py [--levels "read committed,repeatable read,serializable"] [--db authz_interleave]
-                                [--worlds docs,cross,parts,boxes,docs_by,docs_after] [--pairs create-move]
+                                [--worlds docs,cross,parts,boxes,docs_by,docs_after,docs_plain,shown] [--pairs create-move]
 
 Two sessions each run one transaction on a small subtree: a read, which takes the snapshot (of a table no write
 touches, so that what SERIALIZABLE notices is the writes' own doing; the BEGIN goes with it: a BEGIN takes no
@@ -11,7 +11,7 @@ one that changes a tree, or that the tree's rows decide, and is written so that 
 what lies above what the other writes. Every pair of a world's kinds (a kind with itself included) runs in every
 order of its six steps the server allows, with each session at each of the levels asked for (the nine pairs of
 the three by default: one session in READ COMMITTED beside one in SERIALIZABLE too, which SERIALIZABLE's own
-checks can't see). Seven worlds, each in a database of its own, so that every way a tree is kept is written by two
+checks can't see). Eight worlds, each in a database of its own, so that every way a tree is kept is written by two
 transactions at once:
   - docs: the docs app (core/example/), a tree of one type on plain tables: a folder created, moved, linked into
     another, unlinked, deleted, its id changed, and a folder shared and unshared, which `authz.share` and the
@@ -32,6 +32,10 @@ transactions at once:
   - docs_plain: the docs app without its sync index, which takes lock rows of its own at each commit (all of them
     at a stricter level): here a write fails or waits only by the trees' own locks. The docs world's creates, moves,
     links and unlinks, and a move of a folder that has the other session's folder below it (15 pairs);
+  - shown: two trees of one type that differ, one through a column whose condition a seal changes, one through
+    that column and a share that is a link (`authz.share` of a node into a node): a node created, moved,
+    moved aside (into a part no other write is of: neither waits), sealed, shown in another and hidden from one,
+    the last two by users whom a seal may take the right from (21 pairs);
   - docs_by and docs_after: the docs world with its sync index keyed by folder (a move writes what the folders below
     inherit, and no file's readers nor keys), and kept after commit by a worker, which runs after each schedule (36
     pairs each).
@@ -599,7 +603,136 @@ DOCS_PLAIN = replace(
     # below it through a link, so they are not apart)
     apart=frozenset({("create", "create"), ("unlink", "unlink")}),
 )
-WORLDS = {w.name: w for w in (DOCS, CROSS, PARTS, BOXES, DOCS_BY, DOCS_AFTER, DOCS_PLAIN)}
+
+# --- shown: nodes shown in other nodes by sharing, two trees of one type that differ ------------------------------
+# A node's edit comes down from its parent unless the node is sealed; its view comes down from its parent and from
+# the nodes it is shown in, which a share says (`authz.share('node', c, 'via', 'node', b)`: a share that is a link).
+# So the type has two trees: one through parent, whose condition makes a seal a write to it, and one through
+# parent and via, which a seal doesn't write. Each has triggers on sh.nodes, the first tree's first (by their
+# names): a statement there must ask both times for the lock rows of the two together, or the second trigger would
+# ask for rows the first didn't take. The subtree each schedule starts from:
+#   r 1000 (alice)
+#   ├── a 1001 (bob)
+#   │   └── c 1003          also shown in b
+#   └── b 1002
+#       └── l 1004 (carol)  also shown in a
+# and beside it two nodes with nothing below them, x 1005 and y 1006, which the moves aside take into a and into b
+X_X, X_Y = 1005, 1006
+SHOWN_POLICY = """app role app_user
+
+type user = sh.users
+
+type node = sh.nodes
+  owner  : user = owner_id
+  parent : node = parent_id
+  via    : node  shared by edit
+  can edit = owner or (parent.edit and {not sealed})
+  can view = edit or parent.view or via.view
+
+rules sh.nodes
+  select : view
+"""
+SHOWN_SETUP = """
+CREATE SCHEMA sh;
+CREATE TABLE sh.users (id bigint PRIMARY KEY);
+CREATE TABLE sh.nodes (id bigint PRIMARY KEY, parent_id bigint, owner_id bigint, sealed boolean NOT NULL DEFAULT false);
+CREATE INDEX ON sh.nodes (parent_id);
+INSERT INTO sh.users VALUES (1), (2), (3);
+DO $r$ BEGIN CREATE ROLE app_user NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $r$;
+GRANT USAGE ON SCHEMA sh TO app_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sh TO app_user;
+"""
+SHOWN_RESET = f"""
+DELETE FROM authz.shares;
+DELETE FROM sh.nodes;
+INSERT INTO sh.nodes (id, parent_id, owner_id) VALUES
+  ({R}, NULL, 1), ({A}, {R}, 2), ({B}, {R}, NULL), ({C}, {A}, NULL), ({L}, {B}, 3), ({X_X}, NULL, 3),
+  ({X_Y}, NULL, 2);
+INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id)
+  VALUES ('node', '{C}', 'via', 'node', '{B}'), ('node', '{L}', 'via', 'node', '{A}');
+"""
+SHOWN_ROWS = """SELECT json_build_array(
+  (SELECT json_agg(json_build_array(id, parent_id, owner_id, sealed) ORDER BY id) FROM sh.nodes),
+  (SELECT json_agg(json_build_array(object_type, object_id, relation, subject_type, subject_id)
+                   ORDER BY object_type, object_id, relation, subject_type, subject_id) FROM authz.shares))::text"""
+SHOWN_LOOPS = """WITH RECURSIVE up(start, id) AS (
+  SELECT id, parent_id FROM sh.nodes WHERE parent_id IS NOT NULL
+  UNION
+  SELECT up.start, n.parent_id FROM up JOIN sh.nodes n ON n.id = up.id WHERE n.parent_id IS NOT NULL)
+SELECT coalesce(string_agg(DISTINCT start::text, ', '), '') FROM up WHERE start = id"""
+
+
+def shown_op(kind: str, s: int) -> Op:
+    """Session s's write of a kind: the first session's create puts a node under c, the second's under l. The two
+    moves cross (l under c, c under l: a loop), as do the two shows (l shown in c by carol, who owns it; c shown in
+    l by bob, who edits it through a: a loop through shares, which is allowed). The hides take l out of a and c out
+    of b. The first session seals c, which bob then may not show or hide; the second seals l. The moves aside
+    take x into a and y into b: nothing is below either, and no other write is of x, of y, or hangs anything
+    under a or b that falls on their lock rows (the ids are chosen so: a row hung under a node updates one of
+    four lock rows of that node, by the hung row's id), so a move aside and another write never wait for each
+    other."""
+    first = s == 1
+    # bob edits c through a, unless c is sealed: then he may neither show it nor hide it
+    no_show = refusal("42501", f"you cannot share node {C}", "seal")
+    no_hide = refusal("42501", f"you cannot unshare via on node {C}", "seal")
+    match kind:
+        case "create":
+            new, parent = (1010, C) if first else (1011, L)
+            return Op(kind, f"INSERT INTO sh.nodes (id, parent_id) VALUES ({new}, {parent})", "")
+        case "move":
+            moved, parent = (L, C) if first else (C, L)
+            loop = refusal("23514", "cannot be moved inside itself", "move")
+            return Op(kind, f"UPDATE sh.nodes SET parent_id = {parent} WHERE id = {moved}", "", (loop,))
+        case "aside":
+            moved, parent = (X_X, A) if first else (X_Y, B)
+            return Op(kind, f"UPDATE sh.nodes SET parent_id = {parent} WHERE id = {moved}", "")
+        case "show":
+            node, into, who = (L, C, "3") if first else (C, L, "2")
+            return Op(
+                kind, f"SELECT authz.share('node', {node}, 'via', 'node', {into})", who, () if first else (no_show,)
+            )
+        case "hide":
+            node, out_of, who = (L, A, "3") if first else (C, B, "2")
+            sql = f"SELECT authz.unshare('node', {node}, 'via', 'node', {out_of})"
+            return Op(kind, sql, who, () if first else (no_hide,))
+        case _:
+            assert kind == "seal", kind
+            return Op(kind, f"UPDATE sh.nodes SET sealed = true WHERE id = {C if first else L}", "")
+
+
+SHOWN = World(
+    name="shown",
+    policy=("shown.authz", SHOWN_POLICY),
+    schema=(),
+    setup=SHOWN_SETUP,
+    reset=SHOWN_RESET,
+    rows=SHOWN_ROWS,
+    loops=SHOWN_LOOPS,
+    orphans="",  # no write deletes a node
+    read="SELECT count(*) FROM sh.users",
+    users=("1", "2", "3"),
+    perms=(("node", "view"), ("node", "edit")),
+    kinds=("create", "move", "aside", "seal", "show", "hide"),
+    op=shown_op,
+    # the two creates are under c and under l, with nothing below either new node; the two hides take l out of a
+    # and c out of b; the two seals are of c and of l: in each pair neither node is above the other. A move aside
+    # is to a part no other write is of: beside a create, a move (the first session's, of l into c: it leaves b,
+    # which y goes into), a seal, a show or a hide, and beside the other move aside
+    apart=frozenset(
+        {
+            ("create", "create"),
+            ("hide", "hide"),
+            ("seal", "seal"),
+            ("create", "aside"),
+            ("move", "aside"),
+            ("aside", "aside"),
+            ("aside", "seal"),
+            ("aside", "show"),
+            ("aside", "hide"),
+        }
+    ),
+)
+WORLDS = {w.name: w for w in (DOCS, CROSS, PARTS, BOXES, DOCS_BY, DOCS_AFTER, DOCS_PLAIN, SHOWN)}
 
 
 class Outcome(NamedTuple):
@@ -1028,7 +1161,7 @@ def main() -> None:
     ap.add_argument(
         "--levels", default=",".join(LEVELS), help="comma-separated isolation levels: each session at each of them"
     )
-    ap.add_argument("--worlds", default=",".join(WORLDS), help="comma-separated worlds (default: all seven)")
+    ap.add_argument("--worlds", default=",".join(WORLDS), help="comma-separated worlds (default: all eight)")
     ap.add_argument("--pairs", default="", help="comma-separated pairs, as create-move (default: every one)")
     args = ap.parse_args()
     chosen = [x.strip() for x in args.levels.split(",") if x.strip()]

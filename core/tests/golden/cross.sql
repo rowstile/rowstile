@@ -105,7 +105,7 @@ BEGIN
            JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'bf64c3d79279bb20bdb425d104dba6a1', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', 'd4456c8c4f4a98e29ead2bf2f01bee60', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', 'c3feed3c9cac9e0982fb7b48d0974683', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder_project__backer_parent__tree', '19c062c205a384fe2a64bfdce203ab07', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
@@ -1052,7 +1052,7 @@ INSERT INTO authz_int.trees VALUES
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__parent__tree', 'd4456c8c4f4a98e29ead2bf2f01bee60', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', 'c3feed3c9cac9e0982fb7b48d0974683', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
@@ -2501,9 +2501,10 @@ BEGIN
   END LOOP;
 END $imm$;
 
--- recompute the given rows and everything linked below them; p_shift: only their own links changed
+-- recompute the given rows and everything linked below them; p_shift: only their own links changed;
+-- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids
 CREATE FUNCTION authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
-                               p_plain boolean DEFAULT false) RETURNS void
+                               p_plain boolean DEFAULT false, p_reach bigint[] DEFAULT NULL) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
@@ -3431,9 +3432,8 @@ DO $b$ BEGIN
 END $b$;
 
 -- the types whose tree writes lock only the stripes of what they touch; the others' take their type's row
-UPDATE authz_int.locks l SET narrow = (l.type IN ('folder')), n = l.n + 1 WHERE l.narrow IS DISTINCT FROM (l.type IN ('folder'));
-DELETE FROM authz_int.tree_locks_1024_4 l WHERE NOT (l.type IN ('folder'));
-INSERT INTO authz_int.tree_locks_1024_4 SELECT x.type, g.slot, 0 FROM unnest(ARRAY['folder']) x(type), generate_series(0, 5119) g(slot) ON CONFLICT DO NOTHING;
+UPDATE authz_int.locks l SET narrow = (false), n = l.n + 1 WHERE l.narrow IS DISTINCT FROM (false);
+DELETE FROM authz_int.tree_locks_1024_4 l WHERE NOT (false);
 
 -- trees kept but no longer used (none, normally) go with the holding schema
 DROP SCHEMA authz_keep CASCADE;

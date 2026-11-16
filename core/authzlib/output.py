@@ -1836,6 +1836,7 @@ END $w$;"""
             + f"]::text[]) LOOP\n    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', f, {lit(self.role)});\n"
             "  END LOOP;\nEND $gf$;"
         )
+        self.one_lock_set()
         # What the migrations (migrate.py) do with each part: 'full', only in the whole script (it recreates
         # everything); 'always', in every migration; 'changed', when its SQL changed; 'created', also when
         # anything was made; 'objects', what changed of its functions, views, tables, triggers and policies;
