@@ -36,8 +36,14 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `authz.set_scim(settings)`, the owner's, names what it reads: the principal whose API key signs the provider
   in, the relation that holds the groups, the columns of its table and of the users', the app's functions; each
   is checked when set (AZ720), and `authz.lint()` says when one no longer holds. A request without that key is
-  answered 401, and a refusal is SCIM's error body (AZ721). The SDKs' routes follow: the limits page still says
-  there is no endpoint to mount
+  answered 401, and a refusal is SCIM's error body (AZ721).
+  The Python SDK mounts it for FastAPI: `Rowstile(app, engine, ...).mount_scim("/scim/v2")` passes each request
+  on and sends the answer back, with the address of what was made (`Location`). The token alone says who asks:
+  `user(request)` isn't asked about these requests and their transaction signs nobody in. The body goes on as it
+  was sent: the database says when it is no JSON, once the key says who asks, so nothing a stranger sends is an
+  error. An error is answered 500 in SCIM's words and logged (the logger `rowstile`). On another framework,
+  `rowstile.sqlalchemy.scim()` and `scim_sync()` ask the database the same way. The TypeScript SDK's route
+  follows: the limits page still says there is no endpoint to mount
   ([App code](docs/reference/app-code.md)).
 
 ### Changed

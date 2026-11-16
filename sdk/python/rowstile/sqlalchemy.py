@@ -66,6 +66,7 @@ from . import (
     _signed_in_already,
     act_as_args,
     act_as_sql,
+    acting_as,
     current,
     verdict,
 )
@@ -360,3 +361,35 @@ async def connection_check(engine: Engine | AsyncEngine) -> list[tuple[str, str]
             rows = conn.execute(query).all()
             conn.rollback()
     return [(r[0], r[1]) for r in rows]
+
+
+# authz.scim()'s answer: the status, the body (JSON as text; None: no body) and, for what was made, its path below
+# the route
+ScimAnswer: TypeAlias = "tuple[int, str | None, str | None]"
+# the body goes in as it was sent and comes back as text: every driver passes a text alike, and nothing here reads it
+_SCIM = text("SELECT status, CAST(body AS text), location FROM authz.scim(:method, :path, :query, :body, :token)")
+
+
+def _scim_asked(method: str, path: str, query: str, body: str | None, token: str | None) -> dict[str, str | None]:
+    return {"method": method, "path": path, "query": query, "body": body, "token": token}
+
+
+async def scim(
+    engine: AsyncEngine, method: str, path: str, query: str, body: str | None, token: str | None
+) -> ScimAnswer:
+    """An identity provider's SCIM request, answered by the database (authz.scim): what a route got, in (the
+    method, the path below the route, the query string and the body as they were sent, the bearer token; None for
+    no body or no token), and what it answers, out. Asked in a transaction of its own that signs nobody in, whoever the code
+    acts for: the token alone says who asks. rowstile.fastapi's route is this; another framework's passes the
+    same five on."""
+    with acting_as(None):
+        async with engine.begin() as conn:
+            row = (await conn.execute(_SCIM, _scim_asked(method, path, query, body, token))).one()
+    return row[0], row[1], row[2]
+
+
+def scim_sync(engine: Engine, method: str, path: str, query: str, body: str | None, token: str | None) -> ScimAnswer:
+    """scim(), on a sync engine."""
+    with acting_as(None), engine.begin() as conn:
+        row = conn.execute(_SCIM, _scim_asked(method, path, query, body, token)).one()
+    return row[0], row[1], row[2]
