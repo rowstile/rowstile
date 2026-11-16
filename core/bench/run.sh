@@ -8,10 +8,11 @@
 #   4. one big move (a top folder) during steady writes: how long it takes, and how long others wait
 #   5. authz.list of every file a user can see, whole and in pages
 #   6. opening a folder as readers who hold 100, 1,000 and 4,000 folders directly: shared, and through a team
+#   7. tree writes by where they land: each client in a part of the tree of its own, then all of them in one part
 # Settings (environment, all set by scale.sh, which holds the sizes): FILES FOLDERS LEVELS USERS TEAMS DURATION
 # GATE_DURATION READ_RATE OUT, and BUILD_COMMIT (the commit that runs, for the result's first line; none: not said)
 # Exits 1 when a gate fails, when a read or a write of any step failed, was aborted or timed out, when the big move
-# failed, when authz.verify() doesn't say true after the writes, or when a listing fails.
+# failed, when authz.verify() doesn't say true after the writes (steps 4 and 7), or when a listing fails.
 set -u
 cd "$(dirname "$0")/.."
 for v in FILES FOLDERS LEVELS USERS TEAMS DURATION GATE_DURATION READ_RATE OUT; do
@@ -206,5 +207,39 @@ for k in 1 2 3 4 5 6; do
   read -r txns nf p50 p95 p99 < <(python3 bench/latency.py "$LOGS/h$k" open_folder | awk '$1 == "all" {print $2, $3, $4, $5, $6}')
   say "$(printf '%-26s%8s%8s%11s%11s%11s' "$how ${held:-?} folders" "$txns" "$nf" "$p50" "$p95" "$p99")"
 done
+say
+
+# Whom a tree write could wait for is where it lands. Steps 2 to 4 write anywhere in the tree, so how far two
+# writers have to do with each other is chance. Here it is chosen: fifty parts of the tree made for this step
+# (bench/parts.sql), no folder of one inside another's. First each client writes in a part of its own, then all of
+# them in one part. A folder made is deleted again and a move rewrites ten folders each time, so a part is what it
+# was however long a run lasts and however many write to it: the runs compare.
+PARTS=50
+say "== 7. Tree writes by where they land ($DURATION s each; a folder made, then deleted: 90% of the writes; a move of ten folders: 10%)"
+if ! psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -v parts="$PARTS" -v levels="$LEVELS" -f bench/parts.sql >/dev/null 2>"$LOGS/parts.err"; then
+  say "making the parts failed:"; tee -a "$OUT" < "$LOGS/parts.err"; exit 1
+fi
+PART_FIRST=$(PSQL -c "SELECT first_id FROM bench.parts")
+PART_WRITES=(-D part_first="${PART_FIRST:-0}" -D parts="$PARTS" -f "$W/write_part_pair.sql@45" -f "$W/write_part_move.sql@10")
+say "$(printf '%-26s%9s%10s%8s%8s%11s%11s%10s%10s%10s%10s' writers clients writes/s failed aborted 'timed out' 'waiting %' 'pair p50' 'pair p95' 'move p50' 'move p95')"
+for where in own one; do
+  if [ $where = own ]; then apart=1 who="each in a part of its own"; else apart=0 who="all in one part"; fi
+  for c in 1 10 50; do
+    "${PGB[@]}" -c "$c" -j "$((c < 8 ? c : 8))" -T "$DURATION" -D apart="$apart" "${PART_WRITES[@]}" -l --log-prefix="$LOGS/$where$c" > "$LOGS/$where$c.out" 2>&1 &
+    pid=$!; wait_pct=$(lockwait $pid); wait $pid
+    lat=$(python3 bench/latency.py "$LOGS/$where$c" pair move)
+    read -r pairs pair50 pair95 < <(echo "$lat" | awk '$1 == "pair" {print $2, $4, $5}')
+    read -r moves move50 move95 < <(echo "$lat" | awk '$1 == "move" {print $2, $4, $5}')
+    # pgbench counts scripts, and a pair is two writes
+    writes=$(awk -v tps="$(tps "$LOGS/$where$c.out")" -v pairs="${pairs:-0}" -v moves="${moves:-0}" \
+      'BEGIN { n = pairs + moves; printf "%.1f", n ? tps * (2 * pairs + moves) / n : 0 }')
+    say "$(printf '%-26s%9s%10s%8s%8s%11s%11s%10s%10s%10s%10s' "$who" "$c" "$writes" "$(failed "$LOGS/$where$c.out")" "$(aborted "$LOGS/$where$c.out")" "$(timedout "$LOGS/$where$c.out")" "$wait_pct" "${pair50:-nan}" "${pair95:-nan}" "${move50:-nan}" "${move95:-nan}")"
+    judge "$LOGS/$where$c.out"
+  done
+done
+say "(a pair: a folder made, then deleted, two writes; p50 and p95 in ms)"
+t=$(now); ok=$(PSQL -c "SELECT authz.verify()")
+say "authz.verify() after these writes: ${ok:-no answer} ($(since "$t") s)"
+[ "$ok" = t ] || wrong=1
 say
 exit $wrong
