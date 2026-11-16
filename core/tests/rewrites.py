@@ -33,8 +33,10 @@ evaluator doesn't read as a fact about the row (a subquery, a function) where th
 where they say. So what the rows hold is read back (difftest's queries), and the user's answer must be the reference
 evaluator's on that: the review's, where the rows hold its world; and they must hold it but for such conditions. A
 world rows can't make (custom roles, keys of several columns or uuids) is counted, not replayed. A policy
-the compiler refuses, or whose answers take seconds to read (a diff asks for all of them, as everyone), is not
-checked, and counted so.
+the compiler refuses, or whose answers take long to read (a diff asks for all of them, as everyone), is not
+checked, and counted so. Long is over five seconds a diff, or, on a machine where every diff takes longer, over
+eight times what a policy's first diff usually took so far in the run (Usual): a busy machine takes longer, and
+still checks its policies.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ import json
 import os
 import random
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -248,11 +251,40 @@ def rewrites(spec: Spec, r: random.Random, each: int) -> list[Rewrite]:
 # One policy
 # ----------------------------------------------------------------------
 class Refused(Exception):
-    """The compiler refused the policy, or its reads are slow: lint says so, or one diff took more than SLOW (and
-    none before it, nor that one, found a problem)."""
+    """The compiler refused the policy, or its reads are slow: lint says so, or one diff took more than the run
+    lets one take (Usual; and none before it, nor that one, found a problem)."""
 
 
 SLOW = 5.0  # seconds for one diff: such a policy's rewrites would take minutes, and say nothing more
+TIMES = 8  # or, where diffs take longer, this many times what one usually takes in the run (Usual)
+
+
+class Usual:
+    """How long a diff may take in this run before its policy is set aside as slow.
+
+    SLOW seconds, where a usual policy's diff takes well under one. A machine that is busy, or one that measures
+    what the suites run (CI's: Postgres profiles each PL/pgSQL statement there), takes several times longer for
+    every diff. Five seconds is a usual policy on such a machine: judged by the clock alone, three policies of four
+    were set aside there, and the run failed for too few checked. So the limit is also TIMES what a diff usually
+    takes here: the median of what each policy's first diff took, so far in the run (a policy's diffs take about
+    as long as each other: the policy and its data cost, the rewrite doesn't). A policy set aside is counted too,
+    or a machine where the first one is over SLOW would set them all aside; the first is judged by SLOW alone,
+    nothing else being known yet."""
+
+    def __init__(self) -> None:
+        self.firsts: list[float] = []  # seconds each policy's first diff took
+
+    def limit(self) -> float:
+        return max(SLOW, TIMES * statistics.median(self.firsts)) if self.firsts else SLOW
+
+    def slow(self, took: float, first: bool) -> bool:
+        """Whether a diff that took this long is slow. A policy's first one is judged by the policies before it,
+        then counted."""
+        slow = took > self.limit()
+        if first:
+            self.firsts.append(took)
+        return slow
+
 
 # what the compiler may refuse in a rewrite that changes nothing: the shapes the language limits, whatever they mean
 # (a permission recurses as `or rel.perm` alone, AZ302; its inheritance joins an `and` only with conditions and
@@ -416,8 +448,11 @@ def replay(
     return None
 
 
-def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, worlds: int, tally: Tally) -> list[str]:
-    """The problems found with this policy's rewrites (none: it passed); Refused if the policy isn't checked."""
+def run(
+    spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, worlds: int, tally: Tally, usual: Usual
+) -> list[str]:
+    """The problems found with this policy's rewrites (none: it passed); Refused if the policy isn't checked.
+    usual is the run's: what its policies' diffs took so far, by which this one's are slow or not."""
     policy_path = os.path.join(workdir, "gen.authz")
     text = policy_text(spec)
     write_policy(policy_path, text, False)
@@ -446,7 +481,8 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
     db.run(gen.grants())
     conn = pgwire.connect(**pgwire.parse_dsn(f"dbname={db.name}"))
     changed: set[str] = set()  # the rewrites the database's answers changed with, on some data
-    slow = False  # (a diff took more than SLOW: the rest isn't asked)
+    slow = False  # (a diff took more than the run lets one take, limit: the rest isn't asked)
+    limit, asked = 0.0, 0
     try:
         for n in range(rounds):
             for rw, new, m in list(tried):
@@ -468,7 +504,9 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
                     else:
                         tally.refused += 1
                     continue
-                slow = time.monotonic() - started > SLOW
+                limit = usual.limit()
+                slow = usual.slow(time.monotonic() - started, first=not asked)
+                asked += 1
                 first = (
                     f"{rows[0]['change']} {rows[0]['what']} on {rows[0]['type']} {rows[0]['id']} "
                     f"for {rows[0]['user_id'] or 'nobody'}"
@@ -505,7 +543,7 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
         conn.close()
     if slow:  # (not checked, unless what was asked already failed: a slow machine hides no problem found)
         if problems:
-            return [*problems, f"(then a diff took more than {SLOW:.0f} s, and the rest wasn't asked)"]
+            return [*problems, f"(then a diff took more than {limit:.0f} s, and the rest wasn't asked)"]
         raise Refused
     for rw, new, m in tried:
         if rw.same or not m.get("counterexample"):
@@ -548,7 +586,7 @@ def main() -> None:
     os.chdir(ROOT)
     db = DB(args.db)
     seeds = [args.only] if args.only is not None else list(range(args.seed, args.seed + args.policies))
-    tally = Tally()
+    tally, usual = Tally(), Usual()
     failed = passed = skipped = 0
     with tempfile.TemporaryDirectory() as workdir:
         for seed in seeds:
@@ -556,7 +594,7 @@ def main() -> None:
             if args.only is not None:
                 print(f"seed {seed}:\n{policy_text(spec)}")
             try:
-                problems = run(spec, db, workdir, args.each, args.rounds, args.changes, args.worlds, tally)
+                problems = run(spec, db, workdir, args.each, args.rounds, args.changes, args.worlds, tally, usual)
             except Refused:
                 skipped += 1
                 continue
@@ -568,10 +606,16 @@ def main() -> None:
             for p in problems[:12]:
                 print("   ", p)
     subprocess.run(["dropdb", "--if-exists", args.db], capture_output=True)
+    slow = (
+        f": a diff over {usual.limit():.0f} s, where a policy's first one usually took "
+        f"{statistics.median(usual.firsts):.1f} s"
+        if usual.firsts
+        else ""
+    )
     print(
         f"rewrites seeds {seeds[0]}..{seeds[-1]}: {passed} policies passed, {failed} failed, {skipped} not checked "
-        f"(refused, or slow to read); {tally.same} rewrites that change nothing, said so and seen so; of those that "
-        f"may change something, {tally.shown} the review and the database both show changing, {tally.unshown} the "
+        f"(refused, or slow to read{slow}); {tally.same} rewrites that change nothing, said so and seen so; of those "
+        f"that may change something, {tally.shown} the review and the database both show changing, {tally.unshown} the "
         f"review shows and this data doesn't, {tally.agreed} that change nothing here, {tally.beyond} beyond the "
         f"review; {tally.refused} rewrites that may change something the compiler refuses, and "
         f"{sum(tally.shapes.values())} that change nothing for their shape"

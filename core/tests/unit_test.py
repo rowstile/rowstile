@@ -11773,6 +11773,125 @@ class Rewrites(unittest.TestCase):
         )
         self.assertEqual((dict(tally.shapes), tally.refused), ({"AZ302": 1}, 1))
 
+    def test_slow_is_judged_against_the_runs_own_policies(self) -> None:
+        """A policy whose diff takes more than SLOW seconds is set aside. On a machine where every diff takes longer
+        (a busy runner, one that measures what the suites run), SLOW is a usual policy: there the limit is TIMES what
+        a policy's first diff usually took, so far in the run."""
+        import rewrites
+
+        usual = rewrites.Usual()
+        self.assertEqual((rewrites.SLOW, rewrites.TIMES), (5.0, 8))
+        self.assertEqual(usual.limit(), 5.0)  # (nothing says yet what is usual here)
+        # a quick machine: the limit stays SLOW, and a policy's later diffs are judged without being counted
+        self.assertFalse(usual.slow(0.4, first=True))
+        self.assertFalse(usual.slow(4.9, first=False))
+        self.assertTrue(usual.slow(5.1, first=False))
+        self.assertFalse(usual.slow(0.6, first=True))
+        self.assertEqual((usual.firsts, usual.limit()), ([0.4, 0.6], 5.0))
+        self.assertTrue(usual.slow(5.1, first=True))  # (ten times the usual: slow, as it was by the clock alone)
+        self.assertEqual(usual.limit(), 5.0)  # (the median, so one slow policy moves it little: 8 times 0.6)
+        # a slow machine: the first policy is judged by SLOW, nothing else being known, and counted all the same,
+        # so that the ones after it are judged by what it took
+        usual = rewrites.Usual()
+        self.assertTrue(usual.slow(6.0, first=True))
+        self.assertEqual(usual.limit(), 48.0)
+        self.assertFalse(usual.slow(6.5, first=True))
+        self.assertFalse(usual.slow(40.0, first=False))
+        self.assertTrue(usual.slow(60.0, first=False))
+        self.assertEqual(usual.limit(), 50.0)  # (8 times the median of 6 and 6.5)
+
+    def test_a_machine_where_every_diff_takes_long_still_checks_its_policies(self) -> None:
+        """run() on a machine where each diff takes six seconds: the first policy is set aside and the others are
+        checked (by the clock alone all were set aside, and the run failed for too few checked). A policy whose
+        diffs take ten times the others' is still set aside, and one that failed before its slow diff has failed."""
+        import rewrites
+
+        now = [0.0]
+        takes = [6.0]  # seconds a diff takes
+        rows: list[list[dict[str, str]]] = [[]]  # what a diff answers
+
+        def transaction(conn: object, diff: object, keep: bool) -> list[dict[str, str]]:
+            now[0] += takes[0]
+            return rows[0]
+
+        db = mock.Mock()
+        db.name = "authz_none"
+        tally, usual = rewrites.Tally(), rewrites.Usual()
+
+        def run(seed: int, seconds: float) -> str:
+            takes[0] = seconds
+            try:
+                problems = rewrites.run(genpolicy.make(seed), db, workdir, 1, 1, 0, 5, tally, usual)
+            except rewrites.Refused:
+                return "not checked"
+            return "\n".join(problems) or "passed"
+
+        with (
+            contextlib.chdir(ROOT),
+            tempfile.TemporaryDirectory() as workdir,
+            mock.patch.object(rewrites, "time", types.SimpleNamespace(monotonic=lambda: now[0])),
+            mock.patch.object(rewrites.pgwire, "connect"),
+            mock.patch.object(rewrites.rowstile_cli, "transaction", side_effect=transaction),
+            mock.patch.object(rewrites.review, "meaning", return_value={"equivalent": "in 5 worlds"}),
+        ):
+            self.assertEqual([run(seed, 6.0) for seed in (1, 2, 3, 4)], ["not checked", "passed", "passed", "passed"])
+            self.assertEqual((usual.firsts, usual.limit()), ([6.0, 6.0, 6.0, 6.0], 48.0))
+            self.assertEqual(run(5, 40.0), "passed")
+            self.assertEqual(run(1, 60.0), "not checked")
+            # a policy set aside counts no rewrite: the four checked, one that changes nothing each (seen so, or
+            # refused for its shape) and one that may
+            self.assertEqual((tally.same + sum(tally.shapes.values()), tally.agreed + tally.refused), (4, 4))
+            # a problem found, then a slow diff: the policy failed, and the line says what slow was
+            rows[0] = [{"change": "gains", "what": "view", "type": "t1", "id": "1", "user_id": "2"}]
+            said = run(2, 90.0)
+            self.assertIn(
+                "the review says it grants the same (in 5 worlds), and in the database 1 answers change", said
+            )
+            self.assertIn("\n(then a diff took more than 48 s, and the rest wasn't asked)", said)
+
+    def test_a_run_judges_slow_by_all_its_policies_and_says_what_slow_was(self) -> None:
+        import rewrites
+
+        seen: list[object] = []
+
+        def run(spec: genpolicy.Spec, *args: object) -> list[str]:
+            usual = args[-1]
+            assert isinstance(usual, rewrites.Usual)
+            seen.append(usual)
+            if usual.slow(6.0, first=True):
+                raise rewrites.Refused
+            return []
+
+        def main(*argv: str) -> tuple[int | str | None, str]:
+            out = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", ["rewrites.py", *argv]),
+                mock.patch.object(rewrites, "run", side_effect=run),
+                mock.patch.object(rewrites, "DB"),
+                mock.patch.object(rewrites, "subprocess"),
+                contextlib.chdir(ROOT),
+                contextlib.redirect_stdout(out),
+                self.assertRaises(SystemExit) as done,
+            ):
+                rewrites.main()
+            return done.exception.code, out.getvalue()
+
+        code, said = main("--policies", "4", "--seed", "1")
+        self.assertEqual(len(seen), 4)
+        self.assertEqual(len({id(u) for u in seen}), 1, "one measure of usual for the run")
+        self.assertIn(
+            "rewrites seeds 1..4: 3 policies passed, 0 failed, 1 not checked (refused, or slow to read: a diff over "
+            "48 s, where a policy's first one usually took 6.0 s); ",
+            said,
+        )
+        self.assertNotIn("FAIL", said)
+        self.assertEqual(code, 0)
+        # one policy alone: nothing says what is usual, it is set aside, and the run says it checked too few
+        code, said = main("--policies", "1", "--seed", "1")
+        self.assertIn("0 policies passed, 0 failed, 1 not checked (refused, or slow to read: a diff over 48 s", said)
+        self.assertIn("FAIL only 0 of 1 policies checked", said)
+        self.assertEqual(code, 1)
+
 
 class Invariance(unittest.TestCase):
     """tests/invariance.py writes policies another way and renumbers their data, and wants the same SQL and the same
