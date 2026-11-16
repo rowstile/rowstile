@@ -204,6 +204,8 @@ doesn't know, so the app gives a function for each, `(p_id text, p_resource json
 and the user or the group as the request leaves it come in, and the key goes out. A NULL `p_id` is a row to make,
 a NULL `p_resource` one to delete. The function runs as the owner, so it is the owner's own: one that another
 role owns is refused when set, and is an error from then on if it is given away later. <!-- checked: tests/scim.sh "... and one another role owns, which could then run its own code as the owner"; tests/scim.sh "a function the settings name that another role owns now" -->
+The function says no by raising: a row whose key or name another row has (a unique constraint) is answered 409,
+and what the function raises itself, or a constraint refuses, 400, each with the database's words. <!-- checked: tests/scim.sh "a group whose name another has: 409, uniqueness, with the database's words"; tests/scim.sh "a group the app's function refuses: 400, with its words" -->
 With no function, a request that makes or deletes a user or a group, changes a user or renames a group is
 answered 501. A group's members are written all the same, and the users and the groups the app has are read and
 matched. <!-- checked: tests/scim.sh "with no function, a group can't be made"; tests/scim.sh "... nor a PATCH that changes the name"; tests/scim.sh "with no function, a user can't be made"; tests/scim.sh "... nor changed" -->
