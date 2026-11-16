@@ -69,6 +69,12 @@ class ReleaseDocsGen(DocsGen):
 
     policy = os.environ.get("UPGRADE_DOCS_POLICY") or DocsGen.policy
     schema = os.environ.get("UPGRADE_DOCS_SCHEMA") or DocsGen.schema
+    # whether the release has the SCIM endpoint (fill() asks its database): a release before it has
+    # authz.sync_members alone, and a team's members go through that
+    endpoint = True
+
+    def scim(self, team: int) -> str:
+        return super().scim(team) if self.endpoint else self.sync(team)
 
 
 def sh(*cmd: str, stdin: bytes | None = None) -> bytes:
@@ -109,6 +115,7 @@ def api_shares(db: DB, r: random.Random) -> str:
 
 def fill(name: str, seed: int) -> list[str]:
     gen, db = ReleaseDocsGen(random.Random(seed)), DB(name)
+    gen.endpoint = db.rows("SELECT to_regproc('authz.scim') IS NOT NULL")[0][0] == "t"
     db.run(gen.initial())
     db.run(gen.grants())
     db.run(api_shares(db, gen.r))
