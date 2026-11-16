@@ -1338,6 +1338,49 @@ case "$said" in *unchanged*) bad "a mirror dropped since: apply said unchanged" 
 check "a mirror dropped since: applying makes it again, and the table's writes go on" \
   "WITH u AS (UPDATE app.files SET name = name WHERE id = 11 RETURNING id) SELECT count(*) = 1 FROM u"
 mirrored "... and it holds every file, each with its readers"
+# A row written more than once before the mirror's trigger runs: the trigger gets each write's rows, and the mirror's
+# row must be the table's as it is at the end. (So it reads the table again for the keys those rows name.)
+did() { check "$1" "WITH w AS ($2 RETURNING 1) SELECT count(*) = 1 FROM w"; }   # $2 = a write that must go through
+# ... by one statement: a file that names itself in a column whose foreign key follows its id, so that changing the id
+# writes the row a second time (the cascade)
+PSQL -c "ALTER TABLE app.files ADD COLUMN copy_of bigint REFERENCES app.files ON UPDATE CASCADE" \
+  -c "INSERT INTO app.files (id, folder_id, owner_id, name, copy_of) VALUES (950, 4, 2, 'its own copy', 950)"
+did "a file that names itself, its id changed (the foreign key's cascade writes the row again in the one statement): the write goes through" \
+  "UPDATE app.files SET id = 951 WHERE id = 950"
+mirrored "... and its mirror row moves with it, once"
+# ... by a trigger of the app's, which writes the row again, deletes it, or makes it again
+PSQL <<'SQL'
+CREATE FUNCTION app.again() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.name = 'made again' THEN
+      INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (OLD.id, OLD.folder_id, OLD.owner_id, 'a new one');
+    END IF;
+  ELSIF NEW.name = 'written again' THEN UPDATE app.files SET name = 'written twice' WHERE id = NEW.id;
+  ELSIF NEW.name = 'deleted' THEN DELETE FROM app.files WHERE id = NEW.id;
+  ELSIF NEW.name = 'put back' THEN UPDATE app.files SET id = OLD.id, name = 'back' WHERE id = NEW.id;
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER again AFTER INSERT OR UPDATE OR DELETE ON app.files FOR EACH ROW EXECUTE FUNCTION app.again();
+UPDATE app.files SET name = 'written again' WHERE id IN (950, 951);
+INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (953, 4, 2, 'to delete');
+SQL
+mirrored "a trigger of the app's that writes the row again after an update: the mirror row is the row as it is now"
+did "... and after an insert: the write goes through" \
+  "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (952, 4, 2, 'written again')"
+mirrored "... and the mirror row is the row as it is now"
+PSQL -c "UPDATE app.files SET name = 'deleted' WHERE id = 953"
+mirrored "... one that deletes the row: its mirror row goes with it"
+did "... so a file of that id can be made again" "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (953, 4, 2, 'again')"
+did "... one that puts the row's id back: the write goes through" "UPDATE app.files SET id = 954, name = 'put back' WHERE id = 953"
+mirrored "... and the mirror row is the row's, under the id it has"
+PSQL -c "UPDATE app.files SET name = 'made again' WHERE id = 953"
+did "... one that makes a deleted row again: the write goes through" "DELETE FROM app.files WHERE id = 953"
+mirrored "... and the mirror has the new row"
+PSQL -c "DROP TRIGGER again ON app.files" -c "DROP FUNCTION app.again()" -c "DELETE FROM app.files WHERE id BETWEEN 950 AND 954" \
+  -c "ALTER TABLE app.files DROP COLUMN copy_of"
+check "... and authz.sync_verify() finds the mirror as a rebuild would make it" "SELECT authz.sync_verify()"
 # rowstile client powersync: the streams, their columns the mirror's, read in the database (from the policy's file,
 # rowstile.toml naming the database; with --db; in rowstile dev's loop); without a database, or one it can't reach, it says so
 P=$T/proj && mkdir -p "$P" && printf '%s\n' "$MIRRORED" > "$P/db.authz"

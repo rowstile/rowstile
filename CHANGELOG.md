@@ -92,6 +92,14 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   applied, or the index worked out again) compared two columns of one row in the rows' place: the mirror could
   keep rows as they were, with the readers they had, or be written again whole, and `authz.sync_verify` could say
   a mirror matches when it doesn't. The triggers that keep a mirror as rows change were not concerned.
+- A PowerSync mirror (the sync index, a preview) holds each row as its table has it once a statement is done, also
+  when the row was written more than once before the mirror's trigger ran. One statement can write a row twice: a row
+  that refers to itself through a foreign key with `ON UPDATE CASCADE`, when its key changes. Such a statement failed
+  with `duplicate key value violates unique constraint "<type>__mirror_pkey"`. And a trigger of the app's can write
+  the row again: the mirror then kept the row as it was before that write, or, where the trigger deleted the row,
+  kept it with no readers, and a row made later with that key failed the same way. The readers of a row were right
+  in each case. The mirror's trigger now reads the table again for the keys a statement's rows name.
+  `authz.sync_verify()` says false for a mirror left so, and `rowstile reapply --force` writes its rows again.
 - `authz.set_role_permissions` lets the caller add a permission they hold on an object the role is given on, even
   where they may not select its row, as `authz.share` lets them give the role there. It asked `authz.can`, which
   answers only for rows the caller may select, and refused: "you cannot give role reviewer on a folder you cannot
