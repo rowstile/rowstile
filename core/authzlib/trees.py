@@ -129,6 +129,7 @@ class TreeMixin(Core):
     def tree_locks_sql(self) -> list[str]:
         """The lock rows of the narrow tree locks, and the two functions that take them."""
         gone = "PERFORM authz_int.tree_locks_gone();"
+        stripe = lambda x: f"(pg_catalog.hashtext({x}) & {STRIPES - 1}) * {BORN + 1}"
         # (the slots asked for and not held: one held shared may still be asked for to update)
         lacking = "NOT (y._slot * 2 + 1 = ANY (p_held)) AND NOT (NOT y._upd AND y._slot * 2 = ANY (p_held))"
         return [
@@ -192,6 +193,53 @@ BEGIN
   END IF;
   o_held := p_held || v_slots;
   o_short := v_asked - v_got;
+END $f$;""",
+            f"""-- The locks of a write of one row with nothing hanging under it (most rows made, most deleted), taken the short
+-- way: the same lock rows, in the same order, as authz_int."<tree>_refresh" takes for any write (its row's stripe
+-- updated; for each row it hangs under, that one's stripe shared and one of the stripe's other rows updated; at a
+-- stricter level the type's row and the other rows of its own stripe, shared), each by a small statement. A lock
+-- row costs a few microseconds; the one statement that takes any number of them costs a hundred times that to
+-- start. o_stripes false: the type takes its own row for every write, and the caller does. p_under and p_hung,
+-- side by side: the rows it hangs under, and itself beside each
+CREATE FUNCTION authz_int.tree_lock_one(p_type text, p_id text, p_under text[], p_hung text[],
+                                        OUT o_held int[], OUT o_stripes boolean)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE
+  v_strict boolean := pg_catalog.current_setting('transaction_isolation') <> 'read committed';
+  v_own int := {stripe("p_id")};
+  v_keys int[]; v_key int;
+BEGIN
+  o_stripes := coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = p_type), false);
+  IF NOT o_stripes THEN RETURN; END IF;
+  -- each lock row as its slot twice, plus one when it is updated (the type's row: -2), in the slots' order
+  v_keys := ARRAY[v_own * 2 + 1];
+  FOR i IN 1..coalesce(cardinality(p_under), 0) LOOP
+    IF p_under[i] IS NOT NULL THEN
+      v_keys := v_keys || ARRAY[{stripe("p_under[i]")} * 2,
+                                ({stripe("p_under[i]")} + 1 + ((pg_catalog.hashtext(p_hung[i]) >> 12) & {BORN - 1})) * 2 + 1];
+    END IF;
+  END LOOP;
+  IF v_strict THEN
+    v_keys := v_keys || -2 || ARRAY(SELECT (v_own + g.sub) * 2 FROM generate_series(1, {BORN}) g(sub));
+  END IF;
+  IF cardinality(v_keys) > 1 THEN
+    v_keys := ARRAY(SELECT DISTINCT k.key FROM unnest(v_keys) k(key) ORDER BY k.key);
+  END IF;
+  FOREACH v_key IN ARRAY v_keys LOOP
+    IF v_key = -2 THEN
+      PERFORM 1 FROM authz_int.locks l WHERE l.type = p_type FOR SHARE;
+    ELSIF v_key % 2 = 1 THEN
+      UPDATE {TREE_LOCKS} t SET n = t.n + 1 WHERE t.type = p_type AND t.slot = v_key / 2;
+    ELSIF v_key + 1 = ANY (v_keys) THEN
+      CONTINUE;  -- (shared and updated: updated, next)
+    ELSE
+      PERFORM 1 FROM {TREE_LOCKS} t WHERE t.type = p_type AND t.slot = v_key / 2 FOR SHARE;
+    END IF;
+    IF NOT FOUND THEN
+      {gone}
+    END IF;
+  END LOOP;
+  o_held := v_keys;
 END $f$;""",
         ]
 
@@ -741,8 +789,8 @@ END $f$;""")
                 f"authz__.held, {{wait}}) l"
             )
 
-            def rounds(short: str) -> str:
-                return f"""WITH hint AS MATERIALIZED (
+            def rounds(short: str, one: bool = False) -> str:
+                first = f"""WITH hint AS MATERIALIZED (
       SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
                    UNION (SELECT s.descendant FROM {f("")} s WHERE s.ancestor = ANY ($1) LIMIT {TREE_LOCK_LIMIT + 1})
                    UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
@@ -756,7 +804,21 @@ END $f$;""")
            (SELECT count(*) FROM got g WHERE g._held = 1),
            ARRAY(SELECT g._slot * 2 + g._upd::int FROM got g WHERE g._held = 1)
     INTO affected, under, hung, stripes, asked, taken, held
-    FROM hint i, hangs p;
+    FROM hint i, hangs p;"""
+                if one:
+                    first = f"""IF cardinality(p_ids) = 1 AND p_ids[1] IS NOT NULL THEN
+      -- (one row, nothing hanging under it: the short way to the same lock rows)
+      SELECT h._under, h._hung INTO under, hung
+      FROM {hangs};
+      affected := p_ids;
+      SELECT l.o_held, l.o_stripes INTO held, stripes
+      FROM authz_int.tree_lock_one({lit(t.name)}, authz__.affected[1]::text, authz__.under, authz__.hung) l;
+      asked := 0;
+      taken := 0;
+    ELSE
+      {first.replace(chr(10), chr(10) + "  ")}
+    END IF;"""
+                return f"""{first}
     IF NOT authz__.stripes OR cardinality(authz__.affected) > {TREE_LOCK_LIMIT} THEN
       -- (a type whose every tree write takes its row; a write of too many objects for their stripes)
       PERFORM authz_int.tree_lock_all({lit(t.name)});
@@ -795,7 +857,7 @@ DECLARE
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   IF p_plain THEN
-    {rounds(wait)}
+    {rounds(wait, True)}
   ELSE
     LOOP
       BEGIN
