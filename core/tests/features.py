@@ -407,10 +407,10 @@ FEATURES: list[Feature] = [
     Feature(
         "api.scim",
         1,
-        "A SCIM endpoint for an identity provider's groups, answered in SQL: `authz.scim`, and `authz.set_scim` "
-        "for what it reads",
+        "A SCIM endpoint for an identity provider's users and groups, answered in SQL: `authz.scim`, and "
+        "`authz.set_scim` for what it reads",
         ("api.scim", "api.set_scim", "err.AZ720", "err.AZ721", "err.AZ722"),
-        Doc(APP, "a SCIM endpoint for an identity provider's groups"),
+        Doc(APP, "a SCIM endpoint for an identity provider's users and groups"),
         (
             T("scim.sh", "the app role cannot set the endpoint up"),
             T("scim.sh", "... and one another role owns, which could then run its own code as the owner"),
@@ -440,6 +440,18 @@ FEATURES: list[Feature] = [
             T("scim.sh", "a group whose name another has: 409, uniqueness, with the database's words"),
             T("scim.sh", "a function the settings name that another role owns now"),
             T("scim.sh", "the group's id is its key as the database writes it"),
+            T("scim.sh", "Okta asks whether a user is there before it makes one"),
+            T("scim.sh", "with no function, a user can't be made"),
+            T("scim.sh", "Entra ID makes a user: 201, the user as it wrote it, where it is"),
+            T("scim.sh", "... found by its userName and its externalId"),
+            T("scim.sh", "the same user made again: 409, uniqueness"),
+            T("scim.sh", "... nor given to the app's function, which kept the rest"),
+            T("scim.sh", "Entra ID changes the userName (op Replace, the path userName)"),
+            T("scim.sh", "Okta deactivates a user (op replace, no path, active false in the value)"),
+            T("scim.sh", "... and the policy follows (type user ... where {active}): bob reads nothing now"),
+            T("scim.sh", "Okta updates a user by PUT, the whole user: 200, as it wrote it"),
+            T("scim.sh", "a userName another user has: 409, and the name the same PATCH changed is as it was"),
+            T("scim.sh", "a user deleted: 204, no body"),
         ),
         (T(DIFF, "authz.scim("),),
     ),
