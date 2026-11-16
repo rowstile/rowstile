@@ -889,14 +889,11 @@ def pieces(body: str) -> list[str]:
             elif up == "END" and cases:
                 cases -= 1
             elif up in PIECE_ENDS and not cases:
-                if body[pos : m.start()].strip():
-                    out.append(body[pos : m.start()])
+                out.append(body[pos : m.start()])
                 pos, started, prev = m.end(), False, up
                 continue
         started, prev = True, up
-    if body[pos:].strip():
-        out.append(body[pos:])
-    return out
+    return [piece for piece in [*out, body[pos:]] if piece.strip()]
 
 
 def reads_app_columns(piece: str) -> bool:

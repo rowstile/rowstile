@@ -6,4 +6,4 @@
 # A count: a change that leaves one statement more never run and runs one that wasn't passes it (the report's
 # lists say which). A function of these schemas whose source can't be read fails it (its branches would count as none).
 authz 202 295
-authz_gen 11 20
+authz_gen 12 21
