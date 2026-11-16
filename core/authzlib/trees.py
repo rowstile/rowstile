@@ -798,10 +798,11 @@ END $f$;""")
         )
         own_lookup: Callable[[str, str], str] = lambda key, outer: each_source(links, key, outer)
 
-        def down_sql(walked: str, roots: str, lookup: Callable[[str, str], str]) -> str:
-            """The rows given and everything linked below them, as a recursive query called `walked`."""
+        def down_sql(walked: str, roots: str, lookup: Callable[[str, str], str], when: str = "") -> str:
+            """The rows given and everything linked below them, as a recursive query called `walked` (none unless
+            `when` holds, where it is given)."""
             return f"""{walked}(id) AS (
-    SELECT x FROM unnest({roots}) AS x WHERE x IS NOT NULL
+    SELECT x FROM unnest({roots}) AS x WHERE x IS NOT NULL{when}
     UNION
     SELECT e._child FROM {walked} CROSS JOIN LATERAL (
       {lookup("_parent", walked + ".id")}) e)"""
@@ -851,7 +852,10 @@ END $f$;""")
             roots, given, reach = ("authz__.roots", "authz__.roots", "reach") if both else ("$1", "p_ids", "affected")
             lookup = both.lookup if both else own_lookup
             hangs = hangs_sql(roots, lookup)
-            walks = "WITH RECURSIVE " + down_sql("down", roots, lookup)
+            # (with the whole type held, what is below through the type's other trees' links needs no lock: the
+            # tree walks its own links alone)
+            whole = " AND authz__.held IS DISTINCT FROM ARRAY[-1]" if both else ""
+            walks = "WITH RECURSIVE " + down_sql("down", roots, lookup, whole)
             found = "(SELECT array_agg(d.id) FROM down d)"
             if both:
                 walks += ",\n  " + down_sql("mine", "$1", own_lookup)
