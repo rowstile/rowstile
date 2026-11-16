@@ -743,7 +743,8 @@ END $f$;""")
             def rounds(short: str) -> str:
                 return f"""WITH hint AS MATERIALIZED (
       SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
-                   UNION SELECT s.descendant FROM {f("")} s WHERE s.ancestor = ANY ($1)) AS _ids),
+                   UNION SELECT s.descendant FROM {f("")} s WHERE s.ancestor = ANY ($1)
+                   UNION SELECT x FROM unnest(authz__.seen) AS x) AS _ids),
     hangs AS MATERIALIZED (
       SELECT h._under, h._hung
       FROM {hangs}),
@@ -781,6 +782,7 @@ END $f$;""")
     END LOOP;"""
 
             wait = f"SELECT l.o_held INTO held\n        FROM {more.format(wait='true')};"
+            again = "seen := affected;\n        RAISE EXCEPTION USING ERRCODE = 'AZL01';"
             sql.append(f"""-- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION {f("_refresh")}(p_ids {pkt}[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
                                p_plain boolean DEFAULT false) RETURNS void
@@ -788,7 +790,7 @@ LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 <<authz__>>
 DECLARE
   affected {pkt}[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
-  locked {pkt}[]; locked_under text[]; locked_hung text[];
+  locked {pkt}[]; locked_under text[]; locked_hung text[]; seen {pkt}[];
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   IF p_plain THEN
@@ -796,10 +798,13 @@ BEGIN
   ELSE
     LOOP
       BEGIN
-    {rounds("RAISE EXCEPTION USING ERRCODE = 'AZL01';").replace(chr(10), chr(10) + "    ")}
+    {rounds(again).replace(chr(10), chr(10) + "    ")}
         EXIT;
       EXCEPTION WHEN SQLSTATE 'AZL01' THEN
-        NULL;  -- what this try took is let go: again, in order, from what is stored now
+        -- what this try took is let go. Again, in order: what is stored now and what the walk had found (seen keeps
+        -- its value: a block that is rolled back doesn't take its variables back). Without it a row that hangs
+        -- below without inheriting, which the stored rows never show, would be asked for without waiting each time
+        NULL;
       END;
     END LOOP;
   END IF;

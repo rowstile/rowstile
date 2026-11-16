@@ -99,6 +99,61 @@ go; wait
 check "both moves are in" "SELECT (SELECT parent_id FROM app.folders WHERE id = 4) = 2 AND (SELECT parent_id FROM app.folders WHERE id = 6) = 20"
 check "inheritance tables match a rebuild" "SELECT authz.verify()"
 
+echo "-- 4b. a move finds a folder made under it while it waited, and that folder's lock row is held"
+# The move must not wait for a lock row below ones it holds (two writes could then wait for each other): it lets go
+# of all it took and takes them again in order. Folders are chosen by where their lock rows stand: the new folder's
+# first, then the moved folder's, its two folders' and the target's.
+reset
+LOCKS=$(psql -X -Atq -d "$DB" -c "SELECT c.oid::regclass FROM pg_class c WHERE c.relnamespace = 'authz_int'::regnamespace AND c.relkind = 'r' AND c.relname LIKE 'tree\_locks\_%'")
+nk=${LOCKS##*tree_locks_}; STRIPES=${nk%_*}; BORN=${nk#*_}
+read -r y m p q t <<< "$(psql -X -Atq -F ' ' -d "$DB" -c "SELECT x.ids[1], x.ids[2], x.ids[3], x.ids[4], x.ids[5] FROM (
+  SELECT array_agg(c.id ORDER BY c.s) AS ids FROM (SELECT DISTINCT ON (s) g AS id, hashtext(g::text) & ($STRIPES - 1) AS s
+    FROM generate_series(1000, 1999) g ORDER BY s, g LIMIT 5) c) x")"
+slot() { psql -X -Atq -d "$DB" -c "SELECT (hashtext('$1') & ($STRIPES - 1)) * ($BORN + 1)"; }
+# a session of the suite's that holds a lock row until its end ($1 its name and its pipe, $2 the slot)
+holds() {
+  mkfifo "$T/$1"
+  PGAPPNAME=authz_conc_$1 psql -X -q -d "$DB" < "$T/$1" > /dev/null 2>&1 &
+  eval "exec $3> \"$T/$1\""
+  echo "BEGIN; SELECT 1 FROM $LOCKS WHERE type = 'folder' AND slot = $2 FOR UPDATE;" >&"$3"
+  for _ in $(seq 240); do
+    [ "$(psql -X -Atq -d "$DB" -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
+          AND application_name = 'authz_conc_$1' AND state = 'idle in transaction'")" = 1 ] && return 0
+    sleep 0.25
+  done
+  echo "FAIL  the session $1 didn't take its lock row within a minute"; fails=$((fails + 1))
+}
+# ...and lets it go ($1 its name, $2 its pipe's number): told to end (the sessions started since hold the pipe open
+# too, so closing it here would not), and gone from the server before the suite goes on
+lets_go() {
+  printf 'ROLLBACK;\n\\q\n' >&"$2"
+  eval "exec $2>&-"
+  for _ in $(seq 240); do
+    [ "$(psql -X -Atq -d "$DB" -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
+          AND application_name = 'authz_conc_$1'")" = 0 ] && return 0
+    sleep 0.25
+  done
+  echo "FAIL  the session $1 didn't end within a minute"; fails=$((fails + 1))
+}
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES
+  ($m, 1, 1, 1, 'moved'), ($p, 1, $m, 1, 'in it'), ($q, 1, $m, 1, 'in it too'), ($t, 1, 1, 1, 'target')" || fails=$((fails + 1))
+holds h1 "$(slot "$p")" 7
+PGAPPNAME=authz_conc_a psql -X -q -d "$DB" -c "UPDATE app.folders SET parent_id = $t WHERE id = $m" > "$out" 2>&1 &
+blocked authz_conc_a            # it holds its own lock row, and waits for the first folder's in it
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES ($y, 1, $q, 1, 'late')" || fails=$((fails + 1))
+holds h2 "$(slot "$y")" 8
+lets_go h1 7
+blocked authz_conc_a            # its walk found the late folder, whose lock row is held
+free=$(psql -X -Atq -d "$DB" -c "SELECT count(*) FROM (SELECT 1 FROM $LOCKS WHERE type = 'folder'
+  AND slot IN ($(slot "$m"), $(slot "$p"), $(slot "$q")) FOR UPDATE NOWAIT) x" 2>&1)
+[ "$free" = 3 ] && echo "ok    a move that waits for the lock row of a folder made under it meanwhile holds none of those it had taken" ||
+  { echo "FAIL  the move waits holding lock rows it took before: $(echo "$free" | head -c 200)"; fails=$((fails + 1)); }
+lets_go h2 8
+wait
+check "the move is in, with the late folder below it, and the inheritance tables match a rebuild" \
+  "SELECT (SELECT parent_id FROM app.folders WHERE id = $m) = $t AND authz.verify()
+     AND EXISTS (SELECT 1 FROM authz_int.\"folder__parent__tree\" WHERE descendant = $y AND ancestor = $t)"
+
 echo "-- 5. sharing a file while someone deletes it"
 reset
 psql -X -q -d "$DB" -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (40, 4, 1, 'doomed.md')"
