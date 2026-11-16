@@ -274,6 +274,13 @@
       "when": 1794792951168,
       "tag": "0038_authz_scim_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794796576512,
+      "tag": "0039_authz_scim_users",
+      "breakpoints": true
     }
   ]
 }
