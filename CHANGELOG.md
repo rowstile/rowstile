@@ -70,7 +70,6 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   made for it, as a big move needs: one of 17,000 folders takes what it took (0.82 s against 0.79). Nothing to
   do: the next `apply` or migration writes the functions again, and each inheritance is worked out again with
   them (see Upgrading).
-
 - Tree writes to one type no longer wait for each other unless they meet. A write that changes who inherits from
   whom (a folder made, moved, linked, shared into another or deleted) locked its whole type, so writes to
   unrelated parts of a tree queued one behind the other. It now locks what it touches: the rows it changes with
