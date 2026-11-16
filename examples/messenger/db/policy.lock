@@ -99,7 +99,7 @@
 > rules ms.blocks: cascade from ms.users (blocker_id)
 > rules ms.blocks: cascade from ms.users (blocked_id)
 
-always | 5522f251b2aa
+always | 94852ccf625a
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | d54dfc65af0d shape=73a521b1
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
@@ -127,7 +127,7 @@ function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9f
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 3b1e6518163f shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | 935f0ec6d2fd shape=1223ad2f
-function authz.lint() | fe04773411cf shape=54cb1505
+function authz.lint() | afd56e7c774e shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | c97070cd0153 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
@@ -156,7 +156,7 @@ function authz.revoke_link(p_type text, p_id uuid, p_link text) | 94e8249bbae8 s
 function authz.roles_of(p_owner_type text, p_owner_id bigint) | 118e4ddbfcfa shape=77be0f38
 function authz.roles_of(p_owner_type text, p_owner_id text) | 3f395238b63f shape=e439cd41
 function authz.roles_of(p_owner_type text, p_owner_id uuid) | b9067b3a8f6e shape=0efd6960
-function authz.scim(p_method text, p_path text, p_query text, p_body jsonb, p_token text, OUT status int, OUT body jsonb, OUT location text) | 5a0c32fdcff6 shape=fb148a65
+function authz.scim(p_method text, p_path text, p_query text, p_body text, p_token text, OUT status int, OUT body jsonb, OUT location text) | 89f513834975 shape=92560d98
 function authz.session_limited() | 5a874cdc8846 shape=5f278327
 function authz.set_jwks(p_jwks jsonb) | 1f9152fc7bf7 shape=68b653b7
 function authz.set_role_permissions(p_role bigint, p_permissions text[]) | f38be6496224 shape=3cffc528
@@ -530,7 +530,7 @@ schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | ffced9a15fdd
 step cascades | 836fb13e0bf4
-step grant_api | 9ca9f4745920
+step grant_api | cb210823da05
 step grant_functions | 8259b3595dbe
 step grant_views | c8e558735372
 step mask_privileges | 0b7a0eb94253

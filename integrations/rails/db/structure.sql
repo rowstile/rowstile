@@ -1084,6 +1084,7 @@ ALTER TABLE app.projects ENABLE ROW LEVEL SECURITY;
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261116075153'),
 ('20261116025917'),
 ('20261116023621'),
 ('20261116013556'),
