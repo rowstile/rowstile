@@ -160,12 +160,15 @@ For one suite, start a container and run it inside:
   on a stripe updated since its snapshot. A rebuild, a write of more objects than the limit (the setting
   `tree_lock_limit`, read in the statement that takes the locks), and every write to a
   type with a tree of several types or a condition that reads other rows take the whole type
-  (`authz_int.tree_lock_all`). The trees of one type ask for the same lock rows, those of what the type's trees
-  link through together (`one_lock_set`, once every tree is known: `refresh_sql` and `on_rows_sql` write a tree's
-  functions for itself, then for its type's trees where they differ), so that a statement's second trigger asks
-  for what its first took (`tests/concurrency.sh` holds a move to it); a tree's hash and its refresh's arguments
-  are the same either way, so a tree made beside another changes that one's functions, not its rows. A new write
-  path takes its locks through `_refresh`, never beside it.
+  (`authz_int.tree_lock_all`). A type with several trees takes their lock rows once for a statement on its table:
+  one trigger function, `authz_int."<type>__trees_on_rows"` (`one_lock_set`, once every tree is known:
+  `type_rows_sql`, in the first tree's part), runs the trees' refreshes by their names; the first takes the lock
+  rows of what the type's trees link through together, and the others are told they are held (`p_held`); a write
+  to one tree alone (its links, its shares) takes its own (`tests/concurrency.sh` holds a move to it, the race
+  world `shown_second` a write to the second tree alone). A tree's hash and its refresh's arguments are the same
+  either way, so a tree made beside another changes that one's functions and moves the row triggers, not its rows
+  (`migrate.py` lets a kept tree gain or lose functions and triggers). A new write path takes its locks through
+  `_refresh`, never beside it.
   `tests/interleave.py` and `tests/stress.sh` (`run_tests.sh --proofs`) must stay green for any locking change, and
   a pair of writes to different parts of a tree is named in its world's `apart` (neither may wait).
 - Two ways to evaluate a permission, which must agree (the random-change tests check): views (`set_sql`) and

@@ -549,9 +549,10 @@ RELEASES: list[tuple[str, str, str, str, Callable[[str], str], list[str]]] = [
         lambda lock: older_lock(lock, "step grant_api "),
         [],
     ),
-    # a tree whose hash is the same, but whose objects can't all be replaced in place: it is rebuilt
+    # a tree whose hash is the same may gain or lose functions and triggers, which hold no rows (the row triggers
+    # of a type with several trees are its first tree's): its rows are kept
     (
-        "a release made one more function in an inheritance tree (the tree rebuilt, the function gone)",
+        "a release made one more function in an inheritance tree (the function gone, the tree's rows kept)",
         "docs",
         DOCS,
         "CREATE FUNCTION authz_int.\"folder__parent__tree_old\"() RETURNS void LANGUAGE sql AS '';",
@@ -559,8 +560,9 @@ RELEASES: list[tuple[str, str, str, str, Callable[[str], str], list[str]]] = [
             lock
             + 'function authz_int."folder__parent__tree_old"() | 000000000000 shape=00000000 tree=folder__parent__tree\n'
         ),
-        ["folder__parent__tree"],
+        [],
     ),
+    # a tree whose hash is the same, but whose objects can't all be replaced in place: it is rebuilt
     (
         "a release made an inheritance tree's function with another result (the tree rebuilt)",
         "docs",
