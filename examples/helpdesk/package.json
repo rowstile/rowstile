@@ -17,7 +17,7 @@
     "@rowstile/next": "*",
     "@rowstile/pg": "*",
     "@rowstile/prisma": "*",
-    "next": "^16.4.3",
+    "next": "^16.4.6",
     "pg": "^8.23.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
