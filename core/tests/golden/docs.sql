@@ -102,10 +102,10 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder__parent__tree', '2c9d355bb2a68a54aba71a10c52c469f', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('folder__parent__tree', '305308cdb61af3452a73fb914eb7e35a', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder__linked_into_parent__tree', 'd746964f313448165056dca60f4da50d', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder__linked_into_parent__tree', '5a1dbebf1e480927941e3e845ce53900', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder__linked_into_parent__tree')) n(name, hash, oids, rel)
@@ -1063,11 +1063,11 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder__parent__tree', '2c9d355bb2a68a54aba71a10c52c469f', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', '305308cdb61af3452a73fb914eb7e35a', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__linked_into_parent__tree', 'd746964f313448165056dca60f4da50d', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__linked_into_parent__tree', '5a1dbebf1e480927941e3e845ce53900', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1859,11 +1859,13 @@ BEGIN
 END $f$;
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed;
--- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids
+-- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids; p_held: the
+-- type's trigger took the lock rows already
 -- (its type has trees that differ: the lock rows are those of the type's trees together, so that the
 -- triggers of two trees, run by one statement, ask for the same ones)
 CREATE FUNCTION authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
-                               p_plain boolean DEFAULT false, p_reach bigint[] DEFAULT NULL) RETURNS void
+                               p_plain boolean DEFAULT false, p_reach bigint[] DEFAULT NULL,
+                               p_held boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
@@ -1871,9 +1873,18 @@ DECLARE
   affected bigint[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
   locked bigint[]; locked_under text[]; locked_hung text[]; seen bigint[]; most int; reach bigint[]; roots bigint[];
 BEGIN
-  IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
+  IF coalesce(cardinality(p_ids), 0) = 0 AND coalesce(cardinality(p_reach), 0) = 0 THEN RETURN; END IF;
   roots := coalesce(p_reach, p_ids);
-  IF p_plain THEN
+  IF p_held THEN
+    -- (the type's trigger took the lock rows of the type's trees together, in its first tree's refresh:
+    -- this tree walks its own links alone)
+    WITH RECURSIVE mine(id) AS (
+    SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
+    UNION
+    SELECT e._child FROM mine CROSS JOIN LATERAL (
+      (SELECT x.* FROM (SELECT 0 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = mine.id OFFSET 0)) e)
+    SELECT array_agg(m.id) INTO affected FROM mine m;
+  ELSIF p_plain THEN
     IF cardinality(authz__.roots) = 1 AND authz__.roots[1] IS NOT NULL THEN
       -- (one row, nothing hanging under it: the short way to the same lock rows)
       SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false),
@@ -2077,6 +2088,7 @@ BEGIN
       END;
     END LOOP;
   END IF;
+  IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   IF cardinality(affected) > 1000 THEN
     -- (a write this big gets plans of its own; the setting is as it was when this function ends)
     PERFORM pg_catalog.set_config('plan_cache_mode', 'force_custom_plan', true);
@@ -2150,49 +2162,6 @@ BEGIN
   END IF;
 END $f$;
 
--- rows inserted, deleted, moved, or whose id or conditions change
-CREATE FUNCTION authz_int."folder__parent__tree_on_rows"() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
-#variable_conflict use_column
-<<authz__>>
-DECLARE ids bigint[]; shift boolean := false; plain boolean;
-BEGIN
-  IF TG_OP = 'INSERT' THEN
-    ids := ARRAY(SELECT n."id" FROM new_rows n);
-  ELSIF TG_OP = 'UPDATE' THEN
-    -- rows whose id changed: the old id disappears and the new one appears
-    ids := ARRAY(
-      SELECT o."id" FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id" = o."id")
-      UNION SELECT n."id" FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id" = n."id"));
-    shift := cardinality(ids) = 0;
-    ids := ARRAY(
-      SELECT n."id" FROM new_rows n JOIN old_rows o ON o."id" = n."id"
-      WHERE n."parent_id" IS DISTINCT FROM o."parent_id"
-         OR (SELECT coalesce((inherit), false) FROM (SELECT n.*) r) IS DISTINCT FROM (SELECT coalesce((inherit), false) FROM (SELECT o.*) r)
-      UNION SELECT unnest(authz__.ids));
-  ELSE
-    ids := ARRAY(SELECT o."id" FROM old_rows o);
-  END IF;
-  IF cardinality(ids) > 0 THEN
-    -- (nothing hangs under a row just made; under another, its links say: the stored rows don't hold
-    -- what hangs under a row without inheriting from it)
-    IF TG_OP = 'INSERT' THEN
-      plain := true;
-    ELSE
-      plain := NOT EXISTS (SELECT 1 FROM unnest(authz__.ids) AS b(_y) CROSS JOIN LATERAL (
-        (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)
-      UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)) e);
-    END IF;
-    PERFORM authz_int."folder__parent__tree_refresh"(ids, shift, TG_OP <> 'DELETE', plain);
-  END IF;
-  RETURN NULL;
-END $f$;
-CREATE TRIGGER "authz_folder__parent__tree_ins" AFTER INSERT ON "app"."folders"
-  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__parent__tree_on_rows"();
-CREATE TRIGGER "authz_folder__parent__tree_upd" AFTER UPDATE ON "app"."folders"
-  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__parent__tree_on_rows"();
-CREATE TRIGGER "authz_folder__parent__tree_del" AFTER DELETE ON "app"."folders"
-  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__parent__tree_on_rows"();
 CREATE TRIGGER "authz_folder__parent__tree_trunc" AFTER TRUNCATE ON "app"."folders"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__parent__tree_on_truncate"();
 COMMENT ON TRIGGER "authz_folder__parent__tree_trunc" ON "app"."folders" IS 'rowstile: for a TRUNCATE of the tables under its table too';
@@ -2330,9 +2299,11 @@ BEGIN
 END $f$;
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed;
--- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids
+-- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids; p_held: the
+-- type's trigger took the lock rows already
 CREATE FUNCTION authz_int."folder__linked_into_parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
-                               p_plain boolean DEFAULT false, p_reach bigint[] DEFAULT NULL) RETURNS void
+                               p_plain boolean DEFAULT false, p_reach bigint[] DEFAULT NULL,
+                               p_held boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
@@ -2608,49 +2579,56 @@ BEGIN
   END IF;
 END $f$;
 
--- rows inserted, deleted, moved, or whose id or conditions change
-CREATE FUNCTION authz_int."folder__linked_into_parent__tree_on_rows"() RETURNS trigger
+-- rows inserted, deleted, moved, or whose id or conditions change, for each tree of the type: the first
+-- tree's refresh takes the lock rows of the type's trees together, once for the statement, and tells the others
+CREATE FUNCTION authz_int."folder__trees_on_rows"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
-DECLARE ids bigint[]; shift boolean := false; plain boolean;
+DECLARE moved bigint[]; reach bigint[]; ids1 bigint[]; shift boolean := false; plain boolean;
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    ids := ARRAY(SELECT n."id" FROM new_rows n);
+    reach := ARRAY(SELECT n."id" FROM new_rows n);
+    ids1 := reach;
   ELSIF TG_OP = 'UPDATE' THEN
     -- rows whose id changed: the old id disappears and the new one appears
-    ids := ARRAY(
+    moved := ARRAY(
       SELECT o."id" FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id" = o."id")
       UNION SELECT n."id" FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id" = n."id"));
-    shift := cardinality(ids) = 0;
-    ids := ARRAY(
+    shift := cardinality(moved) = 0;
+    ids1 := ARRAY(
       SELECT n."id" FROM new_rows n JOIN old_rows o ON o."id" = n."id"
       WHERE n."parent_id" IS DISTINCT FROM o."parent_id"
          OR (SELECT coalesce((inherit), false) FROM (SELECT n.*) r) IS DISTINCT FROM (SELECT coalesce((inherit), false) FROM (SELECT o.*) r)
-      UNION SELECT unnest(authz__.ids));
+      UNION SELECT unnest(authz__.moved));
+    reach := ids1;
   ELSE
-    ids := ARRAY(SELECT o."id" FROM old_rows o);
+    reach := ARRAY(SELECT o."id" FROM old_rows o);
+    ids1 := reach;
   END IF;
-  IF cardinality(ids) > 0 THEN
+  IF cardinality(reach) > 0 THEN
     -- (nothing hangs under a row just made; under another, its links say: the stored rows don't hold
     -- what hangs under a row without inheriting from it)
     IF TG_OP = 'INSERT' THEN
       plain := true;
     ELSE
-      plain := NOT EXISTS (SELECT 1 FROM unnest(authz__.ids) AS b(_y) CROSS JOIN LATERAL (
-        (SELECT x.* FROM (SELECT 0 AS _link, s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)
-      UNION ALL (SELECT x.* FROM (SELECT 1 AS _link, r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)) e);
+      plain := NOT EXISTS (SELECT 1 FROM unnest(authz__.reach) AS b(_y) CROSS JOIN LATERAL (
+        (SELECT x.* FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)
+      UNION ALL (SELECT x.* FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL) x WHERE x._parent = b._y OFFSET 0)) e);
     END IF;
-    PERFORM authz_int."folder__linked_into_parent__tree_refresh"(ids, shift, TG_OP <> 'DELETE', plain);
+    PERFORM authz_int."folder__linked_into_parent__tree_refresh"(ids1, shift, TG_OP <> 'DELETE', plain, reach);
+    IF cardinality(authz__.ids1) > 0 THEN
+      PERFORM authz_int."folder__parent__tree_refresh"(ids1, shift, TG_OP <> 'DELETE', plain, reach, true);
+    END IF;
   END IF;
   RETURN NULL;
 END $f$;
-CREATE TRIGGER "authz_folder__linked_into_parent__tree_ins" AFTER INSERT ON "app"."folders"
-  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__linked_into_parent__tree_on_rows"();
-CREATE TRIGGER "authz_folder__linked_into_parent__tree_upd" AFTER UPDATE ON "app"."folders"
-  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__linked_into_parent__tree_on_rows"();
-CREATE TRIGGER "authz_folder__linked_into_parent__tree_del" AFTER DELETE ON "app"."folders"
-  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__linked_into_parent__tree_on_rows"();
+CREATE TRIGGER "authz_folder__trees_ins" AFTER INSERT ON "app"."folders"
+  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__trees_on_rows"();
+CREATE TRIGGER "authz_folder__trees_upd" AFTER UPDATE ON "app"."folders"
+  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__trees_on_rows"();
+CREATE TRIGGER "authz_folder__trees_del" AFTER DELETE ON "app"."folders"
+  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__trees_on_rows"();
 CREATE TRIGGER "authz_folder__linked_into_parent__tree_trunc" AFTER TRUNCATE ON "app"."folders"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__linked_into_parent__tree_on_truncate"();
 COMMENT ON TRIGGER "authz_folder__linked_into_parent__tree_trunc" ON "app"."folders" IS 'rowstile: for a TRUNCATE of the tables under its table too';

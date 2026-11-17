@@ -428,7 +428,7 @@ echo "-- turning the policy off"
 expect "disabling row-level security" "42501: must be owner of table files" -c "ALTER TABLE app.files DISABLE ROW LEVEL SECURITY"
 expect "dropping a policy" "42501: must be owner of relation files" -c "DROP POLICY authz_select ON app.files"
 expect "adding a permissive policy" "42501: must be owner of table files" -c "CREATE POLICY mine ON app.files FOR SELECT USING (true)"
-expect "dropping a closure trigger" "42501: must be owner of relation folders" -c "DROP TRIGGER \"authz_folder__parent__tree_upd\" ON app.folders"
+expect "dropping a closure trigger" "42501: must be owner of relation folders" -c "DROP TRIGGER \"authz_folder__trees_upd\" ON app.folders"
 expect "replacing a generated function" "42501: permission denied for schema authz" \
   -c "CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text, p_perm text) RETURNS boolean LANGUAGE sql AS 'SELECT true'"
 

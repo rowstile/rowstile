@@ -89,8 +89,6 @@ class Together(NamedTuple):
     by itself (TreeMixin.one_lock_set)."""
 
     lookup: Callable[[str, str], str]  # the links with a value in a column, from every source of the type's trees
-    # the changes to a row's own columns that are a write to some tree of the type, when they are more than the tree's
-    changed: str | None
 
 
 class TreeMixin(Core):
@@ -846,9 +844,10 @@ END $f$;""")
             False,
         )
 
-        def refresh_sql(both: Together | None) -> str:
+        def refresh_sql(both: Together | None, held: bool = False) -> str:
             # the rows whose locks are asked for and the variable that holds what is below them: the tree's
-            # own, or the type's
+            # own, or the type's. `held`: a tree of a type whose first tree's refresh takes the type's lock rows
+            # (the type's trigger, one_lock_set), and tells the others so
             roots, given, reach = ("authz__.roots", "authz__.roots", "reach") if both else ("$1", "p_ids", "affected")
             lookup = both.lookup if both else own_lookup
             hangs = hangs_sql(roots, lookup)
@@ -939,18 +938,39 @@ END $f$;""")
                 if both
                 else ""
             )
+            start = (
+                "IF coalesce(cardinality(p_ids), 0) = 0 AND coalesce(cardinality(p_reach), 0) = 0 THEN RETURN; END IF;\n"
+                "  roots := coalesce(p_reach, p_ids);"
+                if both
+                else "IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;"
+            )
+            opening = (
+                "IF p_held THEN\n"
+                "    -- (the type's trigger took the lock rows of the type's trees together, in its first tree's refresh:\n"
+                "    -- this tree walks its own links alone)\n"
+                f"    WITH RECURSIVE {down_sql('mine', '$1', own_lookup)}\n"
+                "    SELECT array_agg(m.id) INTO affected FROM mine m;\n"
+                "  ELSIF p_plain THEN"
+                if held
+                else "IF p_plain THEN"
+            )
+            # (the first tree's refresh takes the type's lock rows whether or not the statement wrote any row of
+            # its own)
+            none = "\n  IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;" if both else ""
             return f"""-- recompute the given rows and everything linked below them; p_shift: only their own links changed;
--- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids{together}
+-- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids; p_held: the
+-- type's trigger took the lock rows already{together}
 CREATE FUNCTION {f("_refresh")}(p_ids {pkt}[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
-                               p_plain boolean DEFAULT false, p_reach {pkt}[] DEFAULT NULL) RETURNS void
+                               p_plain boolean DEFAULT false, p_reach {pkt}[] DEFAULT NULL,
+                               p_held boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 <<authz__>>
 DECLARE
   affected {pkt}[]; under text[]; hung text[]; held int[]; stripes boolean; asked bigint; taken bigint; short int;
   locked {pkt}[]; locked_under text[]; locked_hung text[]; seen {pkt}[]; most int;{" reach " + pkt + "[]; roots " + pkt + "[];" if both else ""}
 BEGIN
-  IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;{chr(10) + "  roots := coalesce(p_reach, p_ids);" if both else ""}
-  IF p_plain THEN
+  {start}
+  {opening}
     {rounds(wait, True)}
   ELSE
     LOOP
@@ -964,7 +984,7 @@ BEGIN
         NULL;
       END;
     END LOOP;
-  END IF;
+  END IF;{none}
   IF cardinality(affected) > {PLAN_FOR} THEN
     {PLAN_AGAIN}
   END IF;{loops}
@@ -1067,40 +1087,30 @@ END $f$;""")
         # (with narrow locks the refresh looks for loops itself, once it holds its locks)
         may_loop = "TG_OP <> 'DELETE'" if parents else "false"
 
-        def on_rows_sql(both: Together | None) -> str:
-            """The trigger function of the type's table and its triggers. `both`: for a type with trees that differ,
-            what they read together (refresh_sql says why)."""
-            lookup = both.lookup if both else own_lookup
-            # the rows whose locks are asked for: those the statement changed for any tree of the type
-            wider = both is not None and both.changed is not None
-            reach = (
-                f"""
-    -- (and the rows changed for any tree of the type: the write's lock rows are theirs)
-    reach := ARRAY(
-      SELECT {key("n")} FROM new_rows n JOIN old_rows o ON {key("o")} = {key("n")}
-      WHERE {both.changed}
-      UNION SELECT unnest(authz__.ids));"""
-                if both is not None and both.changed is not None
-                else ""
+        def plain_sql(roots: str, lookup: Callable[[str, str], str]) -> str:
+            """Whether nothing hangs under the rows given, in a trigger function (refresh_sql's p_plain)."""
+            return (
+                "-- (nothing hangs under a row just made; under another, its links say: the stored rows don't hold\n"
+                "    -- what hangs under a row without inheriting from it)\n"
+                "    IF TG_OP = 'INSERT' THEN\n      plain := true;\n    ELSE\n"
+                f"      plain := NOT EXISTS (SELECT 1 FROM unnest({roots}) AS b(_y) CROSS JOIN LATERAL (\n"
+                f"        {lookup('_parent', 'b._y')}) e);\n"
+                "    END IF;"
             )
-            roots = "coalesce(authz__.reach, authz__.ids)" if wider else "authz__.ids"
+
+        def on_rows_sql() -> str:
+            """The trigger function of the type's table and its triggers, for the tree alone (one_lock_set gives a
+            type with several trees one trigger function for all of them: type_rows_sql)."""
             on_rows_refresh = (
                 f"{lock}{cycle_check}\n    PERFORM {f('_refresh')}(ids, shift);"
                 if reads
-                else (
-                    "-- (nothing hangs under a row just made; under another, its links say: the stored rows don't hold\n"
-                    "    -- what hangs under a row without inheriting from it)\n"
-                    "    IF TG_OP = 'INSERT' THEN\n      plain := true;\n    ELSE\n"
-                    f"      plain := NOT EXISTS (SELECT 1 FROM unnest({roots}) AS b(_y) CROSS JOIN LATERAL (\n"
-                    f"        {lookup('_parent', 'b._y')}) e);\n"
-                    f"    END IF;\n    PERFORM {f('_refresh')}(ids, shift, {may_loop}, plain{', reach' if wider else ''});"
-                )
+                else f"{plain_sql('authz__.ids', own_lookup)}\n    PERFORM {f('_refresh')}(ids, shift, {may_loop}, plain);"
             )
             return f"""-- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION {f("_on_rows")}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
 <<authz__>>
-DECLARE ids {pkt}[]; shift boolean := false;{" wrote boolean;" if reads else " plain boolean;"}{" reach " + pkt + "[];" if wider else ""}
+DECLARE ids {pkt}[]; shift boolean := false;{" wrote boolean;" if reads else " plain boolean;"}
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT {key("n")} FROM new_rows n);
@@ -1113,7 +1123,7 @@ BEGIN
     ids := ARRAY(
       SELECT {key("n")} FROM new_rows n JOIN old_rows o ON {key("o")} = {key("n")}
       WHERE {changed}
-      UNION SELECT unnest(authz__.ids));{reach}
+      UNION SELECT unnest(authz__.ids));
   ELSE
     ids := ARRAY(SELECT {key("o")} FROM old_rows o);
   END IF;
@@ -1128,32 +1138,96 @@ CREATE TRIGGER {trig("_upd")} AFTER UPDATE ON {tbl}
   REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_rows")}();
 CREATE TRIGGER {trig("_del")} AFTER DELETE ON {tbl}
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_rows")}();
-CREATE TRIGGER {trig("_trunc")} AFTER TRUNCATE ON {tbl}
+{trunc}"""
+
+        trunc = f"""CREATE TRIGGER {trig("_trunc")} AFTER TRUNCATE ON {tbl}
   FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();
 {below_too(trig("_trunc"), tbl)}"""
-
-        own_rows = on_rows_sql(None)
+        own_rows = on_rows_sql()
         sql.append(own_rows)
         if not reads:
             mine = dict.fromkeys(col_changes + cond_changes)
             own_refresh = refresh_sql(None)
 
+            def type_rows_sql(trees: Sequence[TreeReach], lookup: Callable[[str, str], str]) -> str:
+                """One trigger function of the type's table for its trees (by their names): the rows each one
+                writes, and those the statement changed for any (reach); the first tree's refresh takes the lock
+                rows of them all (refresh_sql), and the others are told that they are held."""
+                sets = list(dict.fromkeys(x.changed for x in trees))  # (trees that take the same changes: one array)
+                var = lambda x: f"ids{sets.index(x.changed) + 1}"
+                each = " ".join(f"ids{i + 1} {pkt}[];" for i in range(len(sets)))
+                anyof = lambda cs: "\n         OR ".join(cs) or "false"
+                rows = lambda cs: (
+                    f"""ARRAY(
+      SELECT {key("n")} FROM new_rows n JOIN old_rows o ON {key("o")} = {key("n")}
+      WHERE {anyof(cs)}
+      UNION SELECT unnest(authz__.moved))"""
+                )
+                on_update = "".join(f"\n    ids{i + 1} := {rows(c)};" for i, c in enumerate(sets))
+                reach = "ids1" if len(sets) == 1 else rows(dict.fromkeys(c for x in trees for c in x.changed))
+                calls = [
+                    f"PERFORM {trees[0].refresh}({var(trees[0])}, {'shift' if trees[0].shifts else 'false'}, "
+                    f"{trees[0].loops}, plain, reach);"
+                ] + [
+                    f"IF cardinality(authz__.{var(x)}) > 0 THEN\n"
+                    f"      PERFORM {x.refresh}({var(x)}, {'shift' if x.shifts else 'false'}, {x.loops}, plain, reach, true);\n"
+                    "    END IF;"
+                    for x in trees[1:]
+                ]
+                ins = " ".join(f"ids{i + 1} := reach;" for i in range(len(sets)))
+                return f"""-- rows inserted, deleted, moved, or whose id or conditions change, for each tree of the type: the first
+-- tree's refresh takes the lock rows of the type's trees together, once for the statement, and tells the others
+CREATE FUNCTION authz_int.{q(t.name + "__trees_on_rows")}() RETURNS trigger
+LANGUAGE plpgsql {DEFINER} {PLAN_ONCE} AS $f$
+<<authz__>>
+DECLARE moved {pkt}[]; reach {pkt}[]; {each} shift boolean := false; plain boolean;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    reach := ARRAY(SELECT {key("n")} FROM new_rows n);
+    {ins}
+  ELSIF TG_OP = 'UPDATE' THEN
+    -- rows whose id changed: the old id disappears and the new one appears
+    moved := ARRAY(
+      SELECT {key("o")} FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE {key("n")} = {key("o")})
+      UNION SELECT {key("n")} FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE {key("o")} = {key("n")}));
+    shift := cardinality(moved) = 0;{on_update}
+    reach := {reach};
+  ELSE
+    reach := ARRAY(SELECT {key("o")} FROM old_rows o);
+    {ins}
+  END IF;
+  IF cardinality(reach) > 0 THEN
+    {plain_sql("authz__.reach", lookup)}
+    {chr(10).join("    " + c if i else c for i, c in enumerate(calls))}
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER {q("authz_" + t.name + "__trees_ins")} AFTER INSERT ON {tbl}
+  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.{q(t.name + "__trees_on_rows")}();
+CREATE TRIGGER {q("authz_" + t.name + "__trees_upd")} AFTER UPDATE ON {tbl}
+  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.{q(t.name + "__trees_on_rows")}();
+CREATE TRIGGER {q("authz_" + t.name + "__trees_del")} AFTER DELETE ON {tbl}
+  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.{q(t.name + "__trees_on_rows")}();"""
+
             def texts(trees: Sequence[TreeReach]) -> tuple[str, str]:
-                """This tree's refresh and its row triggers, for a type with these trees: as written for the tree
-                alone unless the others link through more, or take more changes to a row for a write."""
+                """This tree's refresh and its row triggers, for a type with these trees. The first by name takes the
+                type's lock rows for them all: its refresh is written for the type's trees together unless it
+                links through all they do and takes every change to a row they take, and its row triggers are the
+                type's (type_rows_sql). The others are told that the lock rows are held, and have no row triggers
+                of their own; their refresh, which other writes (links, shares) still call to take their own, is
+                written for the type's trees together where they link through more."""
                 by_name = sorted(trees, key=lambda x: x.name)
                 every = dict(sorted(((k, v) for x in by_name for k, v in x.lookups.items()), key=lambda kv: kv[0]))
                 changes = dict.fromkeys(c for x in by_name for c in x.changed)
-                if set(every) == set(lookups) and set(changes) == set(mine):
-                    return own_refresh, own_rows
-                both = Together(
-                    lambda key, outer: "\n      UNION ALL ".join(v(key, outer) for v in every.values()),
-                    "\n         OR ".join(changes) if set(changes) != set(mine) else None,
-                )
-                return refresh_sql(both), on_rows_sql(both)
+                together = Together(lambda key, outer: "\n      UNION ALL ".join(v(key, outer) for v in every.values()))
+                if by_name[0].name != name:
+                    return refresh_sql(None if set(every) == set(lookups) else together, held=True), trunc
+                reads_all = set(every) == set(lookups) and set(changes) == set(mine)
+                refresh = own_refresh if reads_all else refresh_sql(together)
+                return refresh, type_rows_sql(by_name, together.lookup) + "\n" + trunc
 
             self.tree_reach.setdefault(t.name, []).append(
-                TreeReach(name, lookups, tuple(mine), (own_refresh, own_rows), texts)
+                TreeReach(name, lookups, tuple(mine), f("_refresh"), shifts, may_loop, (own_refresh, own_rows), texts)
             )
 
         shift_lit = "true" if shifts else "false"

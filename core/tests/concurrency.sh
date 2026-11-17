@@ -327,12 +327,12 @@ if [ -z "$got" ]; then echo "ok    a project update that changes none doesn't wa
 else echo "FAIL  a project update that changes none, while a folder is moved: $got"; fails=$((fails + 1)); fi
 dropdb "$X"; rm -f "$T/two.authz" "$T/two.sql"
 
-echo "-- two trees of one type whose links differ: a statement's first trigger asks for the lock rows of both"
+echo "-- two trees of one type whose links differ: a statement's one trigger asks for the lock rows of both, once"
 # A node's edit comes down from its parent; its view from its parent and from the nodes it is shown in. So the
-# type has two trees, and the triggers of the one through parent alone run first (by their names). A move of m,
-# which s is shown in, writes m in the first tree, and m and s in the second. Were each trigger to ask for its own
-# tree's lock rows, the move would take m's and then wait for s's, which stands before it: two such statements
-# could wait for each other. Nodes are chosen by where their lock rows stand: s first, then m, then the target.
+# type has two trees, and the type's trigger runs the one through parent alone first (by their names), whose
+# refresh takes the lock rows of both. A move of m, which s is shown in, writes m in the first tree, and m and s in
+# the second. Were each tree to ask for its own lock rows, the move would take m's and then wait for s's, which
+# stands before it: two such statements could wait for each other. Nodes are chosen by where their lock rows stand: s first, then m, then the target.
 X="${DB}_both"
 dropdb --if-exists "$X" 2>/dev/null; createdb "$X" || exit 1
 cat > "$T/both.authz" <<'POLICY'
@@ -358,9 +358,10 @@ python3 compile_policy.py "$T/both.authz" > "$T/both.sql" &&
     -c "INSERT INTO bt.users VALUES (1)" -f "$T/both.sql" \
     -c "INSERT INTO bt.nodes (id, owner_id) VALUES ($s, 1), ($m, 1), ($t, 1)" \
     -c "INSERT INTO bt.shown VALUES ($s, $m)" >/dev/null || { echo "setup failed (both)"; exit 1; }
-first=$(psql -X -Atq -d "$X" -c "SELECT tgname FROM pg_trigger WHERE tgrelid = 'bt.nodes'::regclass AND tgname LIKE '%\_tree\_upd' ORDER BY tgname LIMIT 1")
-[ "$first" = authz_node__parent__tree_upd ] && echo "ok    the triggers of the tree through parent alone run first" ||
-  { echo "FAIL  the first tree trigger on bt.nodes is $first: this check is of the other order"; fails=$((fails + 1)); }
+first=$(psql -X -Atq -d "$X" -c "SELECT string_agg(tgname, ' ' ORDER BY tgname) FROM pg_trigger
+  WHERE tgrelid = 'bt.nodes'::regclass AND tgname ~ '_tree[0-9]*_upd$|_trees_upd$'")
+[ "$first" = authz_node__trees_upd ] && echo "ok    one trigger runs the type's trees, the tree through parent alone first" ||
+  { echo "FAIL  the tree triggers on bt.nodes are $first: this check is of one trigger for the type"; fails=$((fails + 1)); }
 RACE_DB=$X LOCK_TYPE=node holds h3 "$(slot "$s")" 9
 PGAPPNAME=authz_conc_a psql -X -q -d "$X" -c "UPDATE bt.nodes SET parent_id = $t WHERE id = $m" > "$out" 2>&1 &
 RACE_DB=$X blocked authz_conc_a            # it waits for the lock row of s, which only the second tree's write is of

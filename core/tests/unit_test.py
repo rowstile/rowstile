@@ -4231,9 +4231,10 @@ def replaced(text: str, old: str, new: str) -> str:
 
 
 class OneLockSet(unittest.TestCase):
-    """The trees of one type ask for the same lock rows, whichever tree's trigger asks (trees.one_lock_set): a
-    statement on the type's table runs every tree's trigger, and the second must find its lock rows taken
-    (tests/concurrency.sh holds a move to that, with a session that holds a lock row)."""
+    """The trees of one type ask for the same lock rows, once for a statement on the type's table
+    (trees.one_lock_set): one trigger function runs every tree's refresh, the first takes the lock rows of them all
+    and the others are told that they are held (tests/concurrency.sh holds a move to that, with a session that holds
+    a lock row); a write to a tree alone (its links, its shares) asks for the same lock rows itself."""
 
     # a node's edit comes down from its parent unless it is sealed; its view from its parent and from what it is
     # shown in: a tree through parent, which a seal writes, and one through parent and shown, which it doesn't
@@ -4246,7 +4247,7 @@ type node = app.nodes
   can edit = owner or (parent.edit and {not sealed})
   can view = edit or parent.view or shown.view
 """
-    # ... and the type with the first tree alone
+    # ... and the type without shown: two trees through parent alone (edit, which a seal stops, and view)
     ALONE = TWO.replace(" or shown.view", "").replace("  shown  : node = app.shown(node_id -> in_id)\n", "")
     SEALED = "(SELECT coalesce((not sealed), false) FROM (SELECT n.*) r) IS DISTINCT FROM"
 
@@ -4256,7 +4257,10 @@ type node = app.nodes
 
     def test_each_tree_of_a_type_asks_for_the_lock_rows_of_all(self) -> None:
         fns = self.functions(self.TWO)
-        for tree in ("node__parent__tree", "node__parent_shown__tree"):
+        # the first tree by its name, which links through less, takes the lock rows for both; the second, which
+        # links through all the first does, asks for its own for a write to it alone (a node shown in another)
+        self.assertNotIn("authz__.roots", fns['authz_int."node__parent_shown__tree_refresh"'])
+        for tree in ("node__parent__tree",):
             body = fns[f'authz_int."{tree}_refresh"']
             # what the rows hang under and what hangs below them, through either tree's links; the first guess of what
             # is below is the tree's own stored rows
@@ -4267,13 +4271,46 @@ type node = app.nodes
             self.assertRegex(body, r'(?s)AS _hung\s+FROM unnest\(authz__\.roots\) AS b\(_y\).*?FROM "app"\."shown" s')
             # ... and the rows the tree itself writes: those below the rows it was given, through its own links
             self.assertIn("FROM unnest($1) AS x", walk[2], tree)
-            self.assertEqual('FROM "app"."shown" s' in walk[2], tree == "node__parent_shown__tree")
+            self.assertNotIn('FROM "app"."shown" s', walk[2], tree)
             self.assertIn("INTO reach, affected, under, hung", body, tree)
             self.assertIn(", authz__.reach::text[], authz__.under, authz__.hung, authz__.held, false) l;", body, tree)
             self.assertNotIn("authz__.affected::text[]", body, tree)
-            # nothing hangs under the statement's rows: through either tree's links
-            rows = fns[f'authz_int."{tree}_on_rows"']
-            self.assertRegex(rows, r'(?s)plain := NOT EXISTS \(.*?FROM "app"\."shown" s.*?x\._parent = b\._y', tree)
+        # no row trigger of either tree's own: the type's runs both
+        for tree in ("node__parent__tree", "node__parent_shown__tree"):
+            self.assertNotIn(f'authz_int."{tree}_on_rows"', fns, tree)
+        # the second, told that the lock rows are held, walks its own links alone; the first never is
+        held = search(
+            r"IF p_held THEN\n(.*?)\n  ELSIF p_plain THEN", fns['authz_int."node__parent_shown__tree_refresh"'], re.S
+        )
+        self.assertIn("WITH RECURSIVE mine(id) AS (", held[1])
+        self.assertIn('FROM "app"."shown" s', held[1])
+        self.assertNotIn("authz_int.tree_lock", held[1])
+        self.assertNotIn("p_held THEN", fns['authz_int."node__parent__tree_refresh"'])
+        # the type's trigger: the rows each tree writes, and those the statement changed for any (a seal is a
+        # write to the first tree alone); nothing hangs under them through either tree's links; the first tree's
+        # refresh asks for the lock rows of them all, even when the statement wrote none of its own rows
+        rows = fns['authz_int."node__trees_on_rows"']
+        self.assertEqual(rows.count(self.SEALED), 2)
+        self.assertRegex(rows, r"(?s)ids1 := ARRAY\(.*?" + re.escape(self.SEALED))
+        self.assertRegex(rows, r"(?s)reach := ARRAY\(.*?" + re.escape(self.SEALED))
+        self.assertRegex(rows, r'(?s)plain := NOT EXISTS \(.*?FROM "app"\."shown" s.*?x\._parent = b\._y')
+        # (the bodies read here have their strings blanked: TG_OP's word is not in them)
+        self.assertRegex(
+            rows, r'PERFORM authz_int\."node__parent__tree_refresh"\(ids1, shift, TG_OP <> [^,]*, plain, reach\);'
+        )
+        self.assertRegex(
+            rows,
+            r'IF cardinality\(authz__\.ids2\) > 0 THEN\n\s+PERFORM authz_int\."node__parent_shown__tree_refresh"'
+            r"\(ids2, shift, TG_OP <> [^,]*, plain, reach, true\);",
+        )
+        self.assertLess(rows.index('"node__parent__tree_refresh"'), rows.index('"node__parent_shown__tree_refresh"'))
+        first = fns['authz_int."node__parent__tree_refresh"']
+        self.assertIn(
+            "coalesce(cardinality(p_ids), 0) = 0 AND coalesce(cardinality(p_reach), 0) = 0 THEN RETURN", first
+        )
+        self.assertRegex(
+            first, r"(?s)END LOOP;\n  END IF;\n  IF coalesce\(cardinality\(p_ids\), 0\) = 0 THEN RETURN; END IF;"
+        )
         # no function of one tree names anything of the other's (its table, a function): a migration may run one
         # while the other is being made again (tests/migrate_test.py swaps in two trees of one type)
         for name, body in fns.items():
@@ -4283,22 +4320,12 @@ type node = app.nodes
             ):
                 if name.startswith(f'authz_int."{tree}_') or name == f'authz_int."{tree}"':
                     self.assertNotRegex(body, rf'"{other}["_]', name)
-        # a seal is a write to the first tree alone: the second asks for the lock rows of the rows sealed too, so
-        # that a statement that seals some rows and moves others asks twice for the same ones
-        first, second = (
-            fns['authz_int."node__parent__tree_on_rows"'],
-            fns['authz_int."node__parent_shown__tree_on_rows"'],
-        )
-        self.assertEqual((first.count(self.SEALED), second.count(self.SEALED)), (1, 1))
-        self.assertRegex(second, r"(?s)reach := ARRAY\(.*?" + re.escape(self.SEALED))
-        self.assertIn("unnest(coalesce(authz__.reach, authz__.ids)) AS b(_y)", second)
-        self.assertIn(", plain, reach);", second)
-        self.assertNotIn("reach", first)
-        self.assertIn(", plain);", first)
 
     def test_a_tree_that_reads_all_its_type_reads_is_written_for_itself(self) -> None:
-        # the docs app's folders: the tree through parent and the links reads all the other does (a statement more
-        # in a write, or a walk more in a statement, would cost every write to a folder)
+        # the docs app's folders: the tree through parent and the links, first by its name, reads all the other
+        # does (a statement more in a write, or a walk more in a statement, would cost every write to a folder);
+        # the other, told the lock rows are held, walks its own links alone, and for a write of its own (none in
+        # the docs app) asks for those of both
         fns = self.functions(read(POLICIES["docs"]))
         wider, narrower = (
             fns['authz_int."folder__linked_into_parent__tree_refresh"'],
@@ -4306,34 +4333,83 @@ type node = app.nodes
         )
         self.assertNotIn("authz__.roots", wider)
         self.assertNotIn("mine(id)", wider)
+        self.assertNotIn("p_held THEN", wider)
         self.assertIn("INTO affected, under, hung", wider)
+        self.assertIn("IF p_held THEN", narrower)
         self.assertIn("mine(id)", narrower)
         self.assertIn('FROM "app"."folder_links" s', narrower)
-        # ... and a type with one tree
-        alone = self.functions(self.ALONE)
+        rows = fns['authz_int."folder__trees_on_rows"']
+        self.assertIn("reach := ids1;", rows)  # (both trees take the same changes to a row)
+        self.assertRegex(
+            rows, r'"folder__linked_into_parent__tree_refresh"\(ids1, shift, TG_OP <> [^,]*, plain, reach\);'
+        )
+        self.assertRegex(rows, r'"folder__parent__tree_refresh"\(ids1, shift, TG_OP <> [^,]*, plain, reach, true\);')
+        # ... two trees through the same links: the second's refresh is its own too, with the way held
+        two = self.functions(self.ALONE)
+        for tree in ("node__parent__tree", "node__parent__tree2"):
+            self.assertNotIn("authz__.roots", two[f'authz_int."{tree}_refresh"'], tree)
+            self.assertEqual("IF p_held THEN" in two[f'authz_int."{tree}_refresh"'], tree.endswith("2"), tree)
+        # ... and a type with one tree: its own trigger
+        alone = self.functions(self.ONE)
+        self.assertNotIn('authz_int."node__trees_on_rows"', alone)
         self.assertNotIn("authz__.roots", alone['authz_int."node__parent__tree_refresh"'])
-        self.assertNotIn('"app"."shown"', alone['authz_int."node__parent__tree_on_rows"'])
+        self.assertNotIn("p_held THEN", alone['authz_int."node__parent__tree_refresh"'])
+        self.assertIn(", plain);", alone['authz_int."node__parent__tree_on_rows"'])
+
+    def test_the_first_tree_takes_the_lock_rows_of_a_write_to_the_second_alone(self) -> None:
+        # the seal on view: a write to the second tree alone. The first, which links through less and takes fewer
+        # changes to a row, is given the rows the statement changed for either (reach), takes their lock rows even
+        # when it has none of its own to write (then it stops), and the second is told they are held
+        text = replaced(
+            replaced(
+                self.TWO,
+                "  can edit = owner or (parent.edit and {not sealed})\n",
+                "  can edit = owner or parent.edit\n",
+            ),
+            "  can view = edit or parent.view or shown.view\n",
+            "  can view = edit or (parent.view and {not sealed}) or shown.view\n",
+        )
+        fns = self.functions(text)
+        rows = fns['authz_int."node__trees_on_rows"']
+        self.assertRegex(rows, r"(?s)ids2 := ARRAY\(.*?" + re.escape(self.SEALED))
+        self.assertRegex(rows, r"(?s)reach := ARRAY\(.*?" + re.escape(self.SEALED))
+        self.assertNotRegex(rows, r"(?s)ids1 := ARRAY\([^;]*" + re.escape(self.SEALED))
+        self.assertRegex(rows, r'"node__parent__tree_refresh"\(ids1, shift, TG_OP <> [^,]*, plain, reach\);')
+        first = fns['authz_int."node__parent__tree_refresh"']
+        self.assertIn(
+            "coalesce(cardinality(p_ids), 0) = 0 AND coalesce(cardinality(p_reach), 0) = 0 THEN RETURN", first
+        )
+        self.assertIn("roots := coalesce(p_reach, p_ids);", first)
+
+    # a type with one tree: TWO's first
+    ONE = replaced(
+        replaced(TWO, "  can view = edit or parent.view or shown.view\n", "  can view = edit\n"),
+        "  shown  : node = app.shown(node_id -> in_id)\n",
+        "",
+    )
 
     def test_a_tree_keeps_its_hash_and_its_refresh_s_arguments_beside_another(self) -> None:
         # what a tree stores is the same with another tree beside it: applying keeps its rows, and a migration
-        # replaces its functions in place (each keeps its arguments)
+        # replaces its functions in place (each keeps its arguments); its row triggers become the type's
         def kept(text: str) -> tuple[str, list[str]]:
             c = Compiler(parse_policy(text))
             c.compile("the policy")
             return c.tree_keep["node__parent__tree"]
 
-        alone = self.ALONE
-        self.assertEqual(kept(self.TWO), kept(alone))
+        self.assertEqual(kept(self.TWO), kept(self.ONE))
         head = r'CREATE FUNCTION authz_int\."node__parent__tree_refresh"\((.*?)\) RETURNS void'
         both, one = (
-            search(head, Compiler(parse_policy(text)).compile("the policy"), re.S)[1] for text in (self.TWO, alone)
+            search(head, Compiler(parse_policy(text)).compile("the policy"), re.S)[1] for text in (self.TWO, self.ONE)
         )
         self.assertEqual(both, one)
         self.assertIn("p_reach bigint[] DEFAULT NULL", one)
-        m = one_migration(self.TWO, migrate.lock_of(database.migratable(alone, {})[1]))
+        self.assertIn("p_held boolean DEFAULT false", one)
+        m = one_migration(self.TWO, migrate.lock_of(database.migratable(self.ONE, {})[1]))
         self.assertEqual(m.rebuilt, ["node__parent_shown__tree"])
-        for fn in ('"node__parent__tree_refresh"(p_ids bigint[]', '"node__parent__tree_on_rows"()'):
-            self.assertIn(f"CREATE OR REPLACE FUNCTION authz_int.{fn}", m.sql)
+        self.assertIn('CREATE OR REPLACE FUNCTION authz_int."node__parent__tree_refresh"(p_ids bigint[]', m.sql)
+        self.assertIn('CREATE FUNCTION authz_int."node__trees_on_rows"()', m.sql)
+        self.assertIn('CREATE TRIGGER "authz_node__trees_upd"', m.sql)
+        self.assertIn('DROP TRIGGER IF EXISTS "authz_node__parent__tree_upd"', m.sql)
         self.assertNotIn('CREATE TABLE authz_int."node__parent__tree" ', m.sql)
 
     def test_a_type_in_a_tree_of_several_types_takes_its_row_in_every_tree(self) -> None:

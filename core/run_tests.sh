@@ -409,6 +409,12 @@ python3 tests/interleave.py --levels "read committed" --worlds shown --db authz_
 record "${PIPESTATUS[0]}" "interleavings (read committed, shown)"
 }
 unit policy 20 interleavings_shown
+interleavings_shown_second() {
+step "every order of two tree writes, in READ COMMITTED (shown, where a seal is a write to the second tree alone)"
+python3 tests/interleave.py --levels "read committed" --worlds shown_second --db authz_interleave_rc | quiet_ok
+record "${PIPESTATUS[0]}" "interleavings (read committed, shown with a seal of the second tree)"
+}
+unit policy 20 interleavings_shown_second
 fi
 
 moves() {
