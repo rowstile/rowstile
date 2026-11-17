@@ -564,6 +564,17 @@ RELEASES: list[tuple[str, str, str, str, Callable[[str], str], list[str]]] = [
     ),
     # a tree whose hash is the same, but whose objects can't all be replaced in place: it is rebuilt
     (
+        "a release made one more table in an inheritance tree (the tree rebuilt, the table gone)",
+        "docs",
+        DOCS,
+        'CREATE TABLE authz_int."folder__parent__tree_old" (id bigint);',
+        lambda lock: (
+            lock
+            + 'table authz_int."folder__parent__tree_old" | 000000000000 shape=00000000 tree=folder__parent__tree\n'
+        ),
+        ["folder__parent__tree"],
+    ),
+    (
         "a release made an inheritance tree's function with another result (the tree rebuilt)",
         "docs",
         DOCS,
