@@ -375,6 +375,10 @@ got=$(psql -X -Atq -d "$X" -c "SELECT (SELECT parent_id FROM bt.nodes WHERE id =
   AND NOT EXISTS (SELECT 1 FROM authz_int.\"node__parent__tree\" WHERE descendant = $s AND ancestor = $t)")
 [ "$got" = t ] && echo "ok    the move is in: what is shown in the moved node views through the target, and both trees match a rebuild" ||
   { echo "FAIL  the trees after the move ($(head -c 200 "$out"))"; fails=$((fails + 1)); }
+got=$(psql -X -Atq -d "$X" -c "SET authz.user_id = '1'" -c "SELECT bool_or(x::text LIKE '%yes  user 1 holds view on node $s%')
+  FROM authz.explain('node', '$s', 'view') x")
+[ "$got" = t ] && echo "ok    ... and authz.explain says user 1 views what is shown in the moved node" ||
+  { echo "FAIL  authz.explain of the node shown in the moved one: $got"; fails=$((fails + 1)); }
 dropdb "$X"; rm -f "$T/both.authz" "$T/both.sql"
 
 echo "-- conditions that read their tree's own table: checked again after a statement there that writes a row"
