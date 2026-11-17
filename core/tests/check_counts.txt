@@ -18,7 +18,7 @@ governance 300
 hand answers 439
 hand answers, kept names 439
 identity 150
-interleavings 1899
+interleavings 2088
 interleavings (read committed, boxes) 10
 interleavings (read committed, cross) 21
 interleavings (read committed, docs after commit) 36
@@ -27,13 +27,14 @@ interleavings (read committed, docs with a low limit) 15
 interleavings (read committed, docs without the sync index) 15
 interleavings (read committed, docs) 36
 interleavings (read committed, parts) 21
+interleavings (read committed, shown with a seal of the second tree) 21
 interleavings (read committed, shown) 21
 invariance of the fixed policies 27
 keep unchanged trees 17
 language server 149
 masks 39
 mcp 79
-migrate vs apply 105
+migrate vs apply 106
 migrations 87
 moves 40
 multi scenario 119
@@ -48,5 +49,5 @@ small policies 4
 studio 244
 sync index 275
 tools 45
-unit 797
+unit 798
 upgrade 71

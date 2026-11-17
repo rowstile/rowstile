@@ -6,8 +6,9 @@
 #   core/bench/compare.sh v0.1.0 --large    # against a tag, at another of scale.sh's sizes
 # Environment: ROUNDS (default 2), and scale.sh's own (PG, DURATION, ...). The gate's speed limits are shown, not
 # judged (SPEED_GATES=0). The other commit is checked out beside this tree (a git worktree, .ci/bench-base, removed
-# at the end) and runs its own benchmark: its scale.sh, its workload, its policy. This tree runs as it is, with
-# what isn't committed.
+# at the end) with this tree's benchmark (core/bench as it is here, its results aside: scale.sh, run.sh, the
+# workload), and runs it on its own build and its own policy: two builds are measured by one benchmark. This tree
+# runs as it is, with what isn't committed.
 # Results: core/bench/results/compare/ (not in git): base-N.txt and here-N.txt, and compare.txt, the table
 # compare.py makes of them. On GitHub's runners: `gh workflow run nightly.yml --ref <branch> -f only=scale -f
 # size=dev -f against=main` (the run's `scale-compare` artifact).
@@ -33,6 +34,7 @@ rm -f "$DIR"/base-*.txt "$DIR"/here-*.txt "$DIR/compare.txt"
 git worktree remove --force "$WT" >/dev/null 2>&1
 git worktree add --detach --force "$WT" "$commit" >/dev/null || exit 1
 trap 'git worktree remove --force "$WT" >/dev/null 2>&1' EXIT
+tar -C core/bench --exclude=./results -cf - . | tar -C "$WT/core/bench" -xf - || exit 1
 for n in $(seq "$ROUNDS"); do
   # which build goes first changes each round: a machine that warms up or slows down favours neither
   if [ $((n % 2)) = 1 ]; then order="base here"; else order="here base"; fi

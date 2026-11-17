@@ -69,9 +69,9 @@ PSQL -c "ALTER TABLE app.files DISABLE ROW LEVEL SECURITY" >/dev/null
 run apply "$T/docs.authz"
 [ "$out" = "$T/docs.authz: applied" ] && [ "$(PSQL -c "SELECT relrowsecurity FROM pg_class WHERE oid = 'app.files'::regclass")" = t ] &&
   ok "... or row-level security turned off on a table with rules" || bad "apply after RLS off" "$out"
-PSQL -c "DROP TRIGGER authz_folder__linked_into_parent__tree_del ON app.folders" >/dev/null
+PSQL -c "DROP TRIGGER authz_folder__trees_del ON app.folders" >/dev/null
 run apply "$T/docs.authz"
-[ "$out" = "$T/docs.authz: applied" ] && [ "$(PSQL -c "SELECT count(*) FROM pg_trigger WHERE tgname = 'authz_folder__linked_into_parent__tree_del'")" = 1 ] &&
+[ "$out" = "$T/docs.authz: applied" ] && [ "$(PSQL -c "SELECT count(*) FROM pg_trigger WHERE tgname = 'authz_folder__trees_del'")" = 1 ] &&
   ok "... or a trigger it made on an app table dropped" || bad "apply after a dropped trigger" "$out"
 PSQL -c "ALTER TABLE app.files DISABLE TRIGGER authz_file_forget_del" >/dev/null
 run apply "$T/docs.authz"

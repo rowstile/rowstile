@@ -142,7 +142,7 @@ function authz_int."folder__parent__tree_compute"(p_ids bigint[]) | e27330b01132
 function authz_int."folder__parent__tree_on_rows"() | 42f416b17c6d shape=51fa243d tree=folder__parent__tree
 function authz_int."folder__parent__tree_on_truncate"() | 0f865e70e08f shape=0a5b3c22 tree=folder__parent__tree
 function authz_int."folder__parent__tree_rebuild"() | ecea96a22ce4 shape=506d5965 tree=folder__parent__tree
-function authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach bigint[]) | 187a8e502d24 shape=4be8009d tree=folder__parent__tree
+function authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach bigint[], p_held boolean) | f08be854b276 shape=5e63f55f tree=folder__parent__tree
 function authz_int."folder__parent__tree_shift"(p_ids bigint[], p_below bigint[]) | 2cbb01cc132c shape=297a635d tree=folder__parent__tree
 function authz_int."folder__parent__tree_verify"() | f720b09b7240 shape=25e0fa0b tree=folder__parent__tree
 function authz_int."message__col_audit_del"() | da9c333ec223 shape=792db019
@@ -324,10 +324,10 @@ table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 04da39678f90 shape=c57707aa
 table authz_int.tree_locks_1024_4 | c01c7cffc629 shape=c01c7cff
-table authz_int.trees | 7f62ed508020 shape=02db6ec7
+table authz_int.trees | a94223dd6052 shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | d6f43caa8672 shape=b6d5b497
-tree folder__parent__tree | 8d835c3e96e13293588f9bc691e0bbeb
+tree folder__parent__tree | d7f7fdad57c7b164f75a34466866b356
 trigger "authz_folder__parent__tree_del" ON "public"."folders" | 37ed1487b6b5 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_ins" ON "public"."folders" | 2a003d444348 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_trunc" ON "public"."folders" | 98cd9465d312 tree=folder__parent__tree

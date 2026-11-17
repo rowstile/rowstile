@@ -113,6 +113,9 @@ class TreeReach:
     # the value) -> a lookup of the links (_child, _parent) with that value
     lookups: dict[tuple[str, int], Callable[[str, str], str]]
     changed: tuple[str, ...]  # the changes to a row's own columns that are a write to the tree
+    refresh: str  # its refresh function's name
+    shifts: bool  # whether a move may shift its stored rows (its refresh's p_shift)
+    loops: str  # whether a row may have been moved inside itself (its refresh's p_loops), in a trigger function
     # its refresh and its row triggers as written for the tree alone, and for the trees of its type together
     own: tuple[str, str]
     texts: Callable[[Sequence[TreeReach]], tuple[str, str]]

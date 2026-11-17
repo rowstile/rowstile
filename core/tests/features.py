@@ -1258,6 +1258,7 @@ FEATURES: list[Feature] = [
             T("interleave.py", "inheritance tables exact after each"),
             T("interleave.py", 'name="shown"'),
             T("interleave.py", 'name="docs_few"'),
+            T("interleave.py", 'name="shown_second"'),
             T("small.py", "def denies("),
             T("genpolicy.py", "def across("),
             T("stress.sh", "the inheritance tables match a rebuild"),

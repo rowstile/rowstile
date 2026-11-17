@@ -748,7 +748,27 @@ SHOWN = World(
         }
     ),
 )
-WORLDS = {w.name: w for w in (DOCS, CROSS, PARTS, BOXES, DOCS_BY, DOCS_AFTER, DOCS_PLAIN, DOCS_FEW, SHOWN)}
+# The shown world where the seal stops a node's view coming down, not its edit: a seal is then a write to the
+# second tree alone (through parent and via), which the type's trigger runs after the first. The first tree's
+# refresh, with none of its own rows to write, still takes the lock rows of the rows sealed, for both: a seal beside
+# a move asks for them as a move does. (Bob still edits c through a once it is sealed: his show and hide go through)
+SHOWN_SECOND = replace(
+    SHOWN,
+    name="shown_second",
+    policy=(
+        "shown_second.authz",
+        SHOWN_POLICY.replace(
+            "  can edit = owner or (parent.edit and {not sealed})\n", "  can edit = owner or parent.edit\n"
+        ).replace(
+            "  can view = edit or parent.view or via.view\n",
+            "  can view = edit or (parent.view and {not sealed}) or via.view\n",
+        ),
+    ),
+)
+assert SHOWN_SECOND.policy[1].count("sealed") == 1 and "(parent.view and {not sealed})" in SHOWN_SECOND.policy[1]
+WORLDS = {
+    w.name: w for w in (DOCS, CROSS, PARTS, BOXES, DOCS_BY, DOCS_AFTER, DOCS_PLAIN, DOCS_FEW, SHOWN, SHOWN_SECOND)
+}
 
 
 class Outcome(NamedTuple):

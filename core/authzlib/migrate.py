@@ -418,11 +418,21 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
             continue
         # a tree whose definition is the same (its hash leaves line numbers, messages and error codes out) keeps its
         # rows, and its functions that changed all the same (a message) are replaced in place. Its other objects
-        # can differ only in what the checks run as they are made say (a line number): nothing of that stays
-        if {k for k, info in old.objects.items() if info["tree"] == t.name} != {o.ident for o in t.objs}:
+        # can differ only in what the checks run as they are made say (a line number): nothing of that stays. It
+        # may gain or lose functions and triggers, which hold no rows: the row triggers of a type with several
+        # trees are its first tree's, for all of them (trees.one_lock_set), so a tree made beside another, or one
+        # that goes, moves them
+        was = {k for k, info in old.objects.items() if info["tree"] == t.name}
+        now = {o.ident: o for o in t.objs}
+        if any(old.objects[k]["kind"] not in ("function", "trigger") for k in was - set(now)) or any(
+            now[k].kind not in ("function", "trigger") for k in set(now) - was
+        ):
             rebuild.add(t.name)
             continue
-        changed_fns = [o for o in t.objs if o.kind == "function" and old.objects[o.ident]["hash"] != o.hash]
+        create |= set(now) - was
+        changed_fns = [
+            o for o in t.objs if o.kind == "function" and o.ident in was and old.objects[o.ident]["hash"] != o.hash
+        ]
         if all(replaceable(o, old.objects[o.ident]) for o in changed_fns):
             replace |= {o.ident for o in changed_fns}
         else:
@@ -447,6 +457,8 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
                 create.add(o.ident)
     removed = {k for k, info in old.objects.items() if k not in objs or (info["tree"] in rebuild)}
     removed |= {k for k, info in old.objects.items() if info["tree"] and info["tree"] not in {t.name for t in trees}}
+    # (an object that moves to another tree, as a type's row triggers do: dropped, then made with that tree)
+    removed |= {k for k, info in old.objects.items() if info["tree"] and k in objs and objs[k].tree != info["tree"]}
     # (a step every migration runs is in the always hash; the others run when their SQL changed, the grants too)
     steps = {
         it.name for it in c.items if isinstance(it, Step) and it.when != "always" and old.steps.get(it.name) != it.hash
@@ -542,7 +554,7 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
             if it.name in rebuild:
                 body.append(it.sql)
             else:
-                body += [made_again(o) for o in it.objs if o.ident in replace]
+                body += [made_again(o) for o in it.objs if o.ident in replace or o.ident in create]
         elif it.ident in create or it.ident in replace or it.ident in restub:
             body.append(made_again(it))
         elif it.ident in refill:

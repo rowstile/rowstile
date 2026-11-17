@@ -106,6 +106,14 @@ judge "$LOGS/reads.out"
 python3 bench/latency.py "$LOGS/reads" "${READ_NAMES[@]}" | tee -a "$OUT"
 say
 
+# Step 2 writes as many folders as the build is fast, and a bigger tree is slower to read and to write: the steps
+# after it start from the rows as they were before it (a copy of the database, put back, then read for a few
+# seconds), so that two builds are measured on the same rows (compare.sh). Not at --full's size, whose copy would
+# be 6 GB more on the disk
+SAME_ROWS=$((FILES < 10000000))
+if [ "$SAME_ROWS" = 1 ]; then
+  dropdb --if-exists "${DB}_before" >/dev/null 2>&1; createdb -T "$DB" "${DB}_before" || exit 1
+fi
 say "== 2. Tree writes as clients grow ($DURATION s each; create 90%, move 9% (small folders), link 1%)"
 say "$(printf '%-9s%10s%8s%9s%11s%11s%11s%11s' clients writes/s failed aborted 'timed out' 'p50 ms' 'p95 ms' 'waiting %')"
 for c in 1 10 50; do
@@ -117,6 +125,11 @@ for c in 1 10 50; do
 done
 say "per kind of write, 50 clients:"
 python3 bench/latency.py "$LOGS/w50" create move link | tee -a "$OUT"
+if [ "$SAME_ROWS" = 1 ]; then
+  say "(the rows as they were before step 2 again, for the steps after it)"
+  if ! { dropdb "$DB" && createdb -T "${DB}_before" "$DB" && dropdb "${DB}_before"; }; then exit 1; fi
+  "${PGB[@]}" -c 16 -j 4 -T 5 "${READS[@]}" > /dev/null 2>&1
+fi
 say
 
 say "== 3. The gate: 20 tree writes/s arriving steadily (20 clients) + $READ_RATE reads/s (16 clients), $GATE_DURATION s"

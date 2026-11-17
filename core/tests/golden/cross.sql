@@ -105,7 +105,7 @@ BEGIN
            JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'bf64c3d79279bb20bdb425d104dba6a1', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '764aacf6b5cd1fb84ab724ed157d173f', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', 'e4f430a6f5c48b15c86c0c0e947fba5d', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder_project__backer_parent__tree', '19c062c205a384fe2a64bfdce203ab07', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
@@ -1052,7 +1052,7 @@ INSERT INTO authz_int.trees VALUES
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__parent__tree', '764aacf6b5cd1fb84ab724ed157d173f', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', 'e4f430a6f5c48b15c86c0c0e947fba5d', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
@@ -2502,9 +2502,11 @@ BEGIN
 END $imm$;
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed;
--- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids
+-- p_reach: the rows the statement changed for any tree of the type, when they are more than p_ids; p_held: the
+-- type's trigger took the lock rows already
 CREATE FUNCTION authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false, p_loops boolean DEFAULT false,
-                               p_plain boolean DEFAULT false, p_reach bigint[] DEFAULT NULL) RETURNS void
+                               p_plain boolean DEFAULT false, p_reach bigint[] DEFAULT NULL,
+                               p_held boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET plan_cache_mode = force_generic_plan AS $f$
 #variable_conflict use_column
 <<authz__>>
