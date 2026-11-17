@@ -43,7 +43,7 @@ export const PATCH = route(async (req: Request, { params }: { params: Promise<{ 
 
 They run on Node 22.12 or newer, with Next.js 16, React 19, Prisma 7, node-postgres 8, postgres.js 3, Drizzle
 0.45, Vitest 4 or 5 and Jest 30. Each package's `peerDependencies` names the majors the checks run, from the version they
-ran (a caret range, such as `"next": "^16.4.3"`), so npm refuses another unless told to.
+ran (a caret range, such as `"next": "^16.4.6"`), so npm refuses another unless told to.
 
 Who a transaction acts for: `42` or `"42"` (a user), `["service", 3]` (another principal type of the policy),
 or `null` (nobody: only what `anyone` may see). A plain id is always a user's, whatever it holds: `"service:3"`

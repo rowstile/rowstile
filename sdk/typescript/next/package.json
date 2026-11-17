@@ -44,6 +44,6 @@
     "@rowstile/client": "0.1.0-dev"
   },
   "peerDependencies": {
-    "next": "^16.4.3"
+    "next": "^16.4.6"
   }
 }
