@@ -85,6 +85,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   type too or whose inheritance condition reads other rows. The number is a setting: `INSERT INTO authz.settings
   VALUES ('tree_lock_limit', '5000')`, or `'0'` for one tree write at a time to a type
   ([Limits](docs/reference/limits.md)).
+- `@rowstile/next` wants Next.js 16.4.6 or a later 16 (it took 16.4.3): from 16.3.0 to 16.4.4, a `'use cache'`
+  function called through `unstable_cache()` could show one root param's data to another (CVE-2026-119790).
+  The checks run 16.4.6.
 
 ### Fixed
 
