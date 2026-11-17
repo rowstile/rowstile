@@ -19623,13 +19623,17 @@ class Benchmarks(unittest.TestCase):
                 open(os.path.join(bench, name), "w", encoding="utf-8") as fh,
             ):
                 fh.write(src.read())
-        with open(os.path.join(bench, "scale.sh"), "w", encoding="utf-8") as fh:
-            fh.write(
-                'cd "$(dirname "$0")/../.."\n'
-                'echo "$(cat who) $* SPEED_GATES=$SPEED_GATES" >> "$RUNS"\n'
-                'mkdir -p "$(dirname "$OUT")"; echo "# result of $(cat who) (commit $(cat who))" > "$OUT"\n'
-                'echo "scale.sh in $(cat who)"; exit "$(cat code)"\n'
-            )
+
+        def scale(bench_of: str) -> None:
+            with open(os.path.join(bench, "scale.sh"), "w", encoding="utf-8") as fh:
+                fh.write(
+                    'cd "$(dirname "$0")/../.."\n'
+                    'echo "$(cat who) $* SPEED_GATES=$SPEED_GATES" >> "$RUNS"\n'
+                    'mkdir -p "$(dirname "$OUT")"; echo "# result of $(cat who) (commit $(cat who))" > "$OUT"\n'
+                    f'echo "scale.sh of {bench_of} in $(cat who)"; exit "$(cat code)"\n'
+                )
+
+        scale("the commit")
         files = {"who": "base", "code": "0", ".gitignore": ".ci/\ncore/bench/results/\n"}
         for name, text in files.items():
             with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
@@ -19637,6 +19641,8 @@ class Benchmarks(unittest.TestCase):
         git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
         for command in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "base"], ["tag", "v1"]):
             subprocess.run([*git, *command], cwd=d, check=True, capture_output=True)
+        # (this tree's benchmark changed since, uncommitted: both builds run it)
+        scale("this tree")
         for name, text in (("who", "here"), ("code", str(here_exits))):
             with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
                 fh.write(text + "\n")
@@ -19665,14 +19671,16 @@ class Benchmarks(unittest.TestCase):
                 table = fh.read()
             trees = subprocess.run(["git", "worktree", "list"], cwd=d, capture_output=True, text=True).stdout
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        # the commit's own tree and benchmark and this tree as it is (uncommitted changes too), twice, the other one
-        # first the second time (a machine that warms up or slows down favours neither); the gate's speed limits are
-        # a machine of its own's, shown and not judged
+        # the commit's own tree and this tree as it is (uncommitted changes too), each with this tree's benchmark,
+        # twice, the other one first the second time (a machine that warms up or slows down favours neither); the
+        # gate's speed limits are a machine of its own's, shown and not judged
         runs = [run.replace(" --large SPEED_GATES=0", "") for run in runs]
         self.assertEqual(runs, ["base", "here", "here", "base"])
         self.assertEqual(kept, ["base-1.txt", "base-2.txt", "compare.txt", "here-1.txt", "here-2.txt"])
         self.assertEqual(base, "# result of base (commit base)\n")
-        self.assertIn("== round 2 of 2: here\nscale.sh in here\n== round 2 of 2: base\n", done.stdout)
+        self.assertIn("== round 2 of 2: here\nscale.sh of this tree in here\n== round 2 of 2: base\n", done.stdout)
+        self.assertIn("scale.sh of this tree in base\n", done.stdout)
+        self.assertNotIn("scale.sh of the commit", done.stdout)
         self.assertIn("base (commit base, 2 rounds) and here (commit here, 2 rounds)\n", table)
         self.assertTrue(done.stdout.endswith(table), "the table is the last thing said")
         self.assertEqual(len(trees.strip().split("\n")), 1, "the other commit's tree is removed at the end: " + trees)
