@@ -166,7 +166,7 @@ function authz_int."folder__parent__tree_compute"(p_ids integer[]) | b89133e8f91
 function authz_int."folder__parent__tree_on_rows"() | a59654bf9ae5 shape=51fa243d tree=folder__parent__tree
 function authz_int."folder__parent__tree_on_truncate"() | 0f865e70e08f shape=0a5b3c22 tree=folder__parent__tree
 function authz_int."folder__parent__tree_rebuild"() | dd1b3c27cd34 shape=506d5965 tree=folder__parent__tree
-function authz_int."folder__parent__tree_refresh"(p_ids integer[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach integer[]) | 4f4476e9c4b4 shape=6a805a52 tree=folder__parent__tree
+function authz_int."folder__parent__tree_refresh"(p_ids integer[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach integer[], p_held boolean) | 94a11da0ed3b shape=4c436375 tree=folder__parent__tree
 function authz_int."folder__parent__tree_shift"(p_ids integer[], p_below integer[]) | cf379de69144 shape=84b108f7 tree=folder__parent__tree
 function authz_int."folder__parent__tree_verify"() | d0c519097eb4 shape=25e0fa0b tree=folder__parent__tree
 function authz_int."message__col_audit_del"() | da9c333ec223 shape=792db019
@@ -357,10 +357,10 @@ table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 890a755d4b7b shape=c57707aa
 table authz_int.tree_locks_1024_4 | c01c7cffc629 shape=c01c7cff
-table authz_int.trees | 78ad82865337 shape=02db6ec7
+table authz_int.trees | 2522bbee8544 shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 70df2fecf22a shape=b6d5b497
-tree folder__parent__tree | 07f62490b7973104278969b24db24432
+tree folder__parent__tree | 5a423a268fec10616fe2d25b76e5f587
 trigger "authz_feedback_col_audit_del" ON "app"."feedback" | 7ed42c4ddbd1
 trigger "authz_feedback_col_audit_ins" ON "app"."feedback" | 372ed08a4dbd
 trigger "authz_feedback_col_audit_row" ON "app"."feedback" | e768a4c10ab6

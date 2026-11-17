@@ -175,7 +175,7 @@ function authz_int."folder__parent__tree_compute"(p_ids integer[]) | 007afb3ee2a
 function authz_int."folder__parent__tree_on_rows"() | a59654bf9ae5 shape=51fa243d tree=folder__parent__tree
 function authz_int."folder__parent__tree_on_truncate"() | 0f865e70e08f shape=0a5b3c22 tree=folder__parent__tree
 function authz_int."folder__parent__tree_rebuild"() | dd1b3c27cd34 shape=506d5965 tree=folder__parent__tree
-function authz_int."folder__parent__tree_refresh"(p_ids integer[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach integer[]) | 4f4476e9c4b4 shape=6a805a52 tree=folder__parent__tree
+function authz_int."folder__parent__tree_refresh"(p_ids integer[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach integer[], p_held boolean) | 94a11da0ed3b shape=4c436375 tree=folder__parent__tree
 function authz_int."folder__parent__tree_shift"(p_ids integer[], p_below integer[]) | cf379de69144 shape=84b108f7 tree=folder__parent__tree
 function authz_int."folder__parent__tree_verify"() | d0c519097eb4 shape=25e0fa0b tree=folder__parent__tree
 function authz_int."folder__team__who"(p_id integer) | 402ec4c3ef0e shape=20fa3359
@@ -342,7 +342,7 @@ step mask_privileges | f8051dad4a89
 step share_indexes | 0c43cf884c22
 step sweep | 1dfed05490f4
 step sync_base | eda14fe1b754
-step sync_refresh | fd4bba21ce3e
+step sync_refresh | 8a63f7a5cad4
 step tables | 0b4e7c3eced9
 step tree_locks | 139538de661a
 table authz_gen.policy_lines | dfb73b71db42 shape=dcfedc96
@@ -364,10 +364,10 @@ table authz_int.sync_queued | 360d686b7075 shape=360d686b
 table authz_int.sync_stripes | 2a83b24590eb shape=8356f57c
 table authz_int.sync_todo | 5530cc58dc54 shape=80f2cd19
 table authz_int.tree_locks_1024_4 | c01c7cffc629 shape=c01c7cff
-table authz_int.trees | 78ad82865337 shape=02db6ec7
+table authz_int.trees | 2522bbee8544 shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 0a502d8ea72b shape=b6d5b497
-tree folder__parent__tree | 07f62490b7973104278969b24db24432
+tree folder__parent__tree | 5a423a268fec10616fe2d25b76e5f587
 trigger "authz_file_col_audit_del" ON "app"."files" | e2db956a9b06
 trigger "authz_file_col_audit_ins" ON "app"."files" | ecf991b5867d
 trigger "authz_file_col_audit_row" ON "app"."files" | 044d69882add

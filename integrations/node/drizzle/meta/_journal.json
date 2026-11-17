@@ -323,6 +323,20 @@
       "when": 1794869687120,
       "tag": "0045_authz_narrow_tree_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794882142953,
+      "tag": "0046_authz_build_one_lock_pass_per_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794882143953,
+      "tag": "0047_authz_one_lock_pass_per_type",
+      "breakpoints": true
     }
   ]
 }

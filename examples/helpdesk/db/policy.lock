@@ -495,7 +495,7 @@ function authz_int."team__parent__tree_compute"(p_ids uuid[]) | 8b0987c462cc sha
 function authz_int."team__parent__tree_on_rows"() | c3032b964f30 shape=cdbdd025 tree=team__parent__tree
 function authz_int."team__parent__tree_on_truncate"() | 82352905632c shape=8d79087c tree=team__parent__tree
 function authz_int."team__parent__tree_rebuild"() | 544623fd8e2c shape=2cb50913 tree=team__parent__tree
-function authz_int."team__parent__tree_refresh"(p_ids uuid[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach uuid[]) | b38c793e8bef shape=26921e19 tree=team__parent__tree
+function authz_int."team__parent__tree_refresh"(p_ids uuid[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach uuid[], p_held boolean) | 5b86658c6dc1 shape=2422c629 tree=team__parent__tree
 function authz_int."team__parent__tree_shift"(p_ids uuid[], p_below uuid[]) | f95da29c97a8 shape=fda60fe3 tree=team__parent__tree
 function authz_int."team__parent__tree_verify"() | 8f88d9e509b5 shape=ee629c2f tree=team__parent__tree
 function authz_int."team__view__who"(p_id uuid) | e48860078a0c shape=6114fae6
@@ -715,7 +715,7 @@ step mask_privileges | 26af74835f67
 step share_indexes | 7b6abf1f960f
 step sweep | 720e0c5ae09f
 step sync_base | d56d2648ef0a
-step sync_refresh | 4d6924acaba3
+step sync_refresh | 622a057c90ea
 step tables | 41b30dca0ebc
 step tree_locks | d60cd47d0e20
 table authz_gen.policy_lines | 7c09872a2861 shape=dcfedc96
@@ -736,10 +736,10 @@ table authz_int.sync_moved | c49c430f9bba shape=6c60da1e
 table authz_int.sync_queued | 360d686b7075 shape=360d686b
 table authz_int.sync_todo | 5530cc58dc54 shape=80f2cd19
 table authz_int.tree_locks_1024_4 | c01c7cffc629 shape=c01c7cff
-table authz_int.trees | 14906d292b9d shape=02db6ec7
+table authz_int.trees | 76275277a0a3 shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 792f565ea964 shape=b6d5b497
-tree team__parent__tree | 37def2dba45d7e7258f9e534c9bcdcb4
+tree team__parent__tree | d2f3dcb328124d24eb0eba163b72ade9
 trigger "authz_comment_col_audit_del" ON "hd"."comments" | acd8165d405c
 trigger "authz_comment_col_audit_ins" ON "hd"."comments" | 5413fcc0e27f
 trigger "authz_comment_col_audit_row" ON "hd"."comments" | a636a0768e9d
