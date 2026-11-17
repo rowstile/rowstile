@@ -75,11 +75,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   unrelated parts of a tree queued one behind the other. It now locks what it touches: the rows it changes with
   everything below them, and the rows those hang under. Two writes that meet still wait in READ COMMITTED, and in
   REPEATABLE READ and SERIALIZABLE the later one fails with a serialization error only when what it touches
-  changed since its snapshot (before: when any tree write to its type had). On GitHub runners (50,000 folders 20
-  levels deep, the two builds in turn on one machine, four runs), ten clients do 1.5 to 2.2 times the tree
-  writes they did, and fifty 1.6 to 2.3 times, writers all in one part of the tree included; one client alone does
-  about as many, a twentieth fewer in most runs; a write takes about half a millisecond longer, a move of 17,000
-  folders a tenth longer at most, and an admin's check while writes run about 0.3 ms longer. A write of more than
+  changed since its snapshot (before: when any tree write to its type had). The trees of one type (a folder's
+  inheritance of edit and of view, say) take their locks once for a statement on the type's table. On GitHub
+  runners (50,000 folders 20 levels deep, the two builds in turn on one machine), ten clients do 1.5 to 2.3 times
+  the tree writes they did, and fifty 1.6 to 2.6 times, writers all in one part of the tree included; one client
+  alone does as many, and a write, a move of 14,000 folders and an admin's check while writes run take what they
+  took, within what two runs of one build differ by. A write of more than
   1,000 rows takes its whole type, as before, and so does every tree write to a type that inherits through another
   type too or whose inheritance condition reads other rows. The number is a setting: `INSERT INTO authz.settings
   VALUES ('tree_lock_limit', '5000')`, or `'0'` for one tree write at a time to a type
