@@ -57,10 +57,16 @@ TREE_LOCKS = f"authz_int.tree_locks_{STRIPES}_{BORN}"
 # The number is of the write's first guess: its rows and what is stored below them
 TREE_LOCK_LIMIT = 1000
 # ...as a write reads it. A value that isn't a whole number isn't read (one bad row would fail every tree write),
-# and authz.lint() reports it
+# and authz.lint() reports it. At SERIALIZABLE it is 0: every tree write takes its whole type. There Postgres keeps
+# the predicate locks of what each transaction read until every transaction that overlapped it ends, and a tree
+# write reads many pages (the trees, the sync index); writers that don't wait for each other overlap, so a slow one
+# kept the locks of all that committed beside it, and 16 writers ran the server out of room for them (`out of shared
+# memory`, which no app retries; the stress suite, 2026-11-17). Taking the whole type there writes as fast in that
+# suite and keeps a fifteenth of the locks; REPEATABLE READ takes none of them
 TREE_LOCK_MOST = (
+    "CASE WHEN pg_catalog.current_setting('transaction_isolation') = 'serializable' THEN 0 ELSE "
     "coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), "
-    f"{TREE_LOCK_LIMIT})"
+    f"{TREE_LOCK_LIMIT}) END"
 )
 # where a lookup of one source's links is given the value it looks for (ensure_tree's lock_lookup)
 OUTER = "\x00outer\x00"

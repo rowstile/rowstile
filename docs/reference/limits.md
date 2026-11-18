@@ -163,6 +163,10 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   type that inherits through another type too, or whose inheritance condition reads other rows. The number is a
   setting the owner writes: `INSERT INTO authz.settings VALUES ('tree_lock_limit', '5000')` (0: every tree write
   takes its whole type). <!-- checked: tests/moves.sh "with the setting at 100, the same move takes the whole type"; tests/moves.sh "at 0 every tree write takes the whole type"; tests/interleave.py "DOCS_FEW = replace(" -->
+  In SERIALIZABLE every tree write takes its whole type, whatever the setting. <!-- checked: tests/moves.sh "at SERIALIZABLE a folder made takes the whole type" -->
+  There Postgres holds on to what each transaction read until every transaction beside it ends, and many tree
+  writes running side by side filled the server's room for that (`out of shared memory`, an error no app
+  retries). One at a time, sixteen writers held a fifteenth as much and did as many writes. <!-- unchecked: measured by hand on 2026-11-18, PostgreSQL 16; tests/stress.sh runs sixteen writers in SERIALIZABLE on the server's defaults -->
   Inheritance conditions that read
   other tables are re-evaluated for every row of the type when those tables change
   (and when a statement writes rows of the type's own table, if a condition reads it).

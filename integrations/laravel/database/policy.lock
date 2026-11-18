@@ -150,7 +150,7 @@ function authz_int."folder__parent__tree_compute"(p_ids bigint[]) | 3d403a3f975e
 function authz_int."folder__parent__tree_on_rows"() | ba726a15cb98 shape=51fa243d tree=folder__parent__tree
 function authz_int."folder__parent__tree_on_truncate"() | 0f865e70e08f shape=0a5b3c22 tree=folder__parent__tree
 function authz_int."folder__parent__tree_rebuild"() | d6a70d82bc07 shape=506d5965 tree=folder__parent__tree
-function authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach bigint[], p_held boolean) | 3716b14ba4df shape=5e63f55f tree=folder__parent__tree
+function authz_int."folder__parent__tree_refresh"(p_ids bigint[], p_shift boolean, p_loops boolean, p_plain boolean, p_reach bigint[], p_held boolean) | 9fe4a9bd2d14 shape=5e63f55f tree=folder__parent__tree
 function authz_int."folder__parent__tree_shift"(p_ids bigint[], p_below bigint[]) | 9ba2fe7fe7ce shape=297a635d tree=folder__parent__tree
 function authz_int."folder__parent__tree_verify"() | b1ec1c623b32 shape=25e0fa0b tree=folder__parent__tree
 function authz_int."message__col_audit_del"() | da9c333ec223 shape=792db019
@@ -329,10 +329,10 @@ table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 04da39678f90 shape=c57707aa
 table authz_int.tree_locks_1024_4 | c01c7cffc629 shape=c01c7cff
-table authz_int.trees | 792e72c6854b shape=02db6ec7
+table authz_int.trees | 870c0169d46d shape=02db6ec7
 table authz_int.truncating | 92fc3b758bf4 shape=92fc3b75
 table authz_int.types | 941796b264b7 shape=b6d5b497
-tree folder__parent__tree | 6832b75753d9566b8fe743a77b851187
+tree folder__parent__tree | d09f53870b6ccfa4e75e792827048141
 trigger "authz_folder__parent__tree_del" ON "app"."folders" | b31f2fcea3d2 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_ins" ON "app"."folders" | 2825bf58a3d1 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_trunc" ON "app"."folders" | e98fe3f9b2e1 tree=folder__parent__tree

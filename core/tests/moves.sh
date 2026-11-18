@@ -193,6 +193,18 @@ setting 0
 PSQL -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (9005, 1, $G, 5, 'whole')"
 [ "$(whole)" -gt "$was" ] && echo "ok    at 0 every tree write takes the whole type" ||
   { echo "FAIL  with the setting at 0, a folder made left the type's row as it was"; fails=$((fails + 1)); }
+PSQL -c "DELETE FROM authz.settings WHERE key = 'tree_lock_limit'" -c "DELETE FROM app.folders WHERE id = 9005"
+# at SERIALIZABLE every tree write takes its whole type, whatever the setting: there Postgres keeps what each
+# transaction read until every transaction beside it ends, and writers that don't wait for each other kept so many
+# that the server ran out of room for them (the stress suite, 16 writers: out of shared memory)
+was=$(whole)
+PSQL -c "BEGIN ISOLATION LEVEL SERIALIZABLE" -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (9005, 1, $G, 5, 'serial')" -c "COMMIT"
+[ "$(whole)" -gt "$was" ] && echo "ok    at SERIALIZABLE a folder made takes the whole type" ||
+  { echo "FAIL  at SERIALIZABLE a folder made left the type's row as it was"; fails=$((fails + 1)); }
+was=$(whole)
+PSQL -c "BEGIN ISOLATION LEVEL REPEATABLE READ" -c "DELETE FROM app.folders WHERE id = 9005" -c "COMMIT"
+[ "$(whole)" = "$was" ] && echo "ok    ... and at REPEATABLE READ one deleted locks what it touches" ||
+  { echo "FAIL  at REPEATABLE READ a folder deleted took the whole type"; fails=$((fails + 1)); }
 setting many
 was=$(whole)
 PSQL -c "UPDATE app.folders SET parent_id = 2000 WHERE id = $F"
