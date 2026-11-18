@@ -90,6 +90,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `@rowstile/next` wants Next.js 16.4.6 or a later 16 (it took 16.4.3): from 16.3.0 to 16.4.4, a `'use cache'`
   function called through `unstable_cache()` could show one root param's data to another (CVE-2026-119790).
   The checks run 16.4.6.
+- The Python the npm packages bring is python-build-standalone 20261110's CPython 3.13.18, with zlib 1.4, expat
+  2.10.0 and musl 1.2.6 (it was 20261026's).
 
 ### Fixed
 
