@@ -337,6 +337,20 @@
       "when": 1794882143953,
       "tag": "0047_authz_one_lock_pass_per_type",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1794991764004,
+      "tag": "0048_authz_build_serializable_tree_writes_take_their_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1794991765004,
+      "tag": "0049_authz_serializable_tree_writes_take_their_type",
+      "breakpoints": true
     }
   ]
 }

@@ -58,6 +58,8 @@ After each schedule, as the owner:
     other rows, are what the rows say now); in docs, authz.sync_verify() too: the sync index (a preview) does;
   - no row sits inside itself through its parents;
   - no share is left on a row that isn't there;
+  - for the pairs a world names apart (writes to different parts of the tree), neither write waited for the
+    other, unless a session is in SERIALIZABLE: there every tree write takes its whole type (trees.TREE_LOCK_MOST);
   - what authz.list says the users the subtree concerns may do with each row equals the reference evaluator's
     answer (authzlib/evaluate.py) on the rows the schedule left (asked once for each set of rows the schedules
     leave: the same rows, with the inheritance tables exact, give the same answers);
@@ -592,8 +594,9 @@ def plain_op(kind: str, s: int) -> Op:
 
 
 # The docs world as an app without the sync index has it: nothing is kept at commit, so a commit takes no lock, and a
-# write at REPEATABLE READ or SERIALIZABLE fails only on what the trees' own locks see (with the sync index, whose
-# commit takes all its lock rows at those levels, any write since the snapshot fails it). The pairs to different
+# write at REPEATABLE READ fails only on what the trees' own locks see (with the sync index, whose commit takes all
+# its lock rows at the stricter levels, any write since the snapshot fails it; at SERIALIZABLE a tree write takes its
+# whole type, so any tree write since the snapshot does). The pairs to different
 # parts are held to their commits too, and this world is where a build without one of the trees' locks is caught.
 DOCS_PLAIN = replace(
     DOCS,
@@ -1152,7 +1155,7 @@ def interleave(world: World, db: str, pairs: Sequence[tuple[str, str]], chosen: 
                     }
                     problems += [f"{alone[s].text()}: {p}" for s in alone for p in alone[s].problems]
                     problems += serial(runs, alone, sched.initial)
-                if (k1, k2) in world.apart:
+                if (k1, k2) in world.apart and "serializable" not in levels:
                     problems += together(runs, ("write",) if "\nsync role " in world.policy[1] else ("write", "commit"))
                 n += len(runs)
                 waited += sum(run.waited for run in runs)

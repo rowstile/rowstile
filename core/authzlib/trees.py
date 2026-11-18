@@ -57,10 +57,16 @@ TREE_LOCKS = f"authz_int.tree_locks_{STRIPES}_{BORN}"
 # The number is of the write's first guess: its rows and what is stored below them
 TREE_LOCK_LIMIT = 1000
 # ...as a write reads it. A value that isn't a whole number isn't read (one bad row would fail every tree write),
-# and authz.lint() reports it
+# and authz.lint() reports it. At SERIALIZABLE it is 0: every tree write takes its whole type. There Postgres keeps
+# the predicate locks of what each transaction read until every transaction that overlapped it ends, and a tree
+# write reads many pages (the trees, the sync index); writers that don't wait for each other overlap, so a slow one
+# kept the locks of all that committed beside it, and 16 writers ran the server out of room for them (`out of shared
+# memory`, which no app retries; the stress suite, 2026-11-17). Taking the whole type there writes as fast in that
+# suite and keeps a fifteenth of the locks; REPEATABLE READ takes none of them
 TREE_LOCK_MOST = (
+    "CASE WHEN pg_catalog.current_setting('transaction_isolation') = 'serializable' THEN 0 ELSE "
     "coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), "
-    f"{TREE_LOCK_LIMIT})"
+    f"{TREE_LOCK_LIMIT}) END"
 )
 # where a lookup of one source's links is given the value it looks for (ensure_tree's lock_lookup)
 OUTER = "\x00outer\x00"
@@ -1210,15 +1216,21 @@ CREATE TRIGGER {q("authz_" + t.name + "__trees_del")} AFTER DELETE ON {tbl}
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.{q(t.name + "__trees_on_rows")}();"""
 
             def texts(trees: Sequence[TreeReach]) -> tuple[str, str]:
-                """This tree's refresh and its row triggers, for a type with these trees. The first by name takes the
+                """This tree's refresh and its row triggers, for a type with these trees. The first takes the
                 type's lock rows for them all: its refresh is written for the type's trees together unless it
                 links through all they do and takes every change to a row they take, and its row triggers are the
                 type's (type_rows_sql). The others are told that the lock rows are held, and have no row triggers
                 of their own; their refresh, which other writes (links, shares) still call to take their own, is
-                written for the type's trees together where they link through more."""
-                by_name = sorted(trees, key=lambda x: x.name)
-                every = dict(sorted(((k, v) for x in by_name for k, v in x.lookups.items()), key=lambda kv: kv[0]))
-                changes = dict.fromkeys(c for x in by_name for c in x.changed)
+                written for the type's trees together where they link through more. Which is first: by its name,
+                which says what it links through, but never by the number the name may end in, which is the order
+                the compiler met the trees (a policy written in another order is the same policy); of two trees
+                through the same links, one that reads all the others do (its refresh then walks nothing more),
+                then by its links themselves."""
+                linked = sorted(trees, key=lambda x: x.edges)
+                every = dict(sorted(((k, v) for x in linked for k, v in x.lookups.items()), key=lambda kv: kv[0]))
+                changes = dict.fromkeys(c for x in linked for c in x.changed)
+                reads = lambda x: set(every) == set(x.lookups) and set(changes) == set(x.changed)
+                by_name = sorted(trees, key=lambda x: (x.name.rstrip("0123456789"), not reads(x), x.edges))
                 together = Together(lambda key, outer: "\n      UNION ALL ".join(v(key, outer) for v in every.values()))
                 if by_name[0].name != name:
                     return refresh_sql(None if set(every) == set(lookups) else together, held=True), trunc
@@ -1227,7 +1239,17 @@ CREATE TRIGGER {q("authz_" + t.name + "__trees_del")} AFTER DELETE ON {tbl}
                 return refresh, type_rows_sql(by_name, together.lookup) + "\n" + trunc
 
             self.tree_reach.setdefault(t.name, []).append(
-                TreeReach(name, lookups, tuple(mine), f("_refresh"), shifts, may_loop, (own_refresh, own_rows), texts)
+                TreeReach(
+                    name,
+                    tuple(sorted((a, b, c or "", d) for a, b, c, d in edges)),
+                    lookups,
+                    tuple(mine),
+                    f("_refresh"),
+                    shifts,
+                    may_loop,
+                    (own_refresh, own_rows),
+                    texts,
+                )
             )
 
         shift_lit = "true" if shifts else "false"

@@ -199,7 +199,8 @@ may end those with either.
 
 A write of more than a thousand rows takes its whole type instead (a setting, `tree_lock_limit`:
 [Limits](reference/limits.md)), as does every tree write to a type that inherits through another type too or
-whose inheritance condition reads other rows: the other tree writes to that type wait while it runs.
+whose inheritance condition reads other rows: the other tree writes to that type wait while it runs. So does every
+tree write in SERIALIZABLE, where writes that run side by side make Postgres keep too much of what they read.
 
 ## What to watch
 

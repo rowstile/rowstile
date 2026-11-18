@@ -33,7 +33,7 @@
   share of the row fails with a serialization error (40001), to retry, and never leaves the share. <!-- checked: tests/concurrency.sh "the writer with the older snapshot gets a serialization error"; tests/concurrency.sh "no share is left on a row that is gone"; tests/concurrency.sh "a delete with an older snapshot"; tests/concurrency.sh "a new id with an older snapshot"; tests/concurrency.sh "the user deleted with an older snapshot"; tests/concurrency.sh "TRUNCATE with an older snapshot" -->
 - **Inheritance can't go stale.** <!-- checked: tests/interleave.py "inheritance tables exact after each"; tests/stress.sh "the inheritance tables match a rebuild" -->
   A write to a tree locks what it touches (the rows it changes, everything below them and what they hang
-  under; a write of many rows, its whole type: [Limits](limits.md));
+  under; a write of many rows, or any in SERIALIZABLE, its whole type: [Limits](limits.md));
   in REPEATABLE READ or SERIALIZABLE a writer whose snapshot is older than a write to what it touches gets a
   serialization error to retry instead of storing stale ancestors. <!-- checked: tests/concurrency.sh "the late writer gets a serialization error (the app retries)" -->
   What they can't follow is a write made

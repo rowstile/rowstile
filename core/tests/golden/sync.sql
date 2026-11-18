@@ -102,10 +102,10 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder__parent__tree', '305308cdb61af3452a73fb914eb7e35a', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('folder__parent__tree', 'a371925dbe4006a7cd145182efe6709f', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder__linked_into_parent__tree', '5a1dbebf1e480927941e3e845ce53900', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder__linked_into_parent__tree', '5f48a884850160647a4611519634d6fd', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder__linked_into_parent__tree')) n(name, hash, oids, rel)
@@ -1139,11 +1139,11 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder__parent__tree', '305308cdb61af3452a73fb914eb7e35a', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', 'a371925dbe4006a7cd145182efe6709f', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__linked_into_parent__tree', '5a1dbebf1e480927941e3e845ce53900', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__linked_into_parent__tree', '5f48a884850160647a4611519634d6fd', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -2004,7 +2004,7 @@ BEGIN
     IF cardinality(authz__.roots) = 1 AND authz__.roots[1] IS NOT NULL THEN
       -- (one row, nothing hanging under it: the short way to the same lock rows)
       SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false),
-             coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000)
+             CASE WHEN pg_catalog.current_setting('transaction_isolation') = 'serializable' THEN 0 ELSE coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) END
       INTO under, hung, stripes, most
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                  array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
@@ -2021,7 +2021,7 @@ BEGIN
     ELSE
       WITH narrow AS MATERIALIZED (
         SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is,
-               coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) AS _most),
+               CASE WHEN pg_catalog.current_setting('transaction_isolation') = 'serializable' THEN 0 ELSE coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) END AS _most),
       hint AS MATERIALIZED (
         SELECT ARRAY(SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL
                      UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY (authz__.roots) LIMIT (SELECT n._most + 1 FROM narrow n))
@@ -2111,7 +2111,7 @@ BEGIN
       BEGIN
     WITH narrow AS MATERIALIZED (
           SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is,
-                 coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) AS _most),
+                 CASE WHEN pg_catalog.current_setting('transaction_isolation') = 'serializable' THEN 0 ELSE coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) END AS _most),
         hint AS MATERIALIZED (
           SELECT ARRAY(SELECT x FROM unnest(authz__.roots) AS x WHERE x IS NOT NULL
                        UNION (SELECT s.descendant FROM authz_int."folder__parent__tree" s WHERE s.ancestor = ANY (authz__.roots) LIMIT (SELECT n._most + 1 FROM narrow n))
@@ -2432,7 +2432,7 @@ BEGIN
     IF cardinality(p_ids) = 1 AND p_ids[1] IS NOT NULL THEN
       -- (one row, nothing hanging under it: the short way to the same lock rows)
       SELECT h._under, h._hung, coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false),
-             coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000)
+             CASE WHEN pg_catalog.current_setting('transaction_isolation') = 'serializable' THEN 0 ELSE coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) END
       INTO under, hung, stripes, most
       FROM (SELECT array_agg(e._parent::text ORDER BY e._child::text, e._parent::text) AS _under,
                  array_agg(e._child::text ORDER BY e._child::text, e._parent::text) AS _hung
@@ -2449,7 +2449,7 @@ BEGIN
     ELSE
       WITH narrow AS MATERIALIZED (
         SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is,
-               coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) AS _most),
+               CASE WHEN pg_catalog.current_setting('transaction_isolation') = 'serializable' THEN 0 ELSE coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) END AS _most),
       hint AS MATERIALIZED (
         SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
                      UNION (SELECT s.descendant FROM authz_int."folder__linked_into_parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT (SELECT n._most + 1 FROM narrow n))
@@ -2534,7 +2534,7 @@ BEGIN
       BEGIN
     WITH narrow AS MATERIALIZED (
           SELECT coalesce((SELECT l.narrow FROM authz_int.locks l WHERE l.type = 'folder'), false) AS _is,
-                 coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) AS _most),
+                 CASE WHEN pg_catalog.current_setting('transaction_isolation') = 'serializable' THEN 0 ELSE coalesce((SELECT s.value::int FROM authz.settings s WHERE s.key = 'tree_lock_limit' AND s.value ~ '^[0-9]{1,9}$'), 1000) END AS _most),
         hint AS MATERIALIZED (
           SELECT ARRAY(SELECT x FROM unnest($1) AS x WHERE x IS NOT NULL
                        UNION (SELECT s.descendant FROM authz_int."folder__linked_into_parent__tree" s WHERE s.ancestor = ANY ($1) LIMIT (SELECT n._most + 1 FROM narrow n))
@@ -10013,7 +10013,7 @@ BEGIN
   END LOOP;
 END $ch$;
 
-SELECT authz_int.sync_refresh('0dc95bb8911e5f9af54f58efa8570aff');
+SELECT authz_int.sync_refresh('9b1d992685c0f7277a70d05c07556da6');
 DO $sw$
 DECLARE n bigint; m bigint;
 BEGIN

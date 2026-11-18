@@ -74,8 +74,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   whom (a folder made, moved, linked, shared into another or deleted) locked its whole type, so writes to
   unrelated parts of a tree queued one behind the other. It now locks what it touches: the rows it changes with
   everything below them, and the rows those hang under. Two writes that meet still wait in READ COMMITTED, and in
-  REPEATABLE READ and SERIALIZABLE the later one fails with a serialization error only when what it touches
-  changed since its snapshot (before: when any tree write to its type had). The trees of one type (a folder's
+  REPEATABLE READ the later one fails with a serialization error only when what it touches changed since its
+  snapshot (before: when any tree write to its type had). In SERIALIZABLE a tree write still takes its whole type:
+  there Postgres keeps what each transaction read until every one beside it ends, and sixteen writers that didn't
+  wait for each other ran the server out of room for it (`out of shared memory`). The trees of one type (a folder's
   inheritance of edit and of view, say) take their locks once for a statement on the type's table. On GitHub
   runners (50,000 folders 20 levels deep, the two builds in turn on one machine), ten clients do 1.5 to 2.3 times
   the tree writes they did, and fifty 1.6 to 2.6 times, writers all in one part of the tree included; one client

@@ -109,6 +109,9 @@ class TreeReach:
     functions that take them are written once the type's other trees are known (TreeMixin.one_lock_set)."""
 
     name: str
+    # its links, in an order of their own: which tree of the type comes first (its name is numbered in the order the
+    # compiler meets the trees, which the policy's order changes)
+    edges: tuple[tuple[str, str, str, str], ...]
     # each of its link sources, by its relation and its place among the relation's sources: (the column asked,
     # the value) -> a lookup of the links (_child, _parent) with that value
     lookups: dict[tuple[str, int], Callable[[str, str], str]]
