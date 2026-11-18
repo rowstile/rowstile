@@ -1210,15 +1210,21 @@ CREATE TRIGGER {q("authz_" + t.name + "__trees_del")} AFTER DELETE ON {tbl}
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.{q(t.name + "__trees_on_rows")}();"""
 
             def texts(trees: Sequence[TreeReach]) -> tuple[str, str]:
-                """This tree's refresh and its row triggers, for a type with these trees. The first by name takes the
+                """This tree's refresh and its row triggers, for a type with these trees. The first takes the
                 type's lock rows for them all: its refresh is written for the type's trees together unless it
                 links through all they do and takes every change to a row they take, and its row triggers are the
                 type's (type_rows_sql). The others are told that the lock rows are held, and have no row triggers
                 of their own; their refresh, which other writes (links, shares) still call to take their own, is
-                written for the type's trees together where they link through more."""
-                by_name = sorted(trees, key=lambda x: x.name)
-                every = dict(sorted(((k, v) for x in by_name for k, v in x.lookups.items()), key=lambda kv: kv[0]))
-                changes = dict.fromkeys(c for x in by_name for c in x.changed)
+                written for the type's trees together where they link through more. Which is first: by its name,
+                which says what it links through, but never by the number the name may end in, which is the order
+                the compiler met the trees (a policy written in another order is the same policy); of two trees
+                through the same links, one that reads all the others do (its refresh then walks nothing more),
+                then by its links themselves."""
+                linked = sorted(trees, key=lambda x: x.edges)
+                every = dict(sorted(((k, v) for x in linked for k, v in x.lookups.items()), key=lambda kv: kv[0]))
+                changes = dict.fromkeys(c for x in linked for c in x.changed)
+                reads = lambda x: set(every) == set(x.lookups) and set(changes) == set(x.changed)
+                by_name = sorted(trees, key=lambda x: (x.name.rstrip("0123456789"), not reads(x), x.edges))
                 together = Together(lambda key, outer: "\n      UNION ALL ".join(v(key, outer) for v in every.values()))
                 if by_name[0].name != name:
                     return refresh_sql(None if set(every) == set(lookups) else together, held=True), trunc
@@ -1227,7 +1233,17 @@ CREATE TRIGGER {q("authz_" + t.name + "__trees_del")} AFTER DELETE ON {tbl}
                 return refresh, type_rows_sql(by_name, together.lookup) + "\n" + trunc
 
             self.tree_reach.setdefault(t.name, []).append(
-                TreeReach(name, lookups, tuple(mine), f("_refresh"), shifts, may_loop, (own_refresh, own_rows), texts)
+                TreeReach(
+                    name,
+                    tuple(sorted((a, b, c or "", d) for a, b, c, d in edges)),
+                    lookups,
+                    tuple(mine),
+                    f("_refresh"),
+                    shifts,
+                    may_loop,
+                    (own_refresh, own_rows),
+                    texts,
+                )
             )
 
         shift_lit = "true" if shifts else "false"

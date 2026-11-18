@@ -4349,6 +4349,18 @@ type node = app.nodes
         for tree in ("node__parent__tree", "node__parent__tree2"):
             self.assertNotIn("authz__.roots", two[f'authz_int."{tree}_refresh"'], tree)
             self.assertEqual("IF p_held THEN" in two[f'authz_int."{tree}_refresh"'], tree.endswith("2"), tree)
+        # ... whichever the policy declares first: their names are numbered in the order the compiler meets them,
+        # and which takes the lock rows is not (the nightly's invariance, seed 7, 2026-11-17)
+        import invariance
+
+        flipped = replaced(
+            replaced(self.ALONE, "  can view = edit or parent.view\n", ""),
+            "  can edit = ",
+            "  can view = edit or parent.view\n  can edit = ",
+        )
+        self.assertIn("IF p_held THEN", self.functions(flipped)['authz_int."node__parent__tree_refresh"'])
+        diffs, _ = invariance.sql_differences(invariance.objects(self.ALONE, {}), invariance.objects(flipped, {}))
+        self.assertEqual(diffs, [])
         # ... and a type with one tree: its own trigger
         alone = self.functions(self.ONE)
         self.assertNotIn('authz_int."node__trees_on_rows"', alone)
