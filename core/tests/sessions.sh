@@ -556,14 +556,18 @@ got=$(AS_APP -c "SELECT authz.login_jwt('$GOOD')" -c "SELECT length($NOTES)" | t
 [ "$got" = "2 32 " ] && ok "... another connection starts with none, and checks the token itself" || bad "another connection's notes" "$got"
 got=$(AS_APP -c "BEGIN" -c "SELECT authz.login_jwt('$GOOD')" -c "ROLLBACK" -c "SELECT length($NOTES)" | tr '\n' ' ')
 [ "$got" = "2 0 " ] && ok "... and a note made in a transaction that is rolled back goes with it, as any setting" || bad "a note after a rollback" "$got"
-# the second sign-in skips the check: twenty of each on one connection, the notes emptied before each first one
-got=$(AS_APP -c "DO \$\$ DECLARE t timestamptz; once interval; BEGIN
-  t := clock_timestamp();
-  FOR i IN 1..20 LOOP PERFORM set_config('authz.checked_tokens', '', false); PERFORM authz.login_jwt('$GOOD'); END LOOP;
-  once := clock_timestamp() - t; t := clock_timestamp();
-  FOR i IN 1..20 LOOP PERFORM authz.login_jwt('$GOOD'); END LOOP;
-  PERFORM set_config('sessions.again', CASE WHEN clock_timestamp() - t < once / 4 THEN 'under a quarter'
-    ELSE (clock_timestamp() - t)::text || ' against ' || once::text END, false);
+# the second sign-in skips the check: twenty of each on one connection, the notes emptied before each first one; three
+# rounds of both in turn, the fastest of each kind compared, so a moment the machine is busy elsewhere fails nothing
+got=$(AS_APP -c "DO \$\$ DECLARE t timestamptz; once interval; again interval; BEGIN
+  FOR r IN 1..3 LOOP
+    t := clock_timestamp();
+    FOR i IN 1..20 LOOP PERFORM set_config('authz.checked_tokens', '', false); PERFORM authz.login_jwt('$GOOD'); END LOOP;
+    once := least(once, clock_timestamp() - t); t := clock_timestamp();
+    FOR i IN 1..20 LOOP PERFORM authz.login_jwt('$GOOD'); END LOOP;
+    again := least(again, clock_timestamp() - t);
+  END LOOP;
+  PERFORM set_config('sessions.again', CASE WHEN again < once / 4 THEN 'under a quarter'
+    ELSE again::text || ' against ' || once::text END, false);
 END \$\$" -c "SELECT current_setting('sessions.again')")
 [ "$got" = "under a quarter" ] && ok "the same token signing in again on a connection costs under a quarter of its first sign-in" || bad "a second sign-in's cost" "$got"
 # a note stands in for the check: the owner, who may make one, makes it for a token whose signature is wrong, on its
