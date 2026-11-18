@@ -9,6 +9,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+## 0.1.0-beta.5 (2026-11-18)
+
 ### Added
 
 - `authz.login_jwt` takes a token an identity provider signs with its RSA key (RS256), checked in plain SQL
@@ -106,6 +108,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   check, the candidates `authz.who` starts from, the functions that work out an inheritance's rows and the sync
   index's keys (where a column named `p_id`, `p_ids` or `p_types` was read in the parameter's place too), and a
   rule's `current_user` (a column named `authz__role` took its place).
+  ([GHSA-vr76-9g97-h5p3](https://github.com/rowstile/rowstile/security/advisories/GHSA-vr76-9g97-h5p3))
 - A governed table may have a column called `n`, `o`, `x`, `f`, `new` or `old`. Where rowstile hands a row on
   whole, it named the row by its alias alone (`to_jsonb(n)`), and Postgres takes a bare name for a column of a
   table in scope before it takes it for a row. On a table with a column `n` or `o` whose type has a condition
@@ -114,6 +117,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   column explained a row of NULLs, or failed; with a column `f` or `n`, a mirror of the sync index was not filled
   with the table's rows. A row handed on whole is now written `n.*`, which is the row whatever the columns are
   called.
+  ([GHSA-mj6p-w78q-hxf6](https://github.com/rowstile/rowstile/security/advisories/GHSA-mj6p-w78q-hxf6))
 - A governed table may have a column named as a generated function names something of its own (`p_id`,
   `p_ids`, `ids`, `n1`, `v_bigint`, `tg_op`). In PL/pgSQL, Postgres refuses a bare name that is both a column of
   a table in scope and a parameter or a variable of the function (`column reference "p_id" is ambiguous`). So on
@@ -135,6 +139,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   applied, or the index worked out again) compared two columns of one row in the rows' place: the mirror could
   keep rows as they were, with the readers they had, or be written again whole, and `authz.sync_verify` could say
   a mirror matches when it doesn't. The triggers that keep a mirror as rows change were not concerned.
+  ([GHSA-mj6p-w78q-hxf6](https://github.com/rowstile/rowstile/security/advisories/GHSA-mj6p-w78q-hxf6))
 - A PowerSync mirror (the sync index, a preview) holds each row as its table has it once a statement is done, also
   when the row was written more than once before the mirror's trigger ran. One statement can write a row twice: a row
   that refers to itself through a foreign key with `ON UPDATE CASCADE`, when its key changes. Such a statement failed
@@ -174,6 +179,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   session: one that has scopes, each of them the session's, as `authz.create_api_key` holds a new key to. A key
   whose scope holds a write command could revoke its user's other keys, one with every scope too. It answers
   AZ704 there now.
+  ([GHSA-xxg2-j2vj-v993](https://github.com/rowstile/rowstile/security/advisories/GHSA-xxg2-j2vj-v993))
 - A table that inherits (`CREATE TABLE ... INHERITS`) with a generated column of its own gets its copy of a rule
   on the row after a change made after the update, by its own columns. Where the table above had no such column,
   the next migration, or `rowstile apply`, stopped there on Postgres's own words.
@@ -193,6 +199,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   whatever its scopes hold. Since 0.1.0-beta.2 such a session kept its scopes while viewing, and the rules asked the
   scopes alone, so it could change rows as the user it viewed as. A session signed in with `authz.act_as` was not
   affected. A rule's explanation says so (`no   the session views as someone else: it may not update on app.files`).
+  ([GHSA-47r9-v6p6-mc95](https://github.com/rowstile/rowstile/security/advisories/GHSA-47r9-v6p6-mc95))
 - A condition that calls the app's code without its text showing the call ran it with the app role's rights where a
   rule is checked: a function of the row written as a column of it (`{this.blocked}` for `blocked(docs)`, a computed
   column), a cast to a type of the app's, `OPERATOR(app.=)`. Such a function read of a table with rules only what
@@ -200,6 +207,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   Postgres what the rules and the views they read call, and refuses a function of the app's there that may read
   data (AZ628), and so does every migration. A call written by its name with parentheses runs with the policy's
   rights, as before.
+  ([GHSA-62w9-42x3-hqcm](https://github.com/rowstile/rowstile/security/advisories/GHSA-62w9-42x3-hqcm))
 - On PostgreSQL 16.16, 17.12 and 18.7 (released on 2026-11-12), an app's migration could no longer add a column
   `NOT NULL` with a default, add a stored generated column, or change a column's type, on a table with rules on
   writes or on a column: `cannot alter table "files" because function authz_gen."app.files:insert:items"(app.files)
