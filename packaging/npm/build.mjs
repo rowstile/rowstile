@@ -26,26 +26,26 @@ const CACHE = join(HERE, ".cache");
 // texts of the libraries built into that Python (OpenSSL, SQLite, zlib...), which only the release's full
 // archives carry (python/licenses/, the same files for every target), less those of the parts trim() removes.
 // RELEASING.md's release steps check for a newer release: nothing else watches it.
-const RELEASE = "20261026";
+const RELEASE = "20261110";
 const PYTHON = "3.13.18";
 /** @typedef {{triple: string, os: string, cpu: string, libc?: string, sha256: string}} Target */
 /** @type {Record<string, Target>} */
 const TARGETS = {
   "linux-x64": { triple: "x86_64-unknown-linux-gnu", os: "linux", cpu: "x64", libc: "glibc",
-    sha256: "df15fe60d3ff55bf9dcf25824b5572756bb8816ff93865a273d3301d7066a8b7" },
+    sha256: "f2d2199eb25880e07863b391cf7124e7ffa1338b0d65600dfcec117c4223a7fb" },
   "linux-arm64": { triple: "aarch64-unknown-linux-gnu", os: "linux", cpu: "arm64", libc: "glibc",
-    sha256: "578d9da1983463ffb0c8c98ab0da2f18177f44069328eb0af847860c1eb05c3e" },
+    sha256: "55c00325f7c1fddf325dfc621aabdfbbac4dc54adda224af88ec411dc12db239" },
   // Linux with musl (Alpine): glibc's Python can't start there
   "linux-x64-musl": { triple: "x86_64-unknown-linux-musl", os: "linux", cpu: "x64", libc: "musl",
-    sha256: "d997b3bd2d0651cfba6dd43c18c31b35d3a142819015fd5c35338c2ea27d4ceb" },
+    sha256: "a75bf409606303deed964d4769544f98b74e7b53d4efb44f4a95cb38e86ff403" },
   "linux-arm64-musl": { triple: "aarch64-unknown-linux-musl", os: "linux", cpu: "arm64", libc: "musl",
-    sha256: "61d02dd9a1b9631723c7c5d593021cde684cafc31b18a535b9584377a7b54038" },
+    sha256: "5616ed1d426cb12cc135e5998b42bfd665cf2f9e3f3f9f6c77c73f0ae26f7d03" },
   "darwin-x64": { triple: "x86_64-apple-darwin", os: "darwin", cpu: "x64",
-    sha256: "7412c19d896c99431b74a18a5643e110449a7f9590fbab179c3e5ab27b9aa9e3" },
+    sha256: "d27d59a722db9f69926eb6d9564071247221f45a04da920ea7f3001c97e32f9b" },
   "darwin-arm64": { triple: "aarch64-apple-darwin", os: "darwin", cpu: "arm64",
-    sha256: "8392b6ea51d94391befb2c31ebe75463f045d0b69dfcf5e1bb3234e1f5fa3405" },
+    sha256: "7a2384641584ab9984221fcb0fc9265df465922af71be71410529e2a9c3f0540" },
   "win32-x64": { triple: "x86_64-pc-windows-msvc", os: "win32", cpu: "x64",
-    sha256: "7369f7a35f261222a6ac8b3a87c1c88eeebee8af945d85346202591a64038dd3" },
+    sha256: "2e0fed09d48989f64c9305da9ff2d37a41c0d13ab2aa6283405b2b620dfbf805" },
 };
 // the command's files, each folder of core/ and the endings of its files the command runs (the Python package's
 // build reads the same list): file by file, so nothing else of the tree it is built from goes in
