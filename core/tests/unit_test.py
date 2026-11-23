@@ -1427,6 +1427,14 @@ class Refusals(unittest.TestCase):
         self.assertIn("|| 'host.edit';", why)
         self.assertEqual(re.findall(r"authz\.explain\('(\w+)', v_t\.id, '(\w+)'\)", why), [("folder", "edit")])
 
+    def test_an_after_rule_refused_by_the_session_names_the_update(self) -> None:
+        """An `update after` rule refused by a session that views as someone, or by the sign-in's scopes, says the
+        session may not update: the command the app ran, not the rule's name."""
+        sql = Compiler(parse_policy(read(POLICIES["cross"]))).compile("x")
+        why = search(r'CREATE FUNCTION authz_gen\."cx\.projects:update_after:why".*?END \$f\$;', sql, re.S).group(0)
+        self.assertIn("'  no   the session views as someone else: it may not update on cx.projects'", why)
+        self.assertIn("'  no   the sign-in''s scopes do not allow update on cx.projects'", why)
+
 
 class ColumnRules(unittest.TestCase):
     def test_before_is_the_default(self) -> None:

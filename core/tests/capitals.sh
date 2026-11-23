@@ -564,7 +564,13 @@ case "$out" in *"more.authz: applied")
   run --db "dbname=$DB4" apply "$T/more.authz"
   case "$out" in *"more.authz: applied") [ "$(R -c "SELECT relrowsecurity FROM pg_class WHERE oid = '\"LogNew\"'::regclass")" = t ] &&
     ok "a partition of Log made since: applied again, its rows under row-level security" || bad "the new partition's row-level security";;
-    *) bad "apply after a partition of Log was made" "$out";; esac;;
+    *) bad "apply after a partition of Log was made" "$out";; esac
+  # a partition of it whose row-level security was turned off since (its triggers all there): found the same way
+  R -c 'ALTER TABLE "LogOld" DISABLE ROW LEVEL SECURITY' >/dev/null
+  run --db "dbname=$DB4" apply "$T/more.authz"
+  case "$out" in *"more.authz: applied") [ "$(R -c "SELECT relrowsecurity FROM pg_class WHERE oid = '\"LogOld\"'::regclass")" = t ] &&
+    ok "a partition of Log whose row-level security was turned off: applied again, and on again" || bad "the partition's row-level security, on again";;
+    *) bad "apply after a partition of Log lost its row-level security" "$out";; esac;;
   *) bad "apply, the policy with invariants and bots" "$out";; esac
 [ -z "${KEEP:-}" ] && dropdb "$DB4"
 
