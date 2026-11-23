@@ -9547,7 +9547,7 @@ DECLARE r int := p_round; n bigint;
 BEGIN
   LOOP
     INSERT INTO authz_int.sync_todo (txid, type, id, round)
-    SELECT $1, d.t, d.i, authz__.r + 1 FROM (
+    SELECT DISTINCT $1, d.t, d.i, authz__.r + 1 FROM (
       SELECT 'file'::text AS t, v.id::text AS i FROM (SELECT x."id"::text FROM "app"."files" x WHERE x."folder_id" IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.r AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)
       UNION ALL SELECT 'file'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.r AND x.id = '*')
       UNION ALL SELECT 'folder'::text AS t, v.id::text AS i FROM (SELECT c.descendant::text FROM authz_int."folder__parent__tree" c WHERE c.ancestor IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.r AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)
