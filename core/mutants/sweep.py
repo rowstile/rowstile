@@ -362,6 +362,15 @@ class Shard:
             self.verified.add(name)
             return True
         self.broken.add(name)
+        # (its log is all that says why: the runner is gone once the run ends)
+        with open(self.log, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+        failed = "".join(x for x in lines if x.startswith("FAIL"))
+        os.makedirs(os.path.join(self.args.out, "logs"), exist_ok=True)
+        with open(os.path.join(self.args.out, "logs", f"unmutated-{name.replace(' ', '_')}.txt"), "w",
+                  encoding="utf-8") as fh:  # fmt: skip
+            fh.write(f"{name}, red on the unmutated checkout (exit {rc}{', timed out' * (rc == 124)})\n"
+                     f"its FAIL lines:\n{failed}\nits last lines:\n\n{''.join(lines[-80:])}")  # fmt: skip
         return False
 
     def mutant(self, m: mutants.Mutant, q: Record) -> Record:
@@ -549,7 +558,11 @@ def report(queue: dict[str, Any], rows: list[Record], ran: dict[str, Record], su
     out.append("Kinds (results so far): " + ", ".join(f"{k} {n}" for k, n in kinds.most_common()) + ".")
     broken = sorted({s for d in deltas for s in d.get("broken", [])})
     if broken:
-        out += ["", f"Red unmutated on a runner (their catches not counted): {', '.join(broken)}."]
+        out += [
+            "",
+            f"Red unmutated on a runner (their catches not counted): {', '.join(broken)}; why: "
+            "logs/unmutated-<suite>.txt in the shard's files.",
+        ]
     secs = [float(r["seconds"]) for r in this if r["result"] not in BY_COMPILER]
     if secs:
         left = generated - len([r for r in rows if r["result"] not in ("not run", "error")])
