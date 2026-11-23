@@ -12,7 +12,8 @@
 # ahead of it: as the random moves make the tree deep, a write can wait tens of seconds on a slow machine
 # (a move of a big subtree alone takes about a second). So the limit on a statement, 600 s, is there for a
 # write that never ends; how fast a write is, is checked alone afterwards, on the tree the run leaves: the
-# biggest moves and links must each take under MOVE_LIMIT seconds (10), or a second per MOVE_RATE rows (5,000) of the
+# biggest moves and links, each with the work its commit does (the sync index's, while it still holds the lock),
+# must each take under MOVE_LIMIT seconds (10), or a second per MOVE_RATE rows (5,000) of the
 # inheritance tables they write, if that is longer: how much of the tree a write rewrites depends on the tree the
 # random writes leave (a link can rewrite a few hundred thousand rows of it), and here it writes 18,000 to 37,000 a
 # second. The slowest write is said either way, with the rows it wrote.
@@ -59,8 +60,8 @@ END $$;
 CREATE FUNCTION stress.tree_writes() RETURNS bigint LANGUAGE sql AS $$
   SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0)::bigint FROM pg_stat_xact_user_tables
   WHERE schemaname = 'authz_int' $$;
--- runs a write alone, undoes it, and says how long it took (seconds) and how many rows of the inheritance tables
--- it wrote
+-- runs a write alone with the work its commit does (the sync index's), undoes both, and says how long they took
+-- (seconds) and how many rows of the inheritance tables the write wrote
 CREATE FUNCTION stress.timed(stmt text, OUT took numeric, OUT written bigint) LANGUAGE plpgsql AS $$
 DECLARE
   t0 timestamptz;
@@ -69,8 +70,11 @@ BEGIN
   BEGIN
     t0 := clock_timestamp();
     EXECUTE stmt;
-    took := round(extract(epoch FROM clock_timestamp() - t0), 2);
     written := stress.tree_writes() - w0;
+    -- (the triggers deferred to commit run now: a write over the tree lock's limit holds the type's lock until it
+    -- commits, so the writes behind it wait for this work too; undoing the block puts the deferral back)
+    SET CONSTRAINTS ALL IMMEDIATE;
+    took := round(extract(epoch FROM clock_timestamp() - t0), 2);
     RAISE EXCEPTION USING ERRCODE = 'AZS01', MESSAGE = 'undone';
   EXCEPTION WHEN SQLSTATE 'AZS01' THEN NULL;
   END;
