@@ -91,6 +91,16 @@ POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 PSQL -c "UPDATE authz.shares SET object_type = 'file' WHERE object_type = 'folder' AND object_id = '2' AND subject_id = '3'" >/dev/null
 admin "... and one moved to an object of another type announces both, the one it left too" "file 2; folder 2" "$(fed $POS share)"
 PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '2' AND subject_id = '3'" >/dev/null
+# what every apply runs first, run again over shares a policy is applied on (as a migration does when a release
+# changed it): a share with anyone stored as one already is left as it is, and so is the trail
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', '2', 'viewer', 'anyone', '*')" >/dev/null
+python3 -c "from authzlib.base import BASE_SQL; print(BASE_SQL)" > $T/governance_base.sql
+got=$(PSQL -c "BEGIN" -f $T/governance_base.sql \
+  -c "SELECT count(*) || '|' || (SELECT count(*) FROM authz.audit WHERE txid = txid_current()) FROM authz.shares
+      WHERE object_type = 'folder' AND object_id = '2' AND subject_type = 'anyone' AND subject_id = '*'" -c "ROLLBACK" 2>&1 | tail -n 1)
+[ "$got" = "1|0" ] && echo "ok    what applying runs first, run again, changes no share already as it is stored: the trail has no line of it" ||
+  { echo "FAIL  the base run again over a share with anyone: $got"; fails=$((fails + 1)); }
+PSQL -c "DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = '2' AND subject_type = 'anyone'" >/dev/null
 PSQL -c "BEGIN" -c "SET LOCAL ROLE app_user" -c "SELECT authz.act_as('user', ' 05')" \
      -c "SELECT authz.share('folder', 2, 'viewer', 'user', 4)" -c "COMMIT" >/dev/null
 admin "an id signed in as ' 05' is recorded as 5, as ids are stored" "share|5|5" \
@@ -638,6 +648,17 @@ got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', NULL, now() + interva
   "SELECT coalesce(starts_at::text, 'now') || '|' || (expires_at - now()) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
 [ "$got" = "now|3 days" ] && echo "ok    one of hers that lets her in now and ends later than the hour is left as it is" ||
   { echo "FAIL  break glass over a live share ending later: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', now() + interval '1 day', now())" \
+  "SELECT coalesce(starts_at::text, 'now') || '|' || (expires_at - now()) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
+[ "$got" = "now|01:00:00" ] && echo "ok    one of hers that would start later but ends this very moment has ended: the emergency access replaces it" ||
+  { echo "FAIL  break glass over a share ending now: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', NULL, now() + interval '5 minutes')" \
+  "SELECT (detail->'previous_share'->>'relation') || '|' || (detail->'previous_share'->>'expires_at')::timestamptz - now() || '|' || (detail->'previous_share' ? 'subject_id') FROM authz.audit WHERE action = 'break_glass' AND txid = txid_current()")
+[ "$got" = "viewer|00:05:00|false" ] && echo "ok    the trail keeps the share the emergency access replaced (its id left out, as the line names her)" ||
+  { echo "FAIL  break glass's previous share in the trail: $got"; fails=$((fails + 1)); }
+got=$(glass "" "SELECT coalesce(detail->>'previous_share', 'none') FROM authz.audit WHERE action = 'break_glass' AND txid = txid_current()")
+[ "$got" = "none" ] && echo "ok    ... and none when she had none" ||
+  { echo "FAIL  break glass's previous share when there was none: $got"; fails=$((fails + 1)); }
 got=$(glass "$SHARE ('folder', '6', 'viewer', 'org', '3', now() + interval '1 day', NULL)" \
   "SELECT string_agg(subject_type || '|' || coalesce((starts_at > now())::text, 'now') || '|' || coalesce((expires_at - now())::text, 'no end'), ', ' ORDER BY subject_type) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
 [ "$got" = "org|true|no end, user|now|01:00:00" ] && echo "ok    another kind of subject's share, with her id, is left as it is, and she gets one of her own for the hour" ||

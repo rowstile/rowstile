@@ -257,6 +257,10 @@ PSQL -c "UPDATE app.files SET confidential = true WHERE id = 12"
 same "... and the index holds what authz.list gives, confidential"
 PSQL -c "UPDATE app.files SET confidential = false WHERE id = 12"
 same "confidential off: back as it was"
+# a condition NULL is false, so `not {confidential}` holds on a row that says nothing of it
+PSQL -c "ALTER TABLE app.files ALTER COLUMN confidential DROP NOT NULL" -c "UPDATE app.files SET confidential = NULL WHERE id = 12"
+same "confidential NULL: not confidential, and the index holds what authz.list gives"
+PSQL -c "UPDATE app.files SET confidential = false WHERE id = 12" -c "ALTER TABLE app.files ALTER COLUMN confidential SET NOT NULL"
 
 echo "-- a user deleted"
 PSQL >/dev/null <<'SQL'
