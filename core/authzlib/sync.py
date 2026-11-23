@@ -986,11 +986,17 @@ $f$;"""
                 for p in pairs:
                     if p[0] != n:
                         continue
+                    # (what is there read once and compared, as for the readers: a move leaves most rows as they were,
+                    # and only those that change are written; inserting every row worked out, to find each one there
+                    # already, cost a big move most of its commit)
                     body.append(
                         f"""    WITH fresh AS MATERIALIZED ({rows(p, "v_part")}),
-    gone AS (DELETE FROM authz_sync.{table} x WHERE x.{a} IN (SELECT {lit(f"{p[0]}#{p[1]}:")} || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.{a} = x.{a} AND f.{b} = x.{b}) RETURNING 1),
-    made AS (INSERT INTO authz_sync.{table} SELECT f.{a}, f.{b} FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
+    there AS MATERIALIZED (SELECT x.{a}, x.{b} FROM authz_sync.{table} x
+                           WHERE x.{a} IN (SELECT {lit(f"{p[0]}#{p[1]}:")} || v FROM unnest(v_part) v)),
+    stale AS (SELECT s.{a}, s.{b} FROM there s EXCEPT SELECT f.{a}, f.{b} FROM fresh f),
+    added AS (SELECT f.{a}, f.{b} FROM fresh f EXCEPT SELECT s.{a}, s.{b} FROM there s),
+    gone AS (DELETE FROM authz_sync.{table} x USING stale s WHERE x.{a} = s.{a} AND x.{b} = s.{b} RETURNING 1),
+    made AS (INSERT INTO authz_sync.{table} SELECT d.{a}, d.{b} FROM added d ORDER BY 1, 2 ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;"""
                     )
             out.append(
@@ -1038,9 +1044,11 @@ $f$;"""
                 f"SELECT {lit(e.dst)}::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x "
                 f"WHERE x.txid = $1 AND x.type = {lit(e.src)} AND x.round = authz__.r AND x.id = '*')"
             )
+        # (each object once: a move's subtree is found once for each object above it that the move changed, three
+        # hundred thousand rows for three thousand folders, each a conflict to find)
         insert = (
             "INSERT INTO authz_int.sync_todo (txid, type, id, round)\n"
-            "    SELECT $1, d.t, d.i, authz__.r + 1 FROM (\n      "
+            "    SELECT DISTINCT $1, d.t, d.i, authz__.r + 1 FROM (\n      "
             + "\n      UNION ALL ".join(parts)
             + ") d WHERE d.i IS NOT NULL\n    ON CONFLICT DO NOTHING;"
             if parts

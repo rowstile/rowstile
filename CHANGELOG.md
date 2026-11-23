@@ -9,6 +9,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+### Fixed
+
+- The sync index (a preview) works out a big move at commit in under half the time: it writes only the rows of
+  what each folder gives and inherits that change, where it wrote them all again, and finds each object a change
+  reaches once. A move of 2,777 folders took 10.5 s at commit, now 4.3 s. Such a move holds its type's tree locks
+  until it commits, so the writes queued behind it waited that much less.
+
 ## 0.1.0-beta.5 (2026-11-18)
 
 ### Added

@@ -9626,24 +9626,36 @@ BEGIN
   FOR v_from IN 1 .. coalesce(cardinality(v_ids), 0) BY 10000 LOOP
     v_part := v_ids[v_from : v_from + 9999];
     WITH fresh AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
-    gone AS (DELETE FROM authz_sync.given x WHERE x.source IN (SELECT 'folder#edit:' || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.source = x.source AND f.key = x.key) RETURNING 1),
-    made AS (INSERT INTO authz_sync.given SELECT f.source, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
+    there AS MATERIALIZED (SELECT x.source, x.key FROM authz_sync.given x
+                           WHERE x.source IN (SELECT 'folder#edit:' || v FROM unnest(v_part) v)),
+    stale AS (SELECT s.source, s.key FROM there s EXCEPT SELECT f.source, f.key FROM fresh f),
+    added AS (SELECT f.source, f.key FROM fresh f EXCEPT SELECT s.source, s.key FROM there s),
+    gone AS (DELETE FROM authz_sync.given x USING stale s WHERE x.source = s.source AND x.key = s.key RETURNING 1),
+    made AS (INSERT INTO authz_sync.given SELECT d.source, d.key FROM added d ORDER BY 1, 2 ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
     WITH fresh AS MATERIALIZED (SELECT 'folder#view:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.view"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
-    gone AS (DELETE FROM authz_sync.given x WHERE x.source IN (SELECT 'folder#view:' || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.source = x.source AND f.key = x.key) RETURNING 1),
-    made AS (INSERT INTO authz_sync.given SELECT f.source, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
+    there AS MATERIALIZED (SELECT x.source, x.key FROM authz_sync.given x
+                           WHERE x.source IN (SELECT 'folder#view:' || v FROM unnest(v_part) v)),
+    stale AS (SELECT s.source, s.key FROM there s EXCEPT SELECT f.source, f.key FROM fresh f),
+    added AS (SELECT f.source, f.key FROM fresh f EXCEPT SELECT s.source, s.key FROM there s),
+    gone AS (DELETE FROM authz_sync.given x USING stale s WHERE x.source = s.source AND x.key = s.key RETURNING 1),
+    made AS (INSERT INTO authz_sync.given SELECT d.source, d.key FROM added d ORDER BY 1, 2 ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
     WITH fresh AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
-    gone AS (DELETE FROM authz_sync.inherits x WHERE x.key IN (SELECT 'folder#edit:' || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.key = x.key AND f.source = x.source) RETURNING 1),
-    made AS (INSERT INTO authz_sync.inherits SELECT f.key, f.source FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
+    there AS MATERIALIZED (SELECT x.key, x.source FROM authz_sync.inherits x
+                           WHERE x.key IN (SELECT 'folder#edit:' || v FROM unnest(v_part) v)),
+    stale AS (SELECT s.key, s.source FROM there s EXCEPT SELECT f.key, f.source FROM fresh f),
+    added AS (SELECT f.key, f.source FROM fresh f EXCEPT SELECT s.key, s.source FROM there s),
+    gone AS (DELETE FROM authz_sync.inherits x USING stale s WHERE x.key = s.key AND x.source = s.source RETURNING 1),
+    made AS (INSERT INTO authz_sync.inherits SELECT d.key, d.source FROM added d ORDER BY 1, 2 ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
     WITH fresh AS MATERIALIZED (SELECT 'folder#view:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.view"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
-    gone AS (DELETE FROM authz_sync.inherits x WHERE x.key IN (SELECT 'folder#view:' || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.key = x.key AND f.source = x.source) RETURNING 1),
-    made AS (INSERT INTO authz_sync.inherits SELECT f.key, f.source FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
+    there AS MATERIALIZED (SELECT x.key, x.source FROM authz_sync.inherits x
+                           WHERE x.key IN (SELECT 'folder#view:' || v FROM unnest(v_part) v)),
+    stale AS (SELECT s.key, s.source FROM there s EXCEPT SELECT f.key, f.source FROM fresh f),
+    added AS (SELECT f.key, f.source FROM fresh f EXCEPT SELECT s.key, s.source FROM there s),
+    gone AS (DELETE FROM authz_sync.inherits x USING stale s WHERE x.key = s.key AND x.source = s.source RETURNING 1),
+    made AS (INSERT INTO authz_sync.inherits SELECT d.key, d.source FROM added d ORDER BY 1, 2 ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
   END LOOP;
   -- the keys, where the groups' rows or the principals changed: under one lock row, taken last (nothing after it waits
