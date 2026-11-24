@@ -9543,23 +9543,34 @@ CREATE FUNCTION authz_int.sync_spread(p_tx bigint, p_round int) RETURNS int
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 <<authz__>>
-DECLARE r int := p_round; n bigint;
+DECLARE v_r int := p_round; n bigint;
 BEGIN
   LOOP
     INSERT INTO authz_int.sync_todo (txid, type, id, round)
-    SELECT DISTINCT $1, d.t, d.i, authz__.r + 1 FROM (
-      SELECT 'file'::text AS t, v.id::text AS i FROM (SELECT x."id"::text FROM "app"."files" x WHERE x."folder_id" IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.r AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)
-      UNION ALL SELECT 'file'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.r AND x.id = '*')
-      UNION ALL SELECT 'folder'::text AS t, v.id::text AS i FROM (SELECT c.descendant::text FROM authz_int."folder__parent__tree" c WHERE c.ancestor IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.r AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)
-      UNION ALL SELECT 'folder'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.r AND x.id = '*')
-      UNION ALL SELECT 'folder'::text AS t, v.id::text AS i FROM (SELECT c.descendant::text FROM authz_int."folder__linked_into_parent__tree" c WHERE c.ancestor IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.r AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)
-      UNION ALL SELECT 'folder'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.r AND x.id = '*')) d WHERE d.i IS NOT NULL
+    SELECT DISTINCT $1, d.t, d.i, authz__.v_r + 1 FROM (
+      SELECT 'file'::text AS t, v.id::text AS i FROM (SELECT x."id"::text FROM "app"."files" x WHERE x."folder_id" IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.v_r AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)
+      UNION ALL SELECT 'file'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.v_r AND x.id = '*')
+      UNION ALL SELECT 'folder'::text AS t, v.id::text AS i FROM (WITH d AS MATERIALIZED (SELECT DISTINCT u._x FROM unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.v_r AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) AS u(_x) WHERE u._x IS NOT NULL)
+  SELECT c.descendant::text FROM authz_int."folder__parent__tree" c WHERE c.ancestor IN (
+    SELECT d._x FROM d WHERE NOT EXISTS (
+      SELECT 1 FROM ((SELECT x._parent FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL AND r."id" = d._x) x OFFSET 0)) e JOIN d p ON p._x = e._parent
+      WHERE e._parent <> d._x
+        AND EXISTS (SELECT 1 FROM authz_int."folder__parent__tree" a WHERE a.descendant = d._x AND a.ancestor = e._parent OFFSET 0)))) v(id)
+      UNION ALL SELECT 'folder'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.v_r AND x.id = '*')
+      UNION ALL SELECT 'folder'::text AS t, v.id::text AS i FROM (WITH d AS MATERIALIZED (SELECT DISTINCT u._x FROM unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.v_r AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) AS u(_x) WHERE u._x IS NOT NULL)
+  SELECT c.descendant::text FROM authz_int."folder__linked_into_parent__tree" c WHERE c.ancestor IN (
+    SELECT d._x FROM d WHERE NOT EXISTS (
+      SELECT 1 FROM ((SELECT x._parent FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL AND s."folder_id" = d._x) x OFFSET 0)
+        UNION ALL (SELECT x._parent FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL AND r."id" = d._x) x OFFSET 0)) e JOIN d p ON p._x = e._parent
+      WHERE e._parent <> d._x
+        AND EXISTS (SELECT 1 FROM authz_int."folder__linked_into_parent__tree" a WHERE a.descendant = d._x AND a.ancestor = e._parent OFFSET 0)))) v(id)
+      UNION ALL SELECT 'folder'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.v_r AND x.id = '*')) d WHERE d.i IS NOT NULL
     ON CONFLICT DO NOTHING;
     GET DIAGNOSTICS n = ROW_COUNT;
-    EXIT WHEN n = 0 AND NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.round > r);
-    r := r + 1;
+    EXIT WHEN n = 0 AND NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.round > authz__.v_r);
+    v_r := v_r + 1;
   END LOOP;
-  RETURN r;
+  RETURN v_r;
 END $f$;
 -- The index made current for the objects a transaction changed and what reads them (the difference written, not
 -- every row again): at its commit, in it, or after it, by the worker. The groups first, then the keys (a principal
@@ -9612,8 +9623,19 @@ BEGIN
                          FROM authz_int.sync_todo x WHERE x.txid = v_tx);
             v_r := ARRAY(SELECT DISTINCT pg_catalog.hashtext(d.k) & 4095 FROM (
                             SELECT 'folder:' || v.id FROM (SELECT (x."folder_id")::text FROM "app"."files" x WHERE x."id" IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = authz__.v_tx AND x.type = 'file' AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) AS id)) v(id)
-                        UNION SELECT 'folder:' || v.id FROM (SELECT c.ancestor::text FROM authz_int."folder__parent__tree" c WHERE c.descendant IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = authz__.v_tx AND x.type = 'folder' AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)
-                        UNION SELECT 'folder:' || v.id FROM (SELECT c.ancestor::text FROM authz_int."folder__linked_into_parent__tree" c WHERE c.descendant IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = authz__.v_tx AND x.type = 'folder' AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)) d(k) WHERE d.k IS NOT NULL);
+                        UNION SELECT 'folder:' || v.id FROM (WITH d AS MATERIALIZED (SELECT DISTINCT u._x FROM unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = authz__.v_tx AND x.type = 'folder' AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) AS u(_x) WHERE u._x IS NOT NULL),
+  up AS MATERIALIZED (SELECT DISTINCT e._parent AS _p FROM d CROSS JOIN LATERAL ((SELECT x._parent FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL AND r."id" = d._x) x OFFSET 0)) e
+                      WHERE e._parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM d o WHERE o._x = e._parent))
+  SELECT d._x::text FROM d
+  UNION SELECT u._p::text FROM up u
+  UNION SELECT c.ancestor::text FROM authz_int."folder__parent__tree" c WHERE c.descendant IN (SELECT u._p FROM up u)) v(id)
+                        UNION SELECT 'folder:' || v.id FROM (WITH d AS MATERIALIZED (SELECT DISTINCT u._x FROM unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = authz__.v_tx AND x.type = 'folder' AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) AS u(_x) WHERE u._x IS NOT NULL),
+  up AS MATERIALIZED (SELECT DISTINCT e._parent AS _p FROM d CROSS JOIN LATERAL ((SELECT x._parent FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL AND s."folder_id" = d._x) x OFFSET 0)
+        UNION ALL (SELECT x._parent FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL AND r."id" = d._x) x OFFSET 0)) e
+                      WHERE e._parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM d o WHERE o._x = e._parent))
+  SELECT d._x::text FROM d
+  UNION SELECT u._p::text FROM up u
+  UNION SELECT c.ancestor::text FROM authz_int."folder__linked_into_parent__tree" c WHERE c.descendant IN (SELECT u._p FROM up u)) v(id)) d(k) WHERE d.k IS NOT NULL);
           END IF;
           v_n := 0;
           FOR v_s, v_x IN SELECT z.s, bool_or(z.x) FROM (SELECT unnest(v_w) AS s, true AS x UNION ALL SELECT unnest(v_r), false) z

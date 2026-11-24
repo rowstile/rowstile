@@ -17,6 +17,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   until it commits, so the writes queued behind it waited that much less. The rows a folder inherits through its
   tree now follow the tree's changes as they are made, so the commit no longer works them all out again: a move
   of 3,000 folders in a deep tree, 22 s at commit, takes 7.4 s.
+- The sync index (a preview) no longer slows a big move's commit down after a busy spell of tree writes. The commit
+  looked for what the move reaches, and what its work reads, from every folder moved, each time through the whole
+  part below or above it: about as many rows of the closure table as the part is deep, again for each folder. It now
+  looks from the top folders of the part, and from the parents outside it. Those rows were read through the rows
+  earlier writes had left dead until a vacuum: after a minute of concurrent writes, a move of 2,700 folders took
+  12 s at commit, now 2.9 s (1.6 s once vacuumed). It read 8.9 times the closure rows its readers need, now 1.3.
 
 ## 0.1.0-beta.5 (2026-11-18)
 
