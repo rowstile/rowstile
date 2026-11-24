@@ -618,15 +618,17 @@ wait
 same "... and the index holds what authz.list gives"
 PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" -c "DELETE FROM authz.shares WHERE subject_id IN ('3', '6')"
 
-# a move of a deep part: each folder in it has its readers worked out again from the folders above it, which the
-# commit's work reads in the closure table once. What reads the part (below) and what it reads (above) are looked
-# for from as few folders as give the same answer: from each folder moved, they read the closure table four times as
-# much again, and with it the rows writes to the tree had left dead: twelve seconds of a big move's commit after a
-# busy minute, two once vacuumed (the stress suite's nightly of 2026-11-24). So the rows the work reads there are
-# counted: under twice the rows above the folders moved (8.9 times before). Without sequential scans, so that each
-# lookup reads the rows it needs whatever Postgres's costs make of a small table (on 18, a hash join over all of it
-# for the readers' own lookup; and its first count of this one was the old one's, a check by parent pulled into a
-# join that read every folder above). Three thousand folders beside them, so that the tree is no toy
+# a move of a deep part: each folder in it has its readers worked out again, from its parent's, down the part; only
+# the parent the part hangs under has its own ancestors read in the closure table. What reads the part (below) and
+# what it reads (above) are looked for from as few folders as give the same answer. From each folder moved, they read
+# the closure table for every folder above it, and with it the rows writes to the tree had left dead: twelve seconds
+# of a big move's commit after a busy minute, two once vacuumed (the stress suite's nightly of 2026-11-24), and the
+# readers sixteen seconds of a move's commit in the soak's tree, eight hundred thousand rows for three thousand
+# folders. So the rows the work reads there are counted: under twelve for each folder moved, however deep (2,374, 40
+# a folder, with the readers worked out from every folder above; 8.9 times the rows above before). Without sequential
+# scans, so that each lookup reads the rows it needs whatever Postgres's costs make of a small table (on 18, a hash
+# join over all of it for the readers' own lookup; and its first count of this one was the old one's, a check by
+# parent pulled into a join that read every folder above). Three thousand folders beside them, so the tree is no toy
 PSQL -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name)
   SELECT 1000 + i, 1, CASE WHEN i = 0 THEN 3 ELSE 999 + i END, 1, 'deep ' || i FROM generate_series(0, 59) i" \
   -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name)
@@ -638,9 +640,10 @@ deep=$(PSQL -c "SET enable_seqscan = off" -c "BEGIN" -c "UPDATE app.folders SET 
   -c "CREATE TEMP TABLE read_before AS SELECT $(read_tree) AS n" -c "SET CONSTRAINTS ALL IMMEDIATE" \
   -c "SELECT $(read_tree) - (SELECT r.n FROM read_before r)" -c "COMMIT" 2>&1)
 above=$(PSQL -c "SELECT count(*) FROM authz_int.\"folder__linked_into_parent__tree\" WHERE descendant BETWEEN 1000 AND 1059")
-[ "$deep" -lt $((2 * above)) ] 2>/dev/null &&
+[ "$deep" -lt $((12 * 60)) ] 2>/dev/null &&
   ok "a part 60 folders deep moved: its commit's work reads $deep rows of the closure table, $above above the folders moved" ||
-  bad "a deep part moved: its commit's work read the closure table from each folder moved" "$deep rows, $above above them"
+  bad "a deep part moved: its commit's work read the closure table from each folder moved, or each one above" \
+    "$deep rows, $above above them"
 same "... and the index holds what authz.list gives"
 PSQL -c "DELETE FROM app.folders WHERE id BETWEEN 1000 AND 4999"
 

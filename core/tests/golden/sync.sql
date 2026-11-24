@@ -9418,54 +9418,73 @@ SET LOCAL check_function_bodies = off;
 CREATE FUNCTION authz_int."sync:folder.edit"(p_ids bigint[]) RETURNS TABLE (o_id bigint, o_key text, o_dep boolean)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT DISTINCT r.id, r.key, r.d FROM (
-  WITH o AS (SELECT DISTINCT x.id FROM unnest($1) x(id)),
-  anc AS MATERIALIZED (SELECT c.descendant AS id, c.ancestor AS a FROM authz_int."folder__parent__tree" c WHERE c.descendant IN (SELECT id FROM o)),
-  b AS MATERIALIZED ((SELECT w.id, w.key, w.d FROM (WITH l3 AS (SELECT r."id" AS id, r."owner_id" AS u FROM "app"."folders" r WHERE r."id" IN (SELECT DISTINCT a.a AS id FROM anc a) AND r."owner_id" IS NOT NULL)
+  WITH RECURSIVE o AS (SELECT DISTINCT x.id FROM unnest($1) x(id)),
+  pm AS MATERIALIZED (SELECT DISTINCT x."id" AS _x FROM "app"."folders" x WHERE x."id" = ANY ($1)),
+  pe AS MATERIALIZED (SELECT DISTINCT pm._x AS _c, l._parent AS _p FROM pm CROSS JOIN LATERAL ((SELECT x._parent FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL AND r."id" = pm._x) x OFFSET 0)) l
+                      WHERE l._parent <> pm._x
+                        AND EXISTS (SELECT 1 FROM authz_int."folder__parent__tree" a WHERE a.descendant = pm._x AND a.ancestor = l._parent OFFSET 0)),
+  ua AS MATERIALIZED (SELECT c.descendant AS _p, c.ancestor AS _a FROM authz_int."folder__parent__tree" c
+                      WHERE c.descendant IN (SELECT pe._p FROM pe WHERE NOT EXISTS (SELECT 1 FROM pm WHERE pm._x = pe._p))),
+  b AS MATERIALIZED ((SELECT w.id, w.key, w.d FROM (WITH l3 AS (SELECT r."id" AS id, r."owner_id" AS u FROM "app"."folders" r WHERE r."id" IN (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) AND r."owner_id" IS NOT NULL)
   SELECT l3.id, 'user:' || (l3.u)::text AS key, false AS d FROM l3) w)
   UNION ALL
-  (SELECT w.id, w.key, w.d FROM (WITH l4 AS MATERIALIZED (SELECT r."id" AS id, r."org_id" AS u FROM "app"."folders" r WHERE r."id" IN (SELECT DISTINCT a.a AS id FROM anc a) AND r."org_id" IS NOT NULL)
+  (SELECT w.id, w.key, w.d FROM (WITH l4 AS MATERIALIZED (SELECT r."id" AS id, r."org_id" AS u FROM "app"."folders" r WHERE r."id" IN (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) AND r."org_id" IS NOT NULL)
   SELECT l4.id, 'org#admin:' || (l4.u)::text AS key, false AS d FROM l4) w)
   UNION ALL
-  ((SELECT g.object_id::bigint AS id, 'user:' || g.subject_id AS key, false AS d FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT DISTINCT a.a AS id FROM anc a) x) AND g.relation = 'editor' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  ((SELECT g.object_id::bigint AS id, 'user:' || g.subject_id AS key, false AS d FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) x) AND g.relation = 'editor' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT w.id, w.key, w.d FROM (WITH l5 AS MATERIALIZED (SELECT g.object_id::bigint AS id, g.subject_id::bigint AS u FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT DISTINCT a.a AS id FROM anc a) x) AND g.relation = 'editor' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT w.id, w.key, w.d FROM (WITH l5 AS MATERIALIZED (SELECT g.object_id::bigint AS id, g.subject_id::bigint AS u FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) x) AND g.relation = 'editor' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'team' AND g.subject_relation = 'member')
   SELECT l5.id, 'team#member:' || (l5.u)::text AS key, false AS d FROM l5) w)
   UNION ALL
-  (SELECT w.id, w.key, w.d FROM (WITH l6 AS MATERIALIZED (SELECT s."folder_id" AS id, s."team_id" AS u FROM "app"."folder_team_access" s WHERE s."folder_id" IN (SELECT DISTINCT a.a AS id FROM anc a) AND s."team_id" IS NOT NULL AND coalesce((access = 'edit'), false))
-  SELECT l6.id, 'team#member:' || (l6.u)::text AS key, false AS d FROM l6) w)))
-  SELECT a.id, b.key, b.d FROM anc a JOIN b ON b.id = a.a) r
+  (SELECT w.id, w.key, w.d FROM (WITH l6 AS MATERIALIZED (SELECT s."folder_id" AS id, s."team_id" AS u FROM "app"."folder_team_access" s WHERE s."folder_id" IN (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) AND s."team_id" IS NOT NULL AND coalesce((access = 'edit'), false))
+  SELECT l6.id, 'team#member:' || (l6.u)::text AS key, false AS d FROM l6) w))),
+  down (id, key, d) AS (
+    SELECT pm._x, b.key, b.d FROM pm JOIN b ON b.id = pm._x
+    UNION SELECT pe._c, b.key, b.d FROM pe JOIN ua ON ua._p = pe._p JOIN b ON b.id = ua._a
+    UNION SELECT pe._c, w.key, w.d FROM down w JOIN pe ON pe._p = w.id)
+  SELECT w.id, w.key, w.d FROM down w JOIN o ON o.id = w.id) r
 $f$;
 -- folder.view (line 50): edit or viewer or (parent.view and {inherit}) or linked_into.view, inherited: who holds it, as keys
 CREATE FUNCTION authz_int."sync:folder.view"(p_ids bigint[]) RETURNS TABLE (o_id bigint, o_key text, o_dep boolean)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT DISTINCT r.id, r.key, r.d FROM (
-  WITH o AS (SELECT DISTINCT x.id FROM unnest($1) x(id)),
-  anc AS MATERIALIZED (SELECT c.descendant AS id, c.ancestor AS a FROM authz_int."folder__linked_into_parent__tree" c WHERE c.descendant IN (SELECT id FROM o)),
-  b AS MATERIALIZED ((SELECT w.id, w.key, w.d FROM (WITH l9 AS (SELECT r."id" AS id, r."owner_id" AS u FROM "app"."folders" r WHERE r."id" IN (SELECT DISTINCT a.a AS id FROM anc a) AND r."owner_id" IS NOT NULL)
+  WITH RECURSIVE o AS (SELECT DISTINCT x.id FROM unnest($1) x(id)),
+  pm AS MATERIALIZED (SELECT DISTINCT x."id" AS _x FROM "app"."folders" x WHERE x."id" = ANY ($1)),
+  pe AS MATERIALIZED (SELECT DISTINCT pm._x AS _c, l._parent AS _p FROM pm CROSS JOIN LATERAL ((SELECT x._parent FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL AND s."folder_id" = pm._x) x OFFSET 0)
+        UNION ALL (SELECT x._parent FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL AND r."id" = pm._x) x OFFSET 0)) l
+                      WHERE l._parent <> pm._x
+                        AND EXISTS (SELECT 1 FROM authz_int."folder__linked_into_parent__tree" a WHERE a.descendant = pm._x AND a.ancestor = l._parent OFFSET 0)),
+  ua AS MATERIALIZED (SELECT c.descendant AS _p, c.ancestor AS _a FROM authz_int."folder__linked_into_parent__tree" c
+                      WHERE c.descendant IN (SELECT pe._p FROM pe WHERE NOT EXISTS (SELECT 1 FROM pm WHERE pm._x = pe._p))),
+  b AS MATERIALIZED ((SELECT w.id, w.key, w.d FROM (WITH l9 AS (SELECT r."id" AS id, r."owner_id" AS u FROM "app"."folders" r WHERE r."id" IN (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) AND r."owner_id" IS NOT NULL)
   SELECT l9.id, 'user:' || (l9.u)::text AS key, false AS d FROM l9) w)
   UNION ALL
-  (SELECT w.id, w.key, w.d FROM (WITH l10 AS MATERIALIZED (SELECT r."id" AS id, r."org_id" AS u FROM "app"."folders" r WHERE r."id" IN (SELECT DISTINCT a.a AS id FROM anc a) AND r."org_id" IS NOT NULL)
+  (SELECT w.id, w.key, w.d FROM (WITH l10 AS MATERIALIZED (SELECT r."id" AS id, r."org_id" AS u FROM "app"."folders" r WHERE r."id" IN (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) AND r."org_id" IS NOT NULL)
   SELECT l10.id, 'org#admin:' || (l10.u)::text AS key, false AS d FROM l10) w)
   UNION ALL
-  ((SELECT g.object_id::bigint AS id, 'user:' || g.subject_id AS key, false AS d FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT DISTINCT a.a AS id FROM anc a) x) AND g.relation = 'editor' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  ((SELECT g.object_id::bigint AS id, 'user:' || g.subject_id AS key, false AS d FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) x) AND g.relation = 'editor' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT w.id, w.key, w.d FROM (WITH l11 AS MATERIALIZED (SELECT g.object_id::bigint AS id, g.subject_id::bigint AS u FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT DISTINCT a.a AS id FROM anc a) x) AND g.relation = 'editor' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT w.id, w.key, w.d FROM (WITH l11 AS MATERIALIZED (SELECT g.object_id::bigint AS id, g.subject_id::bigint AS u FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) x) AND g.relation = 'editor' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'team' AND g.subject_relation = 'member')
   SELECT l11.id, 'team#member:' || (l11.u)::text AS key, false AS d FROM l11) w)
   UNION ALL
-  (SELECT w.id, w.key, w.d FROM (WITH l12 AS MATERIALIZED (SELECT s."folder_id" AS id, s."team_id" AS u FROM "app"."folder_team_access" s WHERE s."folder_id" IN (SELECT DISTINCT a.a AS id FROM anc a) AND s."team_id" IS NOT NULL AND coalesce((access = 'edit'), false))
+  (SELECT w.id, w.key, w.d FROM (WITH l12 AS MATERIALIZED (SELECT s."folder_id" AS id, s."team_id" AS u FROM "app"."folder_team_access" s WHERE s."folder_id" IN (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) AND s."team_id" IS NOT NULL AND coalesce((access = 'edit'), false))
   SELECT l12.id, 'team#member:' || (l12.u)::text AS key, false AS d FROM l12) w))
   UNION ALL
-  ((SELECT g.object_id::bigint AS id, 'user:' || g.subject_id AS key, false AS d FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT DISTINCT a.a AS id FROM anc a) x) AND g.relation = 'viewer' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
+  ((SELECT g.object_id::bigint AS id, 'user:' || g.subject_id AS key, false AS d FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) x) AND g.relation = 'viewer' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
   UNION ALL
-  (SELECT w.id, w.key, w.d FROM (WITH l13 AS MATERIALIZED (SELECT g.object_id::bigint AS id, g.subject_id::bigint AS u FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT DISTINCT a.a AS id FROM anc a) x) AND g.relation = 'viewer' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'team' AND g.subject_relation = 'member')
+  (SELECT w.id, w.key, w.d FROM (WITH l13 AS MATERIALIZED (SELECT g.object_id::bigint AS id, g.subject_id::bigint AS u FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) x) AND g.relation = 'viewer' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'team' AND g.subject_relation = 'member')
   SELECT l13.id, 'team#member:' || (l13.u)::text AS key, false AS d FROM l13) w)
   UNION ALL
-  (SELECT w.id, w.key, w.d FROM (WITH l14 AS MATERIALIZED (SELECT g.object_id::bigint AS id, g.subject_id::bigint AS u FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT DISTINCT a.a AS id FROM anc a) x) AND g.relation = 'viewer' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'org' AND g.subject_relation = 'member')
+  (SELECT w.id, w.key, w.d FROM (WITH l14 AS MATERIALIZED (SELECT g.object_id::bigint AS id, g.subject_id::bigint AS u FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id IN (SELECT x.id::text FROM (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) x) AND g.relation = 'viewer' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND g.subject_type = 'org' AND g.subject_relation = 'member')
   SELECT l14.id, 'org#member:' || (l14.u)::text AS key, false AS d FROM l14) w)
   UNION ALL
-  (SELECT w.id, w.key, w.d FROM (WITH l15 AS MATERIALIZED (SELECT s."folder_id" AS id, s."team_id" AS u FROM "app"."folder_team_access" s WHERE s."folder_id" IN (SELECT DISTINCT a.a AS id FROM anc a) AND s."team_id" IS NOT NULL)
-  SELECT l15.id, 'team#member:' || (l15.u)::text AS key, false AS d FROM l15) w)))
-  SELECT a.id, b.key, b.d FROM anc a JOIN b ON b.id = a.a) r
+  (SELECT w.id, w.key, w.d FROM (WITH l15 AS MATERIALIZED (SELECT s."folder_id" AS id, s."team_id" AS u FROM "app"."folder_team_access" s WHERE s."folder_id" IN (SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua) AND s."team_id" IS NOT NULL)
+  SELECT l15.id, 'team#member:' || (l15.u)::text AS key, false AS d FROM l15) w))),
+  down (id, key, d) AS (
+    SELECT pm._x, b.key, b.d FROM pm JOIN b ON b.id = pm._x
+    UNION SELECT pe._c, b.key, b.d FROM pe JOIN ua ON ua._p = pe._p JOIN b ON b.id = ua._a
+    UNION SELECT pe._c, w.key, w.d FROM down w JOIN pe ON pe._p = w.id)
+  SELECT w.id, w.key, w.d FROM down w JOIN o ON o.id = w.id) r
 $f$;
 -- file.view (line 63): edit or viewer or (folder.view and not {confidential}): who holds it, as keys
 CREATE FUNCTION authz_int."sync:file.view"(p_ids bigint[]) RETURNS TABLE (o_id bigint, o_key text, o_dep boolean)
@@ -10035,7 +10054,7 @@ BEGIN
   END LOOP;
 END $ch$;
 
-SELECT authz_int.sync_refresh('9b1d992685c0f7277a70d05c07556da6');
+SELECT authz_int.sync_refresh('9ce2b8f9a81b9fbb5d33f796c336deaa');
 DO $sw$
 DECLARE n bigint; m bigint;
 BEGIN

@@ -23,6 +23,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   looks from the top folders of the part, and from the parents outside it. Those rows were read through the rows
   earlier writes had left dead until a vacuum: after a minute of concurrent writes, a move of 2,700 folders took
   12 s at commit, now 2.9 s (1.6 s once vacuumed). It read 8.9 times the closure rows its readers need, now 1.3.
+- The sync index (a preview) works out the readers of the folders a move takes along from their parents' readers,
+  down the part moved, where it read every folder above each one in the closure table: as many rows as the part
+  is deep, for each folder. A chain of 60 folders moved now reads 545 closure rows at commit, where it read 2,374,
+  and the count no longer grows with depth.
 
 ## 0.1.0-beta.5 (2026-11-18)
 
