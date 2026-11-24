@@ -461,7 +461,7 @@ function authz_int."sync:comment"(p_ids uuid[]) | 9615df7cfc3b shape=9aced0c4
 function authz_int."sync:comment.view"(p_ids uuid[]) | ff8db498ba64 shape=a4b6239f
 function authz_int."sync:customer_org.see_tickets"(p_ids uuid[]) | 4d1e01ea4907 shape=525f0489
 function authz_int."sync:team.member"(p_ids uuid[]) | cb70715add61 shape=24b0ce3f
-function authz_int."sync:team.oversee"(p_ids uuid[]) | 5a37ccce9a24 shape=db5af753
+function authz_int."sync:team.oversee"(p_ids uuid[]) | 25801b4556c6 shape=db5af753
 function authz_int."sync:ticket"(p_ids uuid[]) | 30d17005a3f4 shape=bca1ffe1
 function authz_int."sync:ticket.view"(p_ids uuid[]) | d2e135caff54 shape=f78657e2
 function authz_int."sync:ticket.work"(p_ids uuid[]) | face84c2fee1 shape=266a17b7
@@ -715,7 +715,7 @@ step mask_privileges | 26af74835f67
 step share_indexes | 7b6abf1f960f
 step sweep | 720e0c5ae09f
 step sync_base | d56d2648ef0a
-step sync_refresh | 46018e9e752b
+step sync_refresh | 43f52996d42d
 step tables | 41b30dca0ebc
 step tree_locks | d60cd47d0e20
 table authz_gen.policy_lines | 7c09872a2861 shape=dcfedc96

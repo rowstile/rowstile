@@ -213,8 +213,8 @@ function authz_int."rel_audit_3_upd"() | dff23ebdf247 shape=db6c71dd
 function authz_int."sync:file"(p_ids integer[]) | 608d9e210be3 shape=bda0e278
 function authz_int."sync:file.view"(p_ids integer[]) | 8853df835636 shape=c5a5d0d0
 function authz_int."sync:folder"(p_ids integer[]) | c5aa178ee4da shape=056c6eaa
-function authz_int."sync:folder.edit"(p_ids integer[]) | cc4a9bff59ce shape=efdd658c
-function authz_int."sync:folder.view"(p_ids integer[]) | bea1a0b743e4 shape=0ab5461c
+function authz_int."sync:folder.edit"(p_ids integer[]) | 14ee1de399fb shape=efdd658c
+function authz_int."sync:folder.view"(p_ids integer[]) | de1f9a3eea50 shape=0ab5461c
 function authz_int."sync:note"(p_ids integer[]) | bb4d056daad0 shape=a5220dcc
 function authz_int."sync:note.view"(p_ids integer[]) | b4a54efda3bb shape=31087c61
 function authz_int."sync:team.member"(p_ids integer[]) | 6aae18dc2c41 shape=e710c3fb
@@ -342,7 +342,7 @@ step mask_privileges | f8051dad4a89
 step share_indexes | 0c43cf884c22
 step sweep | 1dfed05490f4
 step sync_base | eda14fe1b754
-step sync_refresh | ae206431211e
+step sync_refresh | 68197496d6cc
 step tables | 0b4e7c3eced9
 step tree_locks | 139538de661a
 table authz_gen.policy_lines | 21fafe4e9464 shape=dcfedc96
