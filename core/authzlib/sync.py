@@ -1946,7 +1946,6 @@ class Deriver:
         parent only where the closure says so, and one too many above takes a lock row more. A composite key keeps
         the plain lookups. (The check by parent is a lookup of one row of the closure table: OFFSET 0 keeps it so,
         where Postgres 18 pulled it into a join that read every object above each one.)"""
-        c = self.c
         tbl = f"authz_int.{q(tree)}"
         plain = (
             f"SELECT c.descendant::text FROM {tbl} c WHERE c.ancestor IN (SELECT unnest($ids))",
@@ -1954,21 +1953,9 @@ class Deriver:
         )
         if t.composite:
             return plain
-        # (the sources the tree links through, as ensure_tree reads them: it has one at least, or no tree)
-        sources = [
-            (r, src)
-            for rel in sorted({e[1] for e in edges})
-            for r in (t.relations[rel],)
-            for src in r.sources
-            if (t.name, None) in src.subjects
-        ]
 
         def parents(v: str) -> str:
-            """The parents of the object v, one row for each link, as _parent."""
-            return "\n        UNION ALL ".join(
-                f"(SELECT x._parent FROM ({c.pair_sql(t, r, src, t.name, '', '_child', '_parent', tree=True, match=('obj', v))}) x OFFSET 0)"
-                for r, src in sources
-            )
+            return self.tree_parents(t, edges, v)
 
         ids = "d AS MATERIALIZED (SELECT DISTINCT u._x FROM unnest($ids) AS u(_x) WHERE u._x IS NOT NULL)"
         below = f"""WITH {ids}
@@ -1985,6 +1972,56 @@ class Deriver:
   UNION SELECT c.ancestor::text FROM {tbl} c WHERE c.descendant IN (SELECT u._p FROM up u)"""
         return below, above
 
+    def tree_parents(self, t: Type, edges: Edges, v: str) -> str:
+        """The parents of the object v in a tree of one type, one row for each link, as _parent: the links of every
+        source the tree reads (as ensure_tree reads them: it has one at least, or no tree), whatever their
+        condition, each one a lookup by v."""
+        c = self.c
+        sources = [
+            (r, src)
+            for rel in sorted({e[1] for e in edges})
+            for r in (t.relations[rel],)
+            for src in r.sources
+            if (t.name, None) in src.subjects
+        ]
+        return "\n        UNION ALL ".join(
+            f"(SELECT x._parent FROM ({c.pair_sql(t, r, src, t.name, '', '_child', '_parent', tree=True, match=('obj', v))}) x OFFSET 0)"
+            for r, src in sources
+        )
+
+    def top_down_rows(self, t: Type, edges: Edges, tree: str, items: list[Expr], entry: str, loc: Loc) -> str:
+        """What a permission of a tree of one type gives the objects in o, worked out down the part they make:
+        an object's keys are what it gives itself and its parents' keys, the parents being those of its links the
+        closure table counts (a link of any source whose parent is above it there: one whose condition fails adds
+        nothing its ancestors don't). Only the parents outside the ids given have their ancestors read in the closure
+        table. A move's commit has every object of the part it moved in o, and read the closure table once for
+        each one and each object above it: eight hundred thousand rows for three thousand folders after the soak's
+        busy minutes, through the rows its writes left dead (sixteen seconds of the commit's work). The objects
+        given that fail the type's where still carry their ancestors' keys down; only the answer leaves them out. The
+        objects are those given that exist, as the closure table holds them (a deleted folder's leftover share gives
+        nothing)."""
+        c = self.c
+        tbl = f"authz_int.{q(tree)}"
+        base = self.rows(
+            t,
+            Or(items) if len(items) > 1 else items[0],
+            "SELECT pm._x AS id FROM pm UNION SELECT ua._a FROM ua",
+            loc,
+        )
+        return f"""WITH RECURSIVE {entry},
+  pm AS MATERIALIZED (SELECT DISTINCT {c.key(t, "x")} AS _x FROM {qt(t.table)} x WHERE {c.key_any(t, "x", "$1")}),
+  pe AS MATERIALIZED (SELECT DISTINCT pm._x AS _c, l._parent AS _p FROM pm CROSS JOIN LATERAL ({self.tree_parents(t, edges, "pm._x")}) l
+                      WHERE l._parent <> pm._x
+                        AND EXISTS (SELECT 1 FROM {tbl} a WHERE a.descendant = pm._x AND a.ancestor = l._parent OFFSET 0)),
+  ua AS MATERIALIZED (SELECT c.descendant AS _p, c.ancestor AS _a FROM {tbl} c
+                      WHERE c.descendant IN (SELECT pe._p FROM pe WHERE NOT EXISTS (SELECT 1 FROM pm WHERE pm._x = pe._p))),
+  b AS MATERIALIZED ({base}),
+  down (id, key, d) AS (
+    SELECT pm._x, b.key, b.d FROM pm JOIN b ON b.id = pm._x
+    UNION SELECT pe._c, b.key, b.d FROM pe JOIN ua ON ua._p = pe._p JOIN b ON b.id = ua._a
+    UNION SELECT pe._c, w.key, w.d FROM down w JOIN pe ON pe._p = w.id)
+  SELECT w.id, w.key, w.d FROM down w JOIN o ON o.id = w.id"""
+
     def recursive_rows(self, t: Type, name: str, key: tuple[Name, ...], entry: str, loc: Loc) -> str:
         """A permission that inherits: what its starting points give (base items), on each ancestor in its closure
         table."""
@@ -1999,6 +2036,8 @@ class Deriver:
             # written out in place (start_items): that one's ancestors are among this one's, so one walk covers both,
             # where a call would walk its tree again from each ancestor of this one
             items = c.start_items(t, t.perms[name], edges)
+            if not t.composite:
+                return self.top_down_rows(t, edges, tree, items, entry, loc)
             base = self.rows(t, Or(items) if len(items) > 1 else items[0], "SELECT DISTINCT a.a AS id FROM anc a", loc)
             return (
                 f"WITH {entry},\n  anc AS MATERIALIZED (SELECT c.descendant AS id, c.ancestor AS a "
