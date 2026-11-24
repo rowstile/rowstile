@@ -9591,15 +9591,15 @@ $f$;
 CREATE FUNCTION authz_int.sync_spread(p_tx bigint, p_round int) RETURNS int
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 <<authz__>>
-DECLARE r int := p_round; n bigint;
+DECLARE v_r int := p_round; n bigint;
 BEGIN
   LOOP
-    RETURN r;
+    RETURN v_r;
     GET DIAGNOSTICS n = ROW_COUNT;
-    EXIT WHEN n = 0 AND NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.round > r);
-    r := r + 1;
+    EXIT WHEN n = 0 AND NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.round > authz__.v_r);
+    v_r := v_r + 1;
   END LOOP;
-  RETURN r;
+  RETURN v_r;
 END $f$;
 -- The index made current for the objects a transaction changed and what reads them (the difference written, not
 -- every row again): at its commit, in it, or after it, by the worker. The groups first, then the keys (a principal

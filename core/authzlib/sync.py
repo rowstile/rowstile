@@ -35,7 +35,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import assert_never
 
-from .compiler import Core, Name, once, only_on
+from .compiler import Core, Edges, Name, once, only_on
 from .parse import (
     KEYWORDS,
     And,
@@ -1048,37 +1048,37 @@ $f$;"""
             s = self.T(e.src)
             text = (
                 f"ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = {lit(e.src)} "
-                f"AND x.round = authz__.r AND x.id <> '*')"
+                f"AND x.round = authz__.v_r AND x.id <> '*')"
             )
             sql = e.sql.replace("$ids", self.typed(s, text)).replace("$text", text)
             parts.append(f"SELECT {lit(e.dst)}::text AS t, v.id::text AS i FROM ({sql}) v(id)")
             parts.append(
                 f"SELECT {lit(e.dst)}::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x "
-                f"WHERE x.txid = $1 AND x.type = {lit(e.src)} AND x.round = authz__.r AND x.id = '*')"
+                f"WHERE x.txid = $1 AND x.type = {lit(e.src)} AND x.round = authz__.v_r AND x.id = '*')"
             )
         # (each object once: a move's subtree is found once for each object above it that the move changed, three
         # hundred thousand rows for three thousand folders, each a conflict to find)
         insert = (
             "INSERT INTO authz_int.sync_todo (txid, type, id, round)\n"
-            "    SELECT DISTINCT $1, d.t, d.i, authz__.r + 1 FROM (\n      "
+            "    SELECT DISTINCT $1, d.t, d.i, authz__.v_r + 1 FROM (\n      "
             + "\n      UNION ALL ".join(parts)
             + ") d WHERE d.i IS NOT NULL\n    ON CONFLICT DO NOTHING;"
             if parts
-            else "RETURN r;"
+            else "RETURN v_r;"
         )
         return f"""-- what reads the objects a transaction changed, and what reads those, to the end (no limit: each is worked out again)
 CREATE FUNCTION authz_int.sync_spread(p_tx bigint, p_round int) RETURNS int
 LANGUAGE plpgsql {DEF_CURRENT} AS $f$
 <<authz__>>
-DECLARE r int := p_round; n bigint;
+DECLARE v_r int := p_round; n bigint;
 BEGIN
   LOOP
     {insert}
     GET DIAGNOSTICS n = ROW_COUNT;
-    EXIT WHEN n = 0 AND NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.round > r);
-    r := r + 1;
+    EXIT WHEN n = 0 AND NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.round > authz__.v_r);
+    v_r := v_r + 1;
   END LOOP;
-  RETURN r;
+  RETURN v_r;
 END $f$;"""
 
     def read_sql(self) -> str:
@@ -1934,6 +1934,57 @@ class Deriver:
         )
         return fn
 
+    def tree_edge_sql(self, t: Type, edges: Edges, tree: str) -> tuple[str, str]:
+        """The edge of a tree of one type (see Edge): what reads the objects in $ids, those below them, and what those
+        read, the objects above them. Each is looked for in the closure table from as few objects as give the same
+        answer: below, from those of $ids with no parent in $ids (what is below the others is below that parent);
+        above, from their parents outside $ids (what is above the others is above one of those, or in $ids). A
+        move's commit has every object of the part it moved in $ids, and found what is below and above each one
+        apart, three hundred thousand rows each for three thousand folders, read again at each commit through the
+        rows that writes to the tree left dead (ten to one after a busy minute: twelve seconds, against two once
+        vacuumed). The parents are those of every link source, whatever its condition: an object counts as below a
+        parent only where the closure says so, and one too many above takes a lock row more. A composite key keeps
+        the plain lookups. (The check by parent is a lookup of one row of the closure table: OFFSET 0 keeps it so,
+        where Postgres 18 pulled it into a join that read every object above each one.)"""
+        c = self.c
+        tbl = f"authz_int.{q(tree)}"
+        plain = (
+            f"SELECT c.descendant::text FROM {tbl} c WHERE c.ancestor IN (SELECT unnest($ids))",
+            f"SELECT c.ancestor::text FROM {tbl} c WHERE c.descendant IN (SELECT unnest($ids))",
+        )
+        if t.composite:
+            return plain
+        # (the sources the tree links through, as ensure_tree reads them: it has one at least, or no tree)
+        sources = [
+            (r, src)
+            for rel in sorted({e[1] for e in edges})
+            for r in (t.relations[rel],)
+            for src in r.sources
+            if (t.name, None) in src.subjects
+        ]
+
+        def parents(v: str) -> str:
+            """The parents of the object v, one row for each link, as _parent."""
+            return "\n        UNION ALL ".join(
+                f"(SELECT x._parent FROM ({c.pair_sql(t, r, src, t.name, '', '_child', '_parent', tree=True, match=('obj', v))}) x OFFSET 0)"
+                for r, src in sources
+            )
+
+        ids = "d AS MATERIALIZED (SELECT DISTINCT u._x FROM unnest($ids) AS u(_x) WHERE u._x IS NOT NULL)"
+        below = f"""WITH {ids}
+  SELECT c.descendant::text FROM {tbl} c WHERE c.ancestor IN (
+    SELECT d._x FROM d WHERE NOT EXISTS (
+      SELECT 1 FROM ({parents("d._x")}) e JOIN d p ON p._x = e._parent
+      WHERE e._parent <> d._x
+        AND EXISTS (SELECT 1 FROM {tbl} a WHERE a.descendant = d._x AND a.ancestor = e._parent OFFSET 0)))"""
+        above = f"""WITH {ids},
+  up AS MATERIALIZED (SELECT DISTINCT e._parent AS _p FROM d CROSS JOIN LATERAL ({parents("d._x")}) e
+                      WHERE e._parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM d o WHERE o._x = e._parent))
+  SELECT d._x::text FROM d
+  UNION SELECT u._p::text FROM up u
+  UNION SELECT c.ancestor::text FROM {tbl} c WHERE c.descendant IN (SELECT u._p FROM up u)"""
+        return below, above
+
     def recursive_rows(self, t: Type, name: str, key: tuple[Name, ...], entry: str, loc: Loc) -> str:
         """A permission that inherits: what its starting points give (base items), on each ancestor in its closure
         table."""
@@ -1943,12 +1994,7 @@ class Deriver:
         if len(members) == 1:
             tree = c.trees[(t.name, edges)]
             st.trees[tree] = None
-            self.edge(
-                t.name,
-                t.name,
-                f"SELECT c.descendant::text FROM authz_int.{q(tree)} c WHERE c.ancestor IN (SELECT unnest($ids))",
-                f"SELECT c.ancestor::text FROM authz_int.{q(tree)} c WHERE c.descendant IN (SELECT unnest($ids))",
-            )
+            self.edge(t.name, t.name, *self.tree_edge_sql(t, edges, tree))
             # where it starts, with what a permission of its type that inherits through links this walk follows gives
             # written out in place (start_items): that one's ancestors are among this one's, so one walk covers both,
             # where a call would walk its tree again from each ancestor of this one
