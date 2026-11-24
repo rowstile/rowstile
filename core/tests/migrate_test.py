@@ -461,6 +461,8 @@ CASES.append(
 # there (main makes it)
 SYNC_ROLE = "authz_sync_engine"
 SYNCED = DOCS + f"\nsync role {SYNC_ROLE}\nsync app.files : view\nsync app.folders\n"
+KEYED_LINES = f"\nsync role {SYNC_ROLE}\nsync app.files : view by folder\nsync app.folders\n"
+KEYED = DOCS + KEYED_LINES
 CASES += [
     ("sync lines added", "docs", DOCS, SYNCED),
     (
@@ -474,6 +476,22 @@ CASES += [
         "docs",
         SYNCED,
         edit(SYNCED, ("sync app.files : view\n", "sync app.files : view by folder\n")),
+    ),
+    # (keyed by folder, inherits follows the folders' trees by triggers on them: a tree made again takes them again)
+    (
+        "keyed by folder, inheritance that changes (a tree rebuilt)",
+        "docs",
+        KEYED,
+        edit(
+            KEYED,
+            ("can view  = edit or viewer or (parent.view and {inherit})", "can view  = edit or viewer or parent.view"),
+        ),
+    ),
+    (
+        "keyed by folder, inheritance that changes in a tree whose name is too long (built beside, swapped in)",
+        "docs",
+        LONG + KEYED_LINES,
+        edit(LONG + KEYED_LINES, ("(parent.view and {inherit})", "parent.view")),
     ),
     (
         "a synced table mirrored, for PowerSync",
