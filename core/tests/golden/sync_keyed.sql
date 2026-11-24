@@ -9511,6 +9511,44 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   (SELECT w.id, w.key, w.d FROM (WITH l15 AS MATERIALIZED (SELECT s."folder_id" AS id, s."team_id" AS u FROM "app"."folder_team_access" s WHERE s."folder_id" IN (SELECT id FROM o) AND s."team_id" IS NOT NULL)
   SELECT l15.id, 'team#member:' || (l15.u)::text AS key, false AS d FROM l15) w))) r WHERE NOT r.d
 $f$;
+-- folder.edit: whose own keys each object takes are the rows of folder__parent__tree, kept as it changes
+CREATE FUNCTION authz_int."sync_follow:folder__parent__tree"() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO authz_sync.inherits (key, source)
+    SELECT h.head || n.descendant::text, h.head || n.ancestor::text
+    FROM authz__new n CROSS JOIN (VALUES ('folder#edit:')) h(head) ORDER BY 1, 2 ON CONFLICT DO NOTHING;
+  ELSE
+    DELETE FROM authz_sync.inherits x
+    USING authz__old o CROSS JOIN (VALUES ('folder#edit:')) h(head)
+    WHERE x.key = h.head || o.descendant::text AND x.source = h.head || o.ancestor::text;
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER authz_sync_follow_ins AFTER INSERT ON authz_int."folder__parent__tree"
+REFERENCING NEW TABLE AS authz__new FOR EACH STATEMENT EXECUTE FUNCTION authz_int."sync_follow:folder__parent__tree"();
+CREATE TRIGGER authz_sync_follow_del AFTER DELETE ON authz_int."folder__parent__tree"
+REFERENCING OLD TABLE AS authz__old FOR EACH STATEMENT EXECUTE FUNCTION authz_int."sync_follow:folder__parent__tree"();
+-- folder.view: whose own keys each object takes are the rows of folder__linked_into_parent__tree, kept as it changes
+CREATE FUNCTION authz_int."sync_follow:folder__linked_into_parent__tree"() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO authz_sync.inherits (key, source)
+    SELECT h.head || n.descendant::text, h.head || n.ancestor::text
+    FROM authz__new n CROSS JOIN (VALUES ('folder#view:')) h(head) ORDER BY 1, 2 ON CONFLICT DO NOTHING;
+  ELSE
+    DELETE FROM authz_sync.inherits x
+    USING authz__old o CROSS JOIN (VALUES ('folder#view:')) h(head)
+    WHERE x.key = h.head || o.descendant::text AND x.source = h.head || o.ancestor::text;
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER authz_sync_follow_ins AFTER INSERT ON authz_int."folder__linked_into_parent__tree"
+REFERENCING NEW TABLE AS authz__new FOR EACH STATEMENT EXECUTE FUNCTION authz_int."sync_follow:folder__linked_into_parent__tree"();
+CREATE TRIGGER authz_sync_follow_del AFTER DELETE ON authz_int."folder__linked_into_parent__tree"
+REFERENCING OLD TABLE AS authz__old FOR EACH STATEMENT EXECUTE FUNCTION authz_int."sync_follow:folder__linked_into_parent__tree"();
 -- team.member (line 35): who holds it, as keys
 CREATE FUNCTION authz_int."sync:team.member"(p_ids bigint[]) RETURNS TABLE (o_id bigint, o_key text, o_dep boolean)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
@@ -9641,6 +9679,7 @@ BEGIN
     gone AS (DELETE FROM authz_sync.given x USING stale s WHERE x.source = s.source AND x.key = s.key RETURNING 1),
     made AS (INSERT INTO authz_sync.given SELECT d.source, d.key FROM added d ORDER BY 1, 2 ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
+    IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = authz__.v_tx AND x.type = 'folder' AND x.id = '*') THEN
     WITH fresh AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
     there AS MATERIALIZED (SELECT x.key, x.source FROM authz_sync.inherits x
                            WHERE x.key IN (SELECT 'folder#edit:' || v FROM unnest(v_part) v)),
@@ -9649,6 +9688,8 @@ BEGIN
     gone AS (DELETE FROM authz_sync.inherits x USING stale s WHERE x.key = s.key AND x.source = s.source RETURNING 1),
     made AS (INSERT INTO authz_sync.inherits SELECT d.key, d.source FROM added d ORDER BY 1, 2 ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
+    END IF;
+    IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = authz__.v_tx AND x.type = 'folder' AND x.id = '*') THEN
     WITH fresh AS MATERIALIZED (SELECT 'folder#view:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.view"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
     there AS MATERIALIZED (SELECT x.key, x.source FROM authz_sync.inherits x
                            WHERE x.key IN (SELECT 'folder#view:' || v FROM unnest(v_part) v)),
@@ -9657,6 +9698,7 @@ BEGIN
     gone AS (DELETE FROM authz_sync.inherits x USING stale s WHERE x.key = s.key AND x.source = s.source RETURNING 1),
     made AS (INSERT INTO authz_sync.inherits SELECT d.key, d.source FROM added d ORDER BY 1, 2 ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
+    END IF;
   END LOOP;
   -- the keys, where the groups' rows or the principals changed: under one lock row, taken last (nothing after it waits
   -- for another lock)
@@ -10027,7 +10069,7 @@ BEGIN
   END LOOP;
 END $ch$;
 
-SELECT authz_int.sync_refresh('dd65b71735a48dd8eb55f85df4c22213');
+SELECT authz_int.sync_refresh('a582cdac24fdd26a7310d08d78d183c7');
 DO $sw$
 DECLARE n bigint; m bigint;
 BEGIN

@@ -127,6 +127,8 @@ class SyncState:
     groups: dict[Name, None] = field(default_factory=dict)  # keyed pairs a derivation gave the key of
     keyed: dict[Name, None] = field(default_factory=dict)  # pairs keyed by their inheritance (by folder)
     inherits: dict[Name, str] = field(default_factory=dict)  # such a pair -> its function: whose own keys each inherits
+    # closure table -> the pairs whose inherits rows are its rows, as they are: kept by its own changes (inherit_follow)
+    follows: dict[str, list[Name]] = field(default_factory=dict)
     given: dict[Name, str] = field(default_factory=dict)  # a pair whose own keys are a source -> its function
     shared: dict[tuple[str, str], None] = field(default_factory=dict)  # (type, relation) shares read
     trees: dict[str, None] = field(default_factory=dict)  # closure tables read
@@ -391,6 +393,8 @@ class SyncMixin(Core):
         # keyed by inheritance: whose own keys each object inherits, and what each gives itself
         for pair in list(st.keyed):
             d.inheritance(pair)
+        for tree, pairs in st.follows.items():
+            st.functions.append(d.inherit_follow(tree, pairs))
         # the groups the readers name, and those they name in turn
         done: set[Name] = set()
         while True:
@@ -974,10 +978,15 @@ $f$;"""
         """sync_process's part for what is keyed by inheritance: for the objects a transaction reached, what each gives
         itself (given) and whose own keys each inherits (inherits), by difference. Neither reads the keys."""
         st = self.sync_build()
+        follow = {p for pairs in st.follows.values() for p in pairs}
         out = []
         for n in self.sync_inherit_types():
             u = self.T(n)
             body = []
+            whole = (
+                f"EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = authz__.v_tx AND x.type = {lit(n)} "
+                "AND x.id = '*')"
+            )
             for table, cols, pairs, rows in (
                 ("given", ("source", "key"), st.given, self.given_rows_sql),
                 ("inherits", ("key", "source"), st.inherits, self.inherits_rows_sql),
@@ -988,9 +997,11 @@ $f$;"""
                         continue
                     # (what is there read once and compared, as for the readers: a move leaves most rows as they were,
                     # and only those that change are written; inserting every row worked out, to find each one there
-                    # already, cost a big move most of its commit)
+                    # already, cost a big move most of its commit. Rows that follow their closure table's changes are
+                    # current already: worked out here only with every object, to make them whole)
+                    when = f"    IF {whole} THEN\n" if table == "inherits" and p in follow else ""
                     body.append(
-                        f"""    WITH fresh AS MATERIALIZED ({rows(p, "v_part")}),
+                        f"""{when}    WITH fresh AS MATERIALIZED ({rows(p, "v_part")}),
     there AS MATERIALIZED (SELECT x.{a}, x.{b} FROM authz_sync.{table} x
                            WHERE x.{a} IN (SELECT {lit(f"{p[0]}#{p[1]}:")} || v FROM unnest(v_part) v)),
     stale AS (SELECT s.{a}, s.{b} FROM there s EXCEPT SELECT f.{a}, f.{b} FROM fresh f),
@@ -998,6 +1009,7 @@ $f$;"""
     gone AS (DELETE FROM authz_sync.{table} x USING stale s WHERE x.{a} = s.{a} AND x.{b} = s.{b} RETURNING 1),
     made AS (INSERT INTO authz_sync.{table} SELECT d.{a}, d.{b} FROM added d ORDER BY 1, 2 ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;"""
+                        + ("\n    END IF;" if when else "")
                     )
             out.append(
                 f"  -- {n}: what each gives itself, and whose own keys each inherits (keyed by inheritance)\n"
@@ -2015,6 +2027,9 @@ class Deriver:
         st.trees[tree] = None
         fn = f"authz_int.{q(f'sync_inherits:{t.name}.{pair[1]}')}"
         st.inherits[pair] = fn
+        if len(members) == 1 and t.where is None:
+            # (its rows are the closure table's, each one as it is: they follow its changes, inherit_follow)
+            st.follows.setdefault(tree, []).append(pair)
         st.functions.append(
             f"-- {t.name}.{pair[1]} ({perm.loc}): {perm.src}, keyed by its inheritance: whose own keys each object takes\n"
             f"CREATE FUNCTION {fn}(p_ids {t.pktype}[]) RETURNS TABLE (o_id {t.pktype}, o_source text)\n"
@@ -2036,6 +2051,36 @@ class Deriver:
                 f"  SELECT DISTINCT r.id, r.key FROM (\n  WITH o AS (SELECT DISTINCT x.id FROM unnest($1) x(id))\n"
                 f"  {rows}) r WHERE NOT r.d\n$f$;"
             )
+
+    def inherit_follow(self, tree: str, pairs: list[Name]) -> str:
+        """The rows of inherits that are a closure table's rows (a pair of a type without a where, alone in its
+        recursion), kept as the table changes: each statement that writes it says what it inserted and deleted
+        (transition tables), and the same rows, keyed, go in or out of inherits. A move then writes there what it
+        writes to the tree, (below it) x (its old and new ancestors), where working each row below out again and
+        comparing read the whole part below as many times as it is deep. The commit's work leaves these rows alone
+        but when it works out every object again (applying: sync_refresh)."""
+        heads = ", ".join(f"({lit(f'{t}#{p}:')})" for t, p in pairs)
+        fn = f"authz_int.{q(ident(f'sync_follow:{tree}'))}"
+        tbl = f"authz_int.{q(tree)}"
+        return f"""-- {", ".join(f"{t}.{p}" for t, p in pairs)}: whose own keys each object takes are the rows of {tree}, kept as it changes
+CREATE FUNCTION {fn}() RETURNS trigger
+LANGUAGE plpgsql {DEF} AS $f$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO authz_sync.inherits (key, source)
+    SELECT h.head || n.descendant::text, h.head || n.ancestor::text
+    FROM authz__new n CROSS JOIN (VALUES {heads}) h(head) ORDER BY 1, 2 ON CONFLICT DO NOTHING;
+  ELSE
+    DELETE FROM authz_sync.inherits x
+    USING authz__old o CROSS JOIN (VALUES {heads}) h(head)
+    WHERE x.key = h.head || o.descendant::text AND x.source = h.head || o.ancestor::text;
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER authz_sync_follow_ins AFTER INSERT ON {tbl}
+REFERENCING NEW TABLE AS authz__new FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+CREATE TRIGGER authz_sync_follow_del AFTER DELETE ON {tbl}
+REFERENCING OLD TABLE AS authz__old FOR EACH STATEMENT EXECUTE FUNCTION {fn}();"""
 
     # --- dependents ---
     def edge(self, src: str, dst: str, sql: str, back: str) -> None:
