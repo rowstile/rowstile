@@ -14,12 +14,13 @@ stack passes ([`integrations/axum/test.sh`](../../integrations/axum/test.sh)).
 
 ## Install
 
-Rust 1.94 or newer (sqlx 0.9's; the suite runs on 1.99). The crate isn't on crates.io yet: take it from the repository. Its features: `tokio-postgres`
-(the default), `sqlx`, `axum` and `testing`.
+Rust 1.94 or newer (sqlx 0.9's; the suite runs on 1.99). The crate is on crates.io; while rowstile is in beta, name
+the pre-release, as below (Cargo takes a pre-release only when asked). Its features: `tokio-postgres` (the default),
+`sqlx`, `axum` and `testing`.
 
 ```sh
-cargo add rowstile --git https://github.com/rowstile/rowstile --features sqlx,axum
-cargo add rowstile --git https://github.com/rowstile/rowstile --features testing --dev
+cargo add rowstile@0.1.0-beta --features sqlx,axum
+cargo add rowstile@0.1.0-beta --features testing --dev
 pip install --pre rowstile      # the command (or npm install rowstile@next, or its image)
 rowstile init                   # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```

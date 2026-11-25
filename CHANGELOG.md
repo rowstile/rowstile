@@ -9,6 +9,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+### Added
+
+- The Rust SDK (a preview) is on crates.io, from 0.1.0-beta.5: `cargo add rowstile@0.1.0-beta --features
+  sqlx,axum`. Each release publishes it.
+
 ### Fixed
 
 - The sync index (a preview) works out a big move at commit in under half the time: it writes only the rows of

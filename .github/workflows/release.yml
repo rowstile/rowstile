@@ -2,7 +2,8 @@
 # X.Y.Z-beta.N, X.Y.Z-rc.N), commit,
 # push the tag vX.Y.Z on a commit of main or of release/X.Y, once CI is green on it (its version aside: below). A -dev
 # version (main between releases) is refused.
-# It publishes to PyPI and npm (trusted publishing: no token; PyPI with its attestations, npm with provenance), the
+# It publishes to PyPI, npm and crates.io (trusted publishing: no token; PyPI with its attestations, npm with
+# provenance; crates.io the Rust SDK), the
 # image on ghcr.io (with its provenance), and a GitHub release that holds the wheel, the sdist, the launcher and the
 # editor extension (.vsix) with their provenance (.intoto.jsonl); the docs site is site.yml's (GitHub Pages). Each
 # file is built once, in a job that can write and sign nothing (release-files, npm-files), and published as built:
@@ -119,6 +120,56 @@ jobs:
       # a file PyPI has already is skipped: a release that stopped half-way is finished by running it again
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086   # release/v1
         with: {packages-dir: pypi-dist, skip-existing: true}
+
+  # the Rust SDK (sdk/rust) packaged and built as `cargo publish` sends it, here, with no right to publish: its
+  # dependencies' build scripts run in this job alone
+  crates-files:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {contents: read}
+    defaults:
+      run:
+        working-directory: sdk/rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - run: cargo --version && cargo publish --dry-run --locked
+
+  # the crate on crates.io, once crates-files built it. crates.io trusts this workflow in the environment
+  # `crates-io` (the crate's trusted publisher: rowstile/rowstile, release.yml, crates-io), which takes v* tags:
+  # the auth action trades the job's OIDC token for a short-lived one. `--no-verify` packages the same commit and
+  # compiles nothing, so no dependency's code runs here. A version crates.io has is skipped (it refuses it a second
+  # time): a release that stopped half-way is finished by running this job again. A dry run publishes nothing
+  crates:
+    needs: [check, crates-files]
+    if: needs.check.outputs.publish == 'public'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: crates-io
+    permissions: {id-token: write, contents: read}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    defaults:
+      run:
+        working-directory: sdk/rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      # crates.io asks every client for a User-Agent that says who it is
+      - id: there
+        run: |
+          if curl -fsS -o /dev/null -A "rowstile-release (https://github.com/rowstile/rowstile)" "https://crates.io/api/v1/crates/rowstile/$VERSION"; then
+            echo "rowstile $VERSION is on crates.io already"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
+      - id: auth
+        if: steps.there.outputs.published != 'true'
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9   # v1.0.6
+      - if: steps.auth.outcome == 'success'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked --no-verify
 
   # the npm packages, each packed as npm publishes it: built here, with no right to write or sign anything (npm ci
   # runs the install scripts of every package the workspace has); the npm job publishes these files
