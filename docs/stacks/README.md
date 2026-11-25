@@ -15,7 +15,7 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 | Rails, Active Record, Active Job (preview) | [rails.md](rails.md) | the `rowstile` gem, from the repository |
 | Spring Boot, JPA, JdbcClient, Flyway (preview) | [spring.md](spring.md) | `dev.rowstile:rowstile-spring-boot-starter`, from the repository |
 | Kotlin: Ktor, Exposed, coroutines, Flyway (preview) | [ktor.md](ktor.md) | `dev.rowstile:rowstile-kotlin`, from the repository |
-| Rust: Axum, sqlx, tokio-postgres (preview) | [axum.md](axum.md) | the `rowstile` crate, from the repository |
+| Rust: Axum, sqlx, tokio-postgres (preview) | [axum.md](axum.md) | the `rowstile` crate, on crates.io |
 | Phoenix, Ecto, Postgrex, Oban (preview) | [phoenix.md](phoenix.md) | `:rowstile` in `mix.exs`, from the repository |
 | Laravel, Eloquent, queued jobs; PHP on PDO (preview) | [laravel.md](laravel.md) | `rowstile/rowstile`, from the repository |
 | Electric, the sync engine, behind a Node app (preview) | [electric.md](electric.md) | `@rowstile/client` |

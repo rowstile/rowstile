@@ -9,9 +9,11 @@ rowstile follows [semantic versioning](https://semver.org/). One version covers 
 the `rowstile` command, the Python package (`sdk/python`, on PyPI), the TypeScript packages (`sdk/typescript`:
 `@rowstile/*`, and the command's platform packages, on npm), the image (ghcr.io), the review for CI (at the
 release's tag), and the SDKs that are previews: Go (`sdk/go`), .NET (`sdk/dotnet`), Java and Kotlin
-(`sdk/java`), Ruby (`sdk/ruby`), Rust (`sdk/rust`), Elixir (`sdk/elixir`) and PHP (`sdk/php`). Those seven are
-on no registry yet: an app takes them from the repository, at a release's tag or from `main`, as each one's
-README says, and they carry the release's version. Go's tools read a module in a folder from the tags
+(`sdk/java`), Ruby (`sdk/ruby`), Rust (`sdk/rust`, on crates.io from 0.1.0-beta.5), Elixir (`sdk/elixir`) and
+PHP (`sdk/php`). All but Rust are on no registry yet: an app takes them from the repository, at a release's tag or
+from `main`, as each one's README says, and they carry the release's version. The release workflow's `crates` job
+publishes the Rust crate by trusted publishing (the crate's trusted publisher: this repository, `release.yml`, the
+environment `crates-io`). Go's tools read a module in a folder from the tags
 `sdk/go/vX.Y.Z`: a release pushes one on its own commit, from 0.1.0-beta.4 on (the release workflow's `go-tag`
 job, once the GitHub release is made), so `go get` takes the newest release's. Go's module proxy keeps a version
 for ever: like `vX.Y.Z`, that tag is never moved. Putting one of the others on a registry is a step this page
@@ -159,7 +161,7 @@ request of its own, before the release's.
    version agree, that the tag's commit is on `main` or `release/X.Y`, and that CI passed on that branch's push of
    it or of a later commit that is it but for its version (the second commit of step 1). Tagged too early, it
    stops there and is run again once CI is green. It then runs the unit tests and the packaging tests, and
-   publishes: the Python package, the npm packages, the image, and a GitHub release holding the
+   publishes: the Python package, the npm packages, the Rust crate, the image, and a GitHub release holding the
    wheel, the sdist, the npm launcher and the VS Code extension, with the changelog's section as its notes.
    Each file is built once, in a job with no right to publish, and PyPI and the Marketplace get the files the
    GitHub release attaches. Last, the MCP server's entry in the official registry (`server.json`): that

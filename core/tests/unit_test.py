@@ -20549,7 +20549,10 @@ class Delivery(unittest.TestCase):
         text = read("../.github/workflows/release.yml")
         jobs = re.split(r"(?m)^  (?=[\w-]+:\n)", text.split("\njobs:\n", 1)[1])
         out = {job.split(":", 1)[0]: re.sub(r"(?m)^\s*#.*\n", "", job) for job in jobs if job.strip()}
-        self.assertLessEqual({"check", "pypi", "npm", "image", "release-files", "github-release", "vscode"}, set(out))
+        self.assertLessEqual(
+            {"check", "pypi", "npm", "crates-files", "crates", "image", "release-files", "github-release", "vscode"},
+            set(out),
+        )
         return out
 
     @staticmethod
