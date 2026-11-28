@@ -9574,7 +9574,8 @@ BEGIN
     SELECT d._x FROM d WHERE NOT EXISTS (
       SELECT 1 FROM ((SELECT x._parent FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL AND r."id" = d._x) x OFFSET 0)) e JOIN d p ON p._x = e._parent
       WHERE e._parent <> d._x
-        AND EXISTS (SELECT 1 FROM authz_int."folder__parent__tree" a WHERE a.descendant = d._x AND a.ancestor = e._parent OFFSET 0)))) v(id)
+        AND EXISTS (SELECT 1 FROM authz_int."folder__parent__tree" a WHERE a.descendant = d._x AND a.ancestor = e._parent OFFSET 0)
+        AND NOT EXISTS (SELECT 1 FROM authz_int."folder__parent__tree" a WHERE a.descendant = e._parent AND a.ancestor = d._x OFFSET 0)))) v(id)
       UNION ALL SELECT 'folder'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.v_r AND x.id = '*')
       UNION ALL SELECT 'folder'::text AS t, v.id::text AS i FROM (WITH d AS MATERIALIZED (SELECT DISTINCT u._x FROM unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.v_r AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) AS u(_x) WHERE u._x IS NOT NULL)
   SELECT c.descendant::text FROM authz_int."folder__linked_into_parent__tree" c WHERE c.ancestor IN (
@@ -9582,7 +9583,8 @@ BEGIN
       SELECT 1 FROM ((SELECT x._parent FROM (SELECT s."folder_id" AS _child, s."parent_id" AS _parent FROM "app"."folder_links" s WHERE s."parent_id" IS NOT NULL AND s."folder_id" IS NOT NULL AND s."folder_id" = d._x) x OFFSET 0)
         UNION ALL (SELECT x._parent FROM (SELECT r."id" AS _child, r."parent_id" AS _parent FROM "app"."folders" r WHERE r."parent_id" IS NOT NULL AND r."id" = d._x) x OFFSET 0)) e JOIN d p ON p._x = e._parent
       WHERE e._parent <> d._x
-        AND EXISTS (SELECT 1 FROM authz_int."folder__linked_into_parent__tree" a WHERE a.descendant = d._x AND a.ancestor = e._parent OFFSET 0)))) v(id)
+        AND EXISTS (SELECT 1 FROM authz_int."folder__linked_into_parent__tree" a WHERE a.descendant = d._x AND a.ancestor = e._parent OFFSET 0)
+        AND NOT EXISTS (SELECT 1 FROM authz_int."folder__linked_into_parent__tree" a WHERE a.descendant = e._parent AND a.ancestor = d._x OFFSET 0)))) v(id)
       UNION ALL SELECT 'folder'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = $1 AND x.type = 'folder' AND x.round = authz__.v_r AND x.id = '*')) d WHERE d.i IS NOT NULL
     ON CONFLICT DO NOTHING;
     GET DIAGNOSTICS n = ROW_COUNT;

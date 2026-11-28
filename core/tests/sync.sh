@@ -647,6 +647,22 @@ above=$(PSQL -c "SELECT count(*) FROM authz_int.\"folder__linked_into_parent__tr
 same "... and the index holds what authz.list gives"
 PSQL -c "DELETE FROM app.folders WHERE id BETWEEN 1000 AND 4999"
 
+# a loop of links: two folders shown inside each other (links may loop, parents may not), a third shown inside one of
+# them (a link too: by its parent, the tree of parents alone would find it). A change to both at once has every folder
+# of the loop with a parent in the set, and the walk down starts from those without one: it started from none, and
+# what hangs under the loop kept its readers (the soak's genpolicy of 2026-11-28, on the readers worked out after
+# commit). A parent that is also below its folder doesn't count
+PSQL -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES
+  (1100, 1, NULL, 1, 'loop a'), (1101, 1, NULL, 1, 'loop b'), (1102, 1, NULL, 1, 'under the loop')" \
+  -c "INSERT INTO app.folder_links VALUES (1100, 1101), (1101, 1100), (1102, 1101)"
+same "a loop of links: the index holds what authz.list gives"
+PSQL -c "$(share folder 1100 6); $(share folder 1101 6)"
+reads 6 1102 folder | grep -qx t && ok "... both folders of the loop shared at once: the folder under it is read" ||
+  bad "a loop of links shared at once" "user 6 doesn't read folder 1102 through the index"
+same "... and the index holds what authz.list gives"
+PSQL -c "DELETE FROM authz.shares WHERE object_id IN ('1100', '1101')" -c "DELETE FROM app.folder_links WHERE folder_id >= 1100" \
+  -c "DELETE FROM app.folders WHERE id BETWEEN 1100 AND 1102"
+
 echo "-- keyed by folder"
 BY=$(echo "$SYNCED" | sed 's/^sync app.files : view$/sync app.files : view by folder/; s/^sync app.folders$/sync app.folders by folder/')
 [ "$BY" != "$SYNCED" ] || bad "the keyed policy is the same as the other"
