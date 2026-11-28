@@ -1937,8 +1937,11 @@ class Deriver:
     def tree_edge_sql(self, t: Type, edges: Edges, tree: str) -> tuple[str, str]:
         """The edge of a tree of one type (see Edge): what reads the objects in $ids, those below them, and what those
         read, the objects above them. Each is looked for in the closure table from as few objects as give the same
-        answer: below, from those of $ids with no parent in $ids (what is below the others is below that parent);
-        above, from their parents outside $ids (what is above the others is above one of those, or in $ids). A
+        answer: below, from those of $ids with no parent in $ids (what is below the others is below that parent),
+        a parent that is also below the object not counting: links may loop, and in a loop every object has a parent
+        in $ids, so none would start the walk and what hangs under the loop would be left out (the soak's genpolicy of
+        2026-11-28). Followed from parent to parent, each one strictly above the last, the walk ends at one that
+        starts it; above, from their parents outside $ids (what is above the others is above one of those, or in $ids). A
         move's commit has every object of the part it moved in $ids, and found what is below and above each one
         apart, three hundred thousand rows each for three thousand folders, read again at each commit through the
         rows that writes to the tree left dead (ten to one after a busy minute: twelve seconds, against two once
@@ -1963,7 +1966,8 @@ class Deriver:
     SELECT d._x FROM d WHERE NOT EXISTS (
       SELECT 1 FROM ({parents("d._x")}) e JOIN d p ON p._x = e._parent
       WHERE e._parent <> d._x
-        AND EXISTS (SELECT 1 FROM {tbl} a WHERE a.descendant = d._x AND a.ancestor = e._parent OFFSET 0)))"""
+        AND EXISTS (SELECT 1 FROM {tbl} a WHERE a.descendant = d._x AND a.ancestor = e._parent OFFSET 0)
+        AND NOT EXISTS (SELECT 1 FROM {tbl} a WHERE a.descendant = e._parent AND a.ancestor = d._x OFFSET 0)))"""
         above = f"""WITH {ids},
   up AS MATERIALIZED (SELECT DISTINCT e._parent AS _p FROM d CROSS JOIN LATERAL ({parents("d._x")}) e
                       WHERE e._parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM d o WHERE o._x = e._parent))
